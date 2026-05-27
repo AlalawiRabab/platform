@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>منصة الخطة التشغيلية المدرسية</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&family=Cairo:wght@300;400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<!-- ===== LOGIN PAGE ===== -->
+<div id="login-page" class="login-page">
+  <div class="login-bg-shapes">
+    <div class="shape shape-1"></div>
+    <div class="shape shape-2"></div>
+    <div class="shape shape-3"></div>
+  </div>
+  <div class="login-container">
+    <div class="login-header">
+      <div class="login-logo">
+        <div class="logo-icon">🏫</div>
+      </div>
+      <h1>منصة الخطة التشغيلية</h1>
+      <p>المملكة العربية السعودية — وزارة التعليم</p>
+    </div>
+    <div class="login-card">
+      <h2>تسجيل الدخول</h2>
+      <div class="form-group">
+        <label>نوع المستخدم</label>
+        <div class="role-selector">
+          <button class="role-btn active" data-role="principal" onclick="selectRole(this,'principal')">
+            <span class="role-icon">👩‍💼</span>
+            <span>مديرة المدرسة</span>
+          </button>
+          <button class="role-btn" data-role="vice" onclick="selectRole(this,'vice')">
+            <span class="role-icon">👩‍🏫</span>
+            <span>وكيلة</span>
+          </button>
+          <button class="role-btn" data-role="teacher" onclick="selectRole(this,'teacher')">
+            <span class="role-icon">📚</span>
+            <span>معلمة</span>
+          </button>
+          <button class="role-btn" data-role="admin" onclick="selectRole(this,'admin')">
+            <span class="role-icon">🗂️</span>
+            <span>إدارية</span>
+          </button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="username">اسم المستخدم</label>
+        <input type="text" id="username" placeholder="أدخلي اسم المستخدم" value="admin" />
+      </div>
+      <div class="form-group">
+        <label for="password">كلمة المرور</label>
+        <input type="password" id="password" placeholder="أدخلي كلمة المرور" value="1234" />
+      </div>
+      <button class="btn-login" onclick="doLogin()">دخول إلى المنصة</button>
+      <p class="login-hint">دخول تجريبي — أي اسم مستخدم وكلمة مرور</p>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MAIN APP ===== -->
+<div id="app" class="app hidden">
+
+  <!-- Sidebar -->
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo">🏫</div>
+      <div class="sidebar-school-info">
+        <span id="sidebar-school-name">مدرسة النور</span>
+        <span id="sidebar-year">١٤٤٦/١٤٤٧</span>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a href="#" class="nav-item active" data-section="dashboard" onclick="showSection('dashboard',this)">
+        <span class="nav-icon">🏠</span><span>لوحة التحكم</span>
+      </a>
+      <a href="#" class="nav-item nav-principal nav-vice" data-section="plan" onclick="showSection('plan',this)">
+        <span class="nav-icon">📋</span><span>الخطة التشغيلية</span>
+      </a>
+      <a href="#" class="nav-item nav-principal nav-vice" data-section="kpi" onclick="showSection('kpi',this)">
+        <span class="nav-icon">📊</span><span>مؤشرات الأداء</span>
+      </a>
+      <a href="#" class="nav-item nav-principal nav-vice nav-teacher" data-section="tasks" onclick="showSection('tasks',this)">
+        <span class="nav-icon">✅</span><span>المهام</span>
+      </a>
+      <a href="#" class="nav-item nav-principal nav-vice nav-teacher nav-admin" data-section="reports" onclick="showSection('reports',this)">
+        <span class="nav-icon">📁</span><span>التقارير والشواهد</span>
+      </a>
+      <a href="#" class="nav-item nav-principal nav-vice" data-section="teachers" onclick="showSection('teachers',this)">
+        <span class="nav-icon">👩‍🏫</span><span>متابعة المعلمات</span>
+      </a>
+      <a href="#" class="nav-item nav-principal nav-vice nav-admin" data-section="calendar" onclick="showSection('calendar',this)">
+        <span class="nav-icon">📅</span><span>التقويم الزمني</span>
+      </a>
+      <a href="#" class="nav-item nav-principal" data-section="stats" onclick="showSection('stats',this)">
+        <span class="nav-icon">📈</span><span>الإحصائيات</span>
+      </a>
+      <a href="#" class="nav-item nav-principal" data-section="settings" onclick="showSection('settings',this)">
+        <span class="nav-icon">⚙️</span><span>الإعدادات</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="user-badge">
+        <span id="user-role-badge">مديرة المدرسة</span>
+      </div>
+      <button class="btn-logout" onclick="doLogout()">تسجيل الخروج</button>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <div class="main-content">
+    <header class="top-header">
+      <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
+      <div class="header-title" id="section-title">لوحة التحكم</div>
+      <div class="header-user">
+        <span id="header-user-name">أ. سارة العتيبي</span>
+        <div class="avatar">س</div>
+      </div>
+    </header>
+
+    <div class="content-area">
+
+      <!-- ===== DASHBOARD ===== -->
+      <section id="section-dashboard" class="section active">
+        <div class="section-intro">
+          <h2>مرحباً بك في منصة الخطة التشغيلية 👋</h2>
+          <p>نظرة عامة على سير العمل والإنجاز للعام الدراسي الحالي</p>
+        </div>
+
+        <div class="stats-grid" id="dashboard-stats"></div>
+
+        <div class="dashboard-row">
+          <div class="card">
+            <div class="card-header"><h3>📋 المبادرات حسب الحالة</h3></div>
+            <canvas id="initiatives-chart" width="320" height="220"></canvas>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>⏰ المهام القادمة</h3></div>
+            <div id="upcoming-tasks-list"></div>
+          </div>
+        </div>
+
+        <div class="dashboard-row">
+          <div class="card full-width">
+            <div class="card-header"><h3>📊 نسبة إنجاز المبادرات</h3></div>
+            <div id="initiatives-progress"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== PLAN ===== -->
+      <section id="section-plan" class="section">
+        <div class="section-top">
+          <h2>الخطة التشغيلية</h2>
+          <button class="btn-primary" onclick="openModal('initiative-modal')">+ إضافة مبادرة</button>
+        </div>
+        <div class="filter-bar">
+          <select onchange="filterPlan(this.value)" id="plan-filter">
+            <option value="all">جميع الأهداف</option>
+            <option value="academic">تحسين التحصيل الدراسي</option>
+            <option value="discipline">تعزيز الانضباط</option>
+            <option value="professional">التنمية المهنية</option>
+            <option value="community">الشراكة المجتمعية</option>
+            <option value="identity">الهوية الوطنية</option>
+          </select>
+          <input type="text" placeholder="🔍 بحث..." oninput="searchPlan(this.value)" />
+        </div>
+        <div class="table-wrapper">
+          <table class="data-table" id="plan-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>الهدف الاستراتيجي</th>
+                <th>المبادرة</th>
+                <th>المسؤولة</th>
+                <th>البداية</th>
+                <th>النهاية</th>
+                <th>الحالة</th>
+                <th>الإنجاز</th>
+                <th>الدليل</th>
+                <th>إجراءات</th>
+              </tr>
+            </thead>
+            <tbody id="plan-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ===== KPI ===== -->
+      <section id="section-kpi" class="section">
+        <div class="section-top">
+          <h2>مؤشرات الأداء KPI</h2>
+          <button class="btn-primary" onclick="openModal('kpi-modal')">+ إضافة مؤشر</button>
+        </div>
+        <div class="kpi-cards" id="kpi-cards"></div>
+        <div class="card mt-20">
+          <div class="card-header"><h3>📊 رسم بياني لمؤشرات الأداء</h3></div>
+          <canvas id="kpi-chart" width="700" height="300"></canvas>
+        </div>
+        <div class="table-wrapper mt-20">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>المؤشر</th>
+                <th>المستهدف</th>
+                <th>المتحقق</th>
+                <th>نسبة الإنجاز</th>
+                <th>الحالة</th>
+              </tr>
+            </thead>
+            <tbody id="kpi-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ===== TASKS ===== -->
+      <section id="section-tasks" class="section">
+        <div class="section-top">
+          <h2>إدارة المهام</h2>
+          <button class="btn-primary" onclick="openModal('task-modal')">+ مهمة جديدة</button>
+        </div>
+        <div class="filter-bar">
+          <select onchange="filterTasks(this.value)">
+            <option value="all">جميع المهام</option>
+            <option value="pending">معلقة</option>
+            <option value="inprogress">قيد التنفيذ</option>
+            <option value="done">منجزة</option>
+            <option value="late">متأخرة</option>
+          </select>
+          <select onchange="filterTasksPriority(this.value)">
+            <option value="all">كل الأولويات</option>
+            <option value="high">عالية</option>
+            <option value="medium">متوسطة</option>
+            <option value="low">منخفضة</option>
+          </select>
+        </div>
+        <div class="tasks-grid" id="tasks-grid"></div>
+      </section>
+
+      <!-- ===== REPORTS ===== -->
+      <section id="section-reports" class="section">
+        <div class="section-top">
+          <h2>التقارير والشواهد</h2>
+          <button class="btn-primary" onclick="openModal('report-modal')">+ رفع شاهد</button>
+        </div>
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>عنوان الشاهد</th>
+                <th>النوع</th>
+                <th>المبادرة</th>
+                <th>المسؤولة</th>
+                <th>تاريخ الرفع</th>
+                <th>الرابط</th>
+                <th>إجراءات</th>
+              </tr>
+            </thead>
+            <tbody id="reports-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ===== TEACHERS ===== -->
+      <section id="section-teachers" class="section">
+        <div class="section-top">
+          <h2>متابعة المعلمات</h2>
+        </div>
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>اسم المعلمة</th>
+                <th>المهام المسندة</th>
+                <th>المهام المنجزة</th>
+                <th>نسبة الإنجاز</th>
+                <th>آخر تقرير</th>
+                <th>ملاحظات القائدة</th>
+                <th>إجراءات</th>
+              </tr>
+            </thead>
+            <tbody id="teachers-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ===== CALENDAR ===== -->
+      <section id="section-calendar" class="section">
+        <div class="section-top">
+          <h2>التقويم الزمني</h2>
+          <div class="month-nav">
+            <button onclick="prevMonth()">◀</button>
+            <span id="calendar-month-label"></span>
+            <button onclick="nextMonth()">▶</button>
+          </div>
+        </div>
+        <div id="calendar-container"></div>
+      </section>
+
+      <!-- ===== STATS ===== -->
+      <section id="section-stats" class="section">
+        <div class="section-top"><h2>الإحصائيات العامة</h2></div>
+        <div class="stats-grid" id="stats-cards"></div>
+        <div class="dashboard-row">
+          <div class="card">
+            <div class="card-header"><h3>📊 توزيع المهام حسب الحالة</h3></div>
+            <canvas id="tasks-pie-chart" width="320" height="250"></canvas>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>🏆 أعلى المبادرات إنجازًا</h3></div>
+            <div id="top-initiatives"></div>
+          </div>
+        </div>
+        <div class="card mt-20">
+          <div class="card-header"><h3>📈 مقارنة الإنجاز بالمستهدف</h3></div>
+          <canvas id="compare-chart" width="700" height="280"></canvas>
+        </div>
+      </section>
+
+      <!-- ===== SETTINGS ===== -->
+      <section id="section-settings" class="section">
+        <div class="section-top"><h2>الإعدادات</h2></div>
+        <div class="settings-grid">
+          <div class="card">
+            <div class="card-header"><h3>⚙️ إعدادات المدرسة</h3></div>
+            <div class="form-group">
+              <label>اسم المدرسة</label>
+              <input type="text" id="setting-school" value="" />
+            </div>
+            <div class="form-group">
+              <label>العام الدراسي</label>
+              <input type="text" id="setting-year" value="" />
+            </div>
+            <div class="form-group">
+              <label>اسم القائدة</label>
+              <input type="text" id="setting-principal" value="" />
+            </div>
+            <div class="form-group">
+              <label>المنطقة التعليمية</label>
+              <input type="text" id="setting-region" value="" />
+            </div>
+            <button class="btn-primary" onclick="saveSettings()">💾 حفظ الإعدادات</button>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>🔄 إدارة البيانات</h3></div>
+            <p style="color:var(--text-muted);margin-bottom:16px;">جميع البيانات محفوظة في المتصفح (LocalStorage). يمكنك إعادة ضبط البيانات التجريبية في أي وقت.</p>
+            <button class="btn-warning" onclick="resetToDemo()">🔄 إعادة تحميل البيانات التجريبية</button>
+            <button class="btn-danger" onclick="clearAllData()">🗑️ مسح جميع البيانات</button>
+          </div>
+        </div>
+      </section>
+
+    </div><!-- end content-area -->
+  </div><!-- end main-content -->
+</div><!-- end app -->
+
+<!-- ===== MODALS ===== -->
+
+<!-- Initiative Modal -->
+<div id="initiative-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>إضافة / تعديل مبادرة</h3>
+      <button onclick="closeModal('initiative-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="initiative-edit-id" />
+      <div class="form-row">
+        <div class="form-group">
+          <label>الهدف الاستراتيجي</label>
+          <select id="ini-goal">
+            <option value="تحسين التحصيل الدراسي">تحسين التحصيل الدراسي</option>
+            <option value="تعزيز الانضباط">تعزيز الانضباط</option>
+            <option value="التنمية المهنية">التنمية المهنية</option>
+            <option value="الشراكة المجتمعية">الشراكة المجتمعية</option>
+            <option value="تعزيز الهوية الوطنية">تعزيز الهوية الوطنية</option>
+            <option value="متابعة الفاقد التعليمي">متابعة الفاقد التعليمي</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>اسم المبادرة</label>
+          <input type="text" id="ini-name" placeholder="اسم المبادرة" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label>وصف المبادرة</label>
+        <textarea id="ini-desc" placeholder="وصف مختصر للمبادرة..."></textarea>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>المسؤولة</label>
+          <input type="text" id="ini-resp" placeholder="اسم المسؤولة" />
+        </div>
+        <div class="form-group">
+          <label>تاريخ البداية</label>
+          <input type="date" id="ini-start" />
+        </div>
+        <div class="form-group">
+          <label>تاريخ النهاية</label>
+          <input type="date" id="ini-end" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>حالة التنفيذ</label>
+          <select id="ini-status">
+            <option value="لم تبدأ">لم تبدأ</option>
+            <option value="قيد التنفيذ">قيد التنفيذ</option>
+            <option value="منجزة">منجزة</option>
+            <option value="متأخرة">متأخرة</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>نسبة الإنجاز (%)</label>
+          <input type="number" id="ini-progress" min="0" max="100" placeholder="0" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label>رابط الدليل / الشاهد</label>
+        <input type="url" id="ini-link" placeholder="https://drive.google.com/..." />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="saveInitiative()">حفظ</button>
+      <button class="btn-secondary" onclick="closeModal('initiative-modal')">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- Task Modal -->
+<div id="task-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>إضافة مهمة جديدة</h3>
+      <button onclick="closeModal('task-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="task-edit-id" />
+      <div class="form-row">
+        <div class="form-group">
+          <label>اسم المهمة</label>
+          <input type="text" id="task-name" placeholder="اسم المهمة" />
+        </div>
+        <div class="form-group">
+          <label>المسؤولة</label>
+          <input type="text" id="task-resp" placeholder="اسم المسؤولة" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>تاريخ الاستحقاق</label>
+          <input type="date" id="task-due" />
+        </div>
+        <div class="form-group">
+          <label>الأولوية</label>
+          <select id="task-priority">
+            <option value="high">عالية</option>
+            <option value="medium">متوسطة</option>
+            <option value="low">منخفضة</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>الحالة</label>
+          <select id="task-status">
+            <option value="pending">معلقة</option>
+            <option value="inprogress">قيد التنفيذ</option>
+            <option value="done">منجزة</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>ملاحظات</label>
+        <textarea id="task-notes" placeholder="ملاحظات إضافية..."></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="saveTask()">حفظ</button>
+      <button class="btn-secondary" onclick="closeModal('task-modal')">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- Report Modal -->
+<div id="report-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>رفع تقرير / شاهد</h3>
+      <button onclick="closeModal('report-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label>عنوان الشاهد</label>
+          <input type="text" id="rep-title" placeholder="عنوان الشاهد أو التقرير" />
+        </div>
+        <div class="form-group">
+          <label>نوع الشاهد</label>
+          <select id="rep-type">
+            <option value="صورة">📷 صورة</option>
+            <option value="PDF">📄 ملف PDF</option>
+            <option value="Google Drive">☁️ رابط Google Drive</option>
+            <option value="فيديو">🎥 فيديو</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>المبادرة المرتبطة</label>
+          <select id="rep-initiative"></select>
+        </div>
+        <div class="form-group">
+          <label>المسؤولة</label>
+          <input type="text" id="rep-person" placeholder="اسم المعلمة أو المسؤولة" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label>رابط الشاهد (Google Drive أو أي رابط)</label>
+        <input type="url" id="rep-link" placeholder="https://drive.google.com/..." />
+      </div>
+      <div class="form-group">
+        <label>ملاحظات</label>
+        <textarea id="rep-notes" placeholder="ملاحظات إضافية..."></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="saveReport()">رفع الشاهد</button>
+      <button class="btn-secondary" onclick="closeModal('report-modal')">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- KPI Modal -->
+<div id="kpi-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>إضافة مؤشر أداء</h3>
+      <button onclick="closeModal('kpi-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>اسم المؤشر</label>
+        <input type="text" id="kpi-name" placeholder="اسم مؤشر الأداء" />
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>القيمة المستهدفة</label>
+          <input type="number" id="kpi-target" placeholder="المستهدف" />
+        </div>
+        <div class="form-group">
+          <label>القيمة المتحققة</label>
+          <input type="number" id="kpi-achieved" placeholder="المتحقق" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label>وحدة القياس</label>
+        <input type="text" id="kpi-unit" placeholder="مثال: %، طالبة، ساعة..." />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="saveKPI()">حفظ</button>
+      <button class="btn-secondary" onclick="closeModal('kpi-modal')">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- Teacher Note Modal -->
+<div id="teacher-note-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>ملاحظة للمعلمة</h3>
+      <button onclick="closeModal('teacher-note-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="teacher-note-id" />
+      <div class="form-group">
+        <label>الملاحظة</label>
+        <textarea id="teacher-note-text" placeholder="أدخلي ملاحظتك هنا..."></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="saveTeacherNote()">حفظ الملاحظة</button>
+      <button class="btn-secondary" onclick="closeModal('teacher-note-modal')">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast Notification -->
+<div id="toast" class="toast hidden"></div>
+
+<script src="script.js"></script>
+</body>
+</html>
