@@ -19,9 +19,7 @@
   </div>
   <div class="login-container">
     <div class="login-header">
-      <div class="login-logo">
-        <div class="logo-icon">🏫</div>
-      </div>
+      <div class="login-logo"><div class="logo-icon">🏫</div></div>
       <h1>منصة الخطة التشغيلية</h1>
       <p>المملكة العربية السعودية — وزارة التعليم</p>
     </div>
@@ -31,20 +29,16 @@
         <label>نوع المستخدم</label>
         <div class="role-selector">
           <button class="role-btn active" data-role="principal" onclick="selectRole(this,'principal')">
-            <span class="role-icon">👩‍💼</span>
-            <span>مديرة المدرسة</span>
+            <span class="role-icon">👩‍💼</span><span>مديرة المدرسة</span>
           </button>
           <button class="role-btn" data-role="vice" onclick="selectRole(this,'vice')">
-            <span class="role-icon">👩‍🏫</span>
-            <span>وكيلة</span>
+            <span class="role-icon">👩‍🏫</span><span>وكيلة</span>
           </button>
           <button class="role-btn" data-role="teacher" onclick="selectRole(this,'teacher')">
-            <span class="role-icon">📚</span>
-            <span>معلمة</span>
+            <span class="role-icon">📚</span><span>معلمة</span>
           </button>
           <button class="role-btn" data-role="admin" onclick="selectRole(this,'admin')">
-            <span class="role-icon">🗂️</span>
-            <span>إدارية</span>
+            <span class="role-icon">🗂️</span><span>إدارية</span>
           </button>
         </div>
       </div>
@@ -74,13 +68,15 @@
         <span id="sidebar-year">١٤٤٦/١٤٤٧</span>
       </div>
     </div>
-
     <nav class="sidebar-nav">
       <a href="#" class="nav-item active" data-section="dashboard" onclick="showSection('dashboard',this)">
         <span class="nav-icon">🏠</span><span>لوحة التحكم</span>
       </a>
+      <a href="#" class="nav-item nav-principal nav-vice" data-section="programs" onclick="showSection('programs',this)">
+        <span class="nav-icon">🗂️</span><span>برامج الخطة التشغيلية</span>
+      </a>
       <a href="#" class="nav-item nav-principal nav-vice" data-section="plan" onclick="showSection('plan',this)">
-        <span class="nav-icon">📋</span><span>الخطة التشغيلية</span>
+        <span class="nav-icon">📋</span><span>المبادرات</span>
       </a>
       <a href="#" class="nav-item nav-principal nav-vice" data-section="kpi" onclick="showSection('kpi',this)">
         <span class="nav-icon">📊</span><span>مؤشرات الأداء</span>
@@ -104,11 +100,8 @@
         <span class="nav-icon">⚙️</span><span>الإعدادات</span>
       </a>
     </nav>
-
     <div class="sidebar-footer">
-      <div class="user-badge">
-        <span id="user-role-badge">مديرة المدرسة</span>
-      </div>
+      <div class="user-badge"><span id="user-role-badge">مديرة المدرسة</span></div>
       <button class="btn-logout" onclick="doLogout()">تسجيل الخروج</button>
     </div>
   </aside>
@@ -132,12 +125,10 @@
           <h2>مرحباً بك في منصة الخطة التشغيلية 👋</h2>
           <p>نظرة عامة على سير العمل والإنجاز للعام الدراسي الحالي</p>
         </div>
-
         <div class="stats-grid" id="dashboard-stats"></div>
-
         <div class="dashboard-row">
           <div class="card">
-            <div class="card-header"><h3>📋 المبادرات حسب الحالة</h3></div>
+            <div class="card-header"><h3>📋 البرامج حسب الحالة</h3></div>
             <canvas id="initiatives-chart" width="320" height="220"></canvas>
           </div>
           <div class="card">
@@ -145,19 +136,41 @@
             <div id="upcoming-tasks-list"></div>
           </div>
         </div>
-
         <div class="dashboard-row">
           <div class="card full-width">
-            <div class="card-header"><h3>📊 نسبة إنجاز المبادرات</h3></div>
+            <div class="card-header"><h3>📊 نسبة إنجاز البرامج</h3></div>
             <div id="initiatives-progress"></div>
           </div>
         </div>
       </section>
 
-      <!-- ===== PLAN ===== -->
+      <!-- ===== PROGRAMS (NEW) ===== -->
+      <section id="section-programs" class="section">
+        <div class="section-top">
+          <h2>برامج الخطة التشغيلية</h2>
+          <button class="btn-primary" onclick="openProgramModal()">+ إضافة برنامج</button>
+        </div>
+        <!-- Stats Row -->
+        <div class="stats-grid" id="programs-stats"></div>
+        <!-- Filter & Search -->
+        <div class="filter-bar">
+          <select id="prog-filter-status" onchange="renderPrograms()">
+            <option value="all">جميع الحالات</option>
+            <option value="planning">قيد التخطيط</option>
+            <option value="active">جارٍ التنفيذ</option>
+            <option value="done">منتهٍ</option>
+            <option value="late">متأخر</option>
+          </select>
+          <input type="text" id="prog-search" placeholder="🔍 بحث باسم البرنامج أو المسؤول..." oninput="renderPrograms()" />
+        </div>
+        <!-- Programs Cards Grid -->
+        <div class="programs-grid" id="programs-grid"></div>
+      </section>
+
+      <!-- ===== PLAN (INITIATIVES) ===== -->
       <section id="section-plan" class="section">
         <div class="section-top">
-          <h2>الخطة التشغيلية</h2>
+          <h2>المبادرات</h2>
           <button class="btn-primary" onclick="openModal('initiative-modal')">+ إضافة مبادرة</button>
         </div>
         <div class="filter-bar">
@@ -175,16 +188,9 @@
           <table class="data-table" id="plan-table">
             <thead>
               <tr>
-                <th>#</th>
-                <th>الهدف الاستراتيجي</th>
-                <th>المبادرة</th>
-                <th>المسؤولة</th>
-                <th>البداية</th>
-                <th>النهاية</th>
-                <th>الحالة</th>
-                <th>الإنجاز</th>
-                <th>الدليل</th>
-                <th>إجراءات</th>
+                <th>#</th><th>الهدف الاستراتيجي</th><th>المبادرة</th>
+                <th>المسؤولة</th><th>البداية</th><th>النهاية</th>
+                <th>الحالة</th><th>الإنجاز</th><th>الدليل</th><th>إجراءات</th>
               </tr>
             </thead>
             <tbody id="plan-tbody"></tbody>
@@ -206,13 +212,7 @@
         <div class="table-wrapper mt-20">
           <table class="data-table">
             <thead>
-              <tr>
-                <th>المؤشر</th>
-                <th>المستهدف</th>
-                <th>المتحقق</th>
-                <th>نسبة الإنجاز</th>
-                <th>الحالة</th>
-              </tr>
+              <tr><th>المؤشر</th><th>المستهدف</th><th>المتحقق</th><th>نسبة الإنجاز</th><th>الحالة</th></tr>
             </thead>
             <tbody id="kpi-tbody"></tbody>
           </table>
@@ -247,20 +247,14 @@
       <section id="section-reports" class="section">
         <div class="section-top">
           <h2>التقارير والشواهد</h2>
-          <button class="btn-primary" onclick="openModal('report-modal')">+ رفع شاهد</button>
+          <button class="btn-primary" onclick="openReportModal()">+ رفع شاهد</button>
         </div>
         <div class="table-wrapper">
           <table class="data-table">
             <thead>
               <tr>
-                <th>#</th>
-                <th>عنوان الشاهد</th>
-                <th>النوع</th>
-                <th>المبادرة</th>
-                <th>المسؤولة</th>
-                <th>تاريخ الرفع</th>
-                <th>الرابط</th>
-                <th>إجراءات</th>
+                <th>#</th><th>عنوان الشاهد</th><th>النوع</th><th>البرنامج / المبادرة</th>
+                <th>المسؤولة</th><th>تاريخ الرفع</th><th>الرابط / الملف</th><th>إجراءات</th>
               </tr>
             </thead>
             <tbody id="reports-tbody"></tbody>
@@ -270,20 +264,13 @@
 
       <!-- ===== TEACHERS ===== -->
       <section id="section-teachers" class="section">
-        <div class="section-top">
-          <h2>متابعة المعلمات</h2>
-        </div>
+        <div class="section-top"><h2>متابعة المعلمات</h2></div>
         <div class="table-wrapper">
           <table class="data-table">
             <thead>
               <tr>
-                <th>اسم المعلمة</th>
-                <th>المهام المسندة</th>
-                <th>المهام المنجزة</th>
-                <th>نسبة الإنجاز</th>
-                <th>آخر تقرير</th>
-                <th>ملاحظات القائدة</th>
-                <th>إجراءات</th>
+                <th>اسم المعلمة</th><th>المهام المسندة</th><th>المهام المنجزة</th>
+                <th>نسبة الإنجاز</th><th>آخر تقرير</th><th>ملاحظات القائدة</th><th>إجراءات</th>
               </tr>
             </thead>
             <tbody id="teachers-tbody"></tbody>
@@ -314,7 +301,7 @@
             <canvas id="tasks-pie-chart" width="320" height="250"></canvas>
           </div>
           <div class="card">
-            <div class="card-header"><h3>🏆 أعلى المبادرات إنجازًا</h3></div>
+            <div class="card-header"><h3>🏆 أعلى البرامج إنجازًا</h3></div>
             <div id="top-initiatives"></div>
           </div>
         </div>
@@ -330,29 +317,21 @@
         <div class="settings-grid">
           <div class="card">
             <div class="card-header"><h3>⚙️ إعدادات المدرسة</h3></div>
-            <div class="form-group">
-              <label>اسم المدرسة</label>
-              <input type="text" id="setting-school" value="" />
+            <div style="padding:20px">
+              <div class="form-group"><label>اسم المدرسة</label><input type="text" id="setting-school" /></div>
+              <div class="form-group"><label>العام الدراسي</label><input type="text" id="setting-year" /></div>
+              <div class="form-group"><label>اسم القائدة</label><input type="text" id="setting-principal" /></div>
+              <div class="form-group"><label>المنطقة التعليمية</label><input type="text" id="setting-region" /></div>
+              <button class="btn-primary" onclick="saveSettings()">💾 حفظ الإعدادات</button>
             </div>
-            <div class="form-group">
-              <label>العام الدراسي</label>
-              <input type="text" id="setting-year" value="" />
-            </div>
-            <div class="form-group">
-              <label>اسم القائدة</label>
-              <input type="text" id="setting-principal" value="" />
-            </div>
-            <div class="form-group">
-              <label>المنطقة التعليمية</label>
-              <input type="text" id="setting-region" value="" />
-            </div>
-            <button class="btn-primary" onclick="saveSettings()">💾 حفظ الإعدادات</button>
           </div>
           <div class="card">
             <div class="card-header"><h3>🔄 إدارة البيانات</h3></div>
-            <p style="color:var(--text-muted);margin-bottom:16px;">جميع البيانات محفوظة في المتصفح (LocalStorage). يمكنك إعادة ضبط البيانات التجريبية في أي وقت.</p>
-            <button class="btn-warning" onclick="resetToDemo()">🔄 إعادة تحميل البيانات التجريبية</button>
-            <button class="btn-danger" onclick="clearAllData()">🗑️ مسح جميع البيانات</button>
+            <div style="padding:20px">
+              <p style="color:var(--text-muted);margin-bottom:16px;font-size:13px">جميع البيانات محفوظة في المتصفح (LocalStorage). يمكنك إعادة ضبط البيانات التجريبية في أي وقت.</p>
+              <button class="btn-warning" onclick="resetToDemo()">🔄 إعادة تحميل البيانات التجريبية</button>
+              <button class="btn-danger mt-10" onclick="clearAllData()">🗑️ مسح جميع البيانات</button>
+            </div>
           </div>
         </div>
       </section>
@@ -361,7 +340,155 @@
   </div><!-- end main-content -->
 </div><!-- end app -->
 
-<!-- ===== MODALS ===== -->
+<!-- ========== MODALS ========== -->
+
+<!-- Program Modal (NEW) -->
+<div id="program-modal" class="modal-overlay hidden">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <h3 id="program-modal-title">إضافة برنامج جديد</h3>
+      <button onclick="closeModal('program-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="prog-edit-id" />
+      <div class="form-row">
+        <div class="form-group">
+          <label>اسم البرنامج <span class="req">*</span></label>
+          <input type="text" id="prog-name" placeholder="اسم البرنامج" />
+        </div>
+        <div class="form-group">
+          <label>المسؤول عن التنفيذ <span class="req">*</span></label>
+          <input type="text" id="prog-resp" placeholder="اسم المسؤولة" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label>وصف البرنامج</label>
+        <textarea id="prog-desc" placeholder="وصف مختصر للبرنامج وأهدافه..."></textarea>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>الفئة المستهدفة</label>
+          <input type="text" id="prog-target" placeholder="مثال: طالبات المرحلة المتوسطة" />
+        </div>
+        <div class="form-group">
+          <label>تاريخ البدء <span class="req">*</span></label>
+          <input type="date" id="prog-start" onchange="autoCalcProgStatus()" />
+        </div>
+        <div class="form-group">
+          <label>تاريخ الانتهاء <span class="req">*</span></label>
+          <input type="date" id="prog-end" onchange="autoCalcProgStatus()" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>نسبة الإنجاز (%)</label>
+          <input type="number" id="prog-progress" min="0" max="100" placeholder="0" oninput="autoCalcProgStatus()" />
+        </div>
+        <div class="form-group">
+          <label>حالة البرنامج (تلقائية)</label>
+          <input type="text" id="prog-status-display" readonly placeholder="ستُحسب تلقائياً" style="background:#f8f9fa;cursor:default" />
+          <input type="hidden" id="prog-status" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label>مؤشرات الإنجاز (اكتبي كل مؤشر في سطر)</label>
+        <textarea id="prog-indicators" placeholder="مثال:&#10;تم تنفيذ 3 ورش تدريبية&#10;استفادت 120 طالبة&#10;تحسّن المعدل العام بنسبة 10%"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="saveProgram()">💾 حفظ البرنامج</button>
+      <button class="btn-secondary" onclick="closeModal('program-modal')">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- Evidence Modal (NEW) -->
+<div id="evidence-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="evidence-modal-title">إضافة شاهد</h3>
+      <button onclick="closeModal('evidence-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="ev-program-id" />
+      <input type="hidden" id="ev-edit-id" />
+      <div class="form-row">
+        <div class="form-group">
+          <label>اسم الشاهد <span class="req">*</span></label>
+          <input type="text" id="ev-title" placeholder="عنوان الشاهد أو التقرير" />
+        </div>
+        <div class="form-group">
+          <label>نوع الشاهد</label>
+          <select id="ev-type" onchange="toggleEvidenceInput()">
+            <option value="link">🔗 رابط خارجي</option>
+            <option value="file">📎 ملف (PDF / Word / Excel)</option>
+            <option value="image">🖼️ صورة</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Link input -->
+      <div id="ev-link-group" class="form-group">
+        <label>الرابط الخارجي</label>
+        <input type="url" id="ev-link" placeholder="https://drive.google.com/... أو YouTube أو أي رابط" />
+        <small style="color:var(--text-muted)">Google Drive · YouTube · رابط تقرير · أي رابط خارجي</small>
+      </div>
+
+      <!-- File input -->
+      <div id="ev-file-group" class="form-group hidden">
+        <label>رفع ملف (PDF / Word / Excel)</label>
+        <div class="file-upload-area" id="file-upload-area" onclick="document.getElementById('ev-file-input').click()">
+          <div class="file-upload-icon">📎</div>
+          <div class="file-upload-text">انقري للاختيار أو اسحبي الملف هنا</div>
+          <div class="file-upload-sub">PDF · DOCX · XLSX (الحجم الأقصى: 5 MB)</div>
+        </div>
+        <input type="file" id="ev-file-input" accept=".pdf,.doc,.docx,.xls,.xlsx" style="display:none" onchange="handleFileSelect(this)" />
+        <div id="ev-file-preview" class="file-preview hidden"></div>
+      </div>
+
+      <!-- Image input -->
+      <div id="ev-image-group" class="form-group hidden">
+        <label>رفع صورة</label>
+        <div class="file-upload-area" id="image-upload-area" onclick="document.getElementById('ev-image-input').click()">
+          <div class="file-upload-icon">🖼️</div>
+          <div class="file-upload-text">انقري للاختيار أو اسحبي الصورة هنا</div>
+          <div class="file-upload-sub">JPG · PNG · GIF · WebP</div>
+        </div>
+        <input type="file" id="ev-image-input" accept="image/*" style="display:none" onchange="handleImageSelect(this)" />
+        <div id="ev-image-preview" class="image-preview hidden"></div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>المسؤولة / الرافعة</label>
+          <input type="text" id="ev-person" placeholder="اسم المعلمة أو المسؤولة" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label>ملاحظات</label>
+        <textarea id="ev-notes" placeholder="ملاحظات إضافية..."></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="saveEvidence()">📎 حفظ الشاهد</button>
+      <button class="btn-secondary" onclick="closeModal('evidence-modal')">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- Program Detail Modal (View) -->
+<div id="program-detail-modal" class="modal-overlay hidden">
+  <div class="modal modal-xl">
+    <div class="modal-header">
+      <h3 id="detail-modal-title">تفاصيل البرنامج</h3>
+      <button onclick="closeModal('program-detail-modal')">✕</button>
+    </div>
+    <div class="modal-body" id="program-detail-body"></div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeModal('program-detail-modal')">إغلاق</button>
+    </div>
+  </div>
+</div>
 
 <!-- Initiative Modal -->
 <div id="initiative-modal" class="modal-overlay hidden">
@@ -487,7 +614,7 @@
   </div>
 </div>
 
-<!-- Report Modal -->
+<!-- Report Modal (enhanced) -->
 <div id="report-modal" class="modal-overlay hidden">
   <div class="modal">
     <div class="modal-header">
@@ -505,14 +632,17 @@
           <select id="rep-type">
             <option value="صورة">📷 صورة</option>
             <option value="PDF">📄 ملف PDF</option>
+            <option value="Word">📝 ملف Word</option>
+            <option value="Excel">📊 ملف Excel</option>
             <option value="Google Drive">☁️ رابط Google Drive</option>
-            <option value="فيديو">🎥 فيديو</option>
+            <option value="YouTube">🎥 رابط YouTube</option>
+            <option value="رابط خارجي">🔗 رابط خارجي</option>
           </select>
         </div>
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label>المبادرة المرتبطة</label>
+          <label>البرنامج / المبادرة المرتبطة</label>
           <select id="rep-initiative"></select>
         </div>
         <div class="form-group">
@@ -521,7 +651,7 @@
         </div>
       </div>
       <div class="form-group">
-        <label>رابط الشاهد (Google Drive أو أي رابط)</label>
+        <label>رابط الشاهد</label>
         <input type="url" id="rep-link" placeholder="https://drive.google.com/..." />
       </div>
       <div class="form-group">
@@ -591,7 +721,7 @@
   </div>
 </div>
 
-<!-- Toast Notification -->
+<!-- Toast -->
 <div id="toast" class="toast hidden"></div>
 
 <script src="script.js"></script>
