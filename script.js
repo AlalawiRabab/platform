@@ -431,7 +431,7 @@ async function deleteIndicator(programId, indicatorId) {
 // ===== 8. INIT LOCAL
 // =========================================================
 function initLocalData() {
-  if (!lsLoad('sop_initiatives', null)) lsSave('initiatives', DEMO_INITIATIVES);
+ if (!lsLoad('initiatives', null)) lsSave('initiatives', DEMO_INITIATIVES)
   if (!lsLoad('sop_tasks',       null)) lsSave('tasks',       DEMO_TASKS);
   if (!lsLoad('sop_kpi',         null)) lsSave('kpi',         DEMO_KPI);
   if (!lsLoad('sop_reports',     null)) lsSave('reports',     DEMO_REPORTS);
