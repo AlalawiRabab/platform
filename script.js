@@ -323,10 +323,12 @@ async function updateProgram(p) {
   if (error) throw error;
   const existing = programsCache.find(x => x.id === p.id) || {};
   p.evidence = existing.evidence || p.evidence || [];
-  saveProgExtra(data.id, p);
+ saveProgExtra(p.id, p);
   const prog = sbRowToProgram(data);
   prog.indicators = indicatorsCache[prog.id] || [];
   prog.evidence   = p.evidence;
+   const idx = programsCache.findIndex(x => x.id === p.id);
+if (idx !== -1) programsCache[idx] = prog;
   return prog;
 }
 
