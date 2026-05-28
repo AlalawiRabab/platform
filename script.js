@@ -731,7 +731,7 @@ function openProgramModal(id) {
   const pdEl = document.getElementById('prog-status-display'); if (pdEl) pdEl.value = '';
 
   if (id) {
-    const p = programsCache.find(x => x.id === id); if (!p) return;
+   const p = programsCache.find(x => String(x.id) === String(id)); if (!p) return;
     document.getElementById('prog-edit-id').value = p.id;
     if (titleEl) titleEl.textContent = 'تعديل البرنامج';
     const setV = (fid, val) => { const el=document.getElementById(fid); if(el) el.value=val||''; };
