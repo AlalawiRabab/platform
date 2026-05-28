@@ -891,7 +891,7 @@ function renderProgramCard(p) {
     : '<span style="font-size:12px;color:var(--text-muted)">لا توجد شواهد بعد</span>';
 
   // أزرار الإجراءات حسب الصلاحية
-  const editBtn   = can('editProgram')   ? `<button class="btn-sm btn-edit"   onclick="openProgramModal(${p.id})">✏️ تعديل</button>` : '';
+  const editBtn   = can('editProgram')   ? `<button class="btn-sm btn-edit"   onclick="openProgramModal('${p.id}')">✏️ تعديل</button>` : '';
   const deleteBtn = can('deleteProgram') ? `<button class="btn-sm btn-delete" onclick="deleteProgram('${p.id}')">🗑️ حذف</button>` : '';
   const addEvBtn  = can('addEvidence')   ? `<button class="btn-sm btn-evidence" onclick="openEvidenceModal('${p.id}')">+ إضافة شاهد</button>` : '';
 
