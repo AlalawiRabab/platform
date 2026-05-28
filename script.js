@@ -431,12 +431,12 @@ async function deleteIndicator(programId, indicatorId) {
 // ===== 8. INIT LOCAL
 // =========================================================
 function initLocalData() {
- if (!lsLoad('initiatives', null)) lsSave('initiatives', DEMO_INITIATIVES)
-  if (!lsLoad('sop_tasks',       null)) lsSave('tasks',       DEMO_TASKS);
-  if (!lsLoad('sop_kpi',         null)) lsSave('kpi',         DEMO_KPI);
-  if (!lsLoad('sop_reports',     null)) lsSave('reports',     DEMO_REPORTS);
-  if (!lsLoad('sop_teachers',    null)) lsSave('teachers',    DEMO_TEACHERS);
-  if (!lsLoad('sop_settings',    null)) lsSave('settings',    DEMO_SETTINGS);
+  if (!localStorage.getItem('sop_initiatives')) lsSave('initiatives', DEMO_INITIATIVES);
+  if (!localStorage.getItem('sop_tasks')) lsSave('tasks', DEMO_TASKS);
+  if (!localStorage.getItem('sop_kpi')) lsSave('kpi', DEMO_KPI);
+  if (!localStorage.getItem('sop_reports')) lsSave('reports', DEMO_REPORTS);
+  if (!localStorage.getItem('sop_teachers')) lsSave('teachers', DEMO_TEACHERS);
+  if (!localStorage.getItem('sop_settings')) lsSave('settings', DEMO_SETTINGS);
 }
 
 async function resetToDemo() {
