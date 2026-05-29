@@ -1051,7 +1051,12 @@ function viewProgramDetail(id) {
   const status        = calcProgramStatus(p);
   const pct           = parseInt(p.progress) || 0;
   const progressColor = pct>=90?'#27ae60':pct>=60?'#2e86c1':pct>=30?'#f39c12':'#e74c3c';
-  const evidence      = p.evidence || [];
+ const reports = lsLoad('reports', []);
+
+const evidence = [
+  ...(p.evidence || []),
+  ...reports.filter(r => String(r.programId) === String(id))
+];
   const inds          = indicatorsCache[id] || p.indicators || [];
 
   const titleEl = document.getElementById('detail-modal-title');
