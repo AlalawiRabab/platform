@@ -1533,10 +1533,22 @@ function deleteTask(id){if(!confirm('حذف هذه المهمة؟'))return;lsSav
 // ===== 28. REPORTS
 // =========================================================
 function openReportModal(){
-  const progs=programsCache;const inis=lsLoad('initiatives',[]);
- const sel=document.getElementById('rep-program');
-  if(sel)sel.innerHTML=[...progs.map(p=><option value="${p.id}">📋 ${p.name}</option>),...inis.map(i=>`<option value="${i.name}">📌 ${i.name}</option>`)].join('');
-  ['rep-title','rep-person','rep-link','rep-notes'].forEach(f=>{const el=document.getElementById(f);if(el)el.value='';});
+  const progs = programsCache || [];
+  const inis = lsLoad('initiatives', []);
+  const sel = document.getElementById('rep-program');
+
+  if(sel){
+    sel.innerHTML = [
+      ...progs.map(p => <option value="${p.id}">📋 ${p.name}</option>),
+      ...inis.map(i => <option value="${i.name}">📌 ${i.name}</option>)
+    ].join('');
+  }
+
+  ['rep-title','rep-person','rep-link','rep-notes'].forEach(f=>{
+    const el = document.getElementById(f);
+    if(el) el.value = '';
+  });
+
   openModal('report-modal');
 }
 function renderReports(){
