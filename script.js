@@ -1539,8 +1539,8 @@ function openReportModal(){
 
   if(sel){
     sel.innerHTML = [
-      ...progs.map(p => <option value="${p.id}">📋 ${p.name}</option>),
-      ...inis.map(i => <option value="${i.name}">📌 ${i.name}</option>)
+     ...progs.map(p => `<option value="${p.id}">📋 ${p.name}</option>`),
+...inis.map(i => `<option value="${i.name}">📌 ${i.name}</option>`)
     ].join('');
   }
 
