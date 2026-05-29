@@ -1055,7 +1055,7 @@ function viewProgramDetail(id) {
 
 const evidence = [
   ...(p.evidence || []),
-  ..reports.filter(r =>
+  ...reports.filter(r =>
   String(r.programId) === String(id) ||
   String(r.program) === String(id) ||
   r.initiative === p.name
