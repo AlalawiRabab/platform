@@ -1564,9 +1564,24 @@ function deleteReport(id){if(!confirm('حذف هذا الشاهد؟'))return;lsS
 // ===== 29. TEACHERS
 // =========================================================
 function renderTeachers(){
-  const teachers=lsLoad('teachers',[]);
-  const tbody=document.getElementById('teachers-tbody');if(!tbody)return;
-  tbody.innerHTML=teachers.map(t=>{const pct=t.assigned>0?Math.round((t.done/t.assigned)*100):0;const bc=pct>=90?'badge-success':pct>=70?'badge-warning':'badge-danger';return`<tr><td style="font-weight:700">${t.name}</td><td style="text-align:center">${t.assigned}</td><td style="text-align:center">${t.done}</td><td><div class="progress-wrap"><div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div><span class="progress-text">${pct}%</span></div></td><td>${formatDate(t.lastReport)}</td><td style="font-size:13px">${t.notes||'<span style="color:#ccc">—</span>'}</td><td><button class="btn-sm btn-note" onclick="openTeacherNote(${t.id})">📝 ملاحظة</button></td></tr>`;}).join('');
+  const teachers = lsLoad('teachers', []);
+  const tbody = document.getElementById('teachers-tbody');
+  if(!tbody) return;
+
+  tbody.innerHTML = teachers.length ? teachers.map(t => {
+    const pct = t.assigned ? Math.round((t.done / t.assigned) * 100) : 0;
+    const bc = pct >= 90 ? 'badge-success' : pct >= 70 ? 'badge-warning' : 'badge-danger';
+
+    return `
+      <tr>
+        <td>${t.name || ''}</td>
+        <td>${t.assigned || 0}</td>
+        <td>${t.done || 0}</td>
+        <td><span class="badge ${bc}">${pct}%</span></td>
+        <td><button onclick="openTeacherNote(${t.id})">ملاحظة</button></td>
+      </tr>
+    `;
+  }).join('') : '<tr><td colspan="5" style="text-align:center">لا توجد بيانات</td></tr>';
 }
 function openTeacherNote(id){const t=lsLoad('teachers',[]).find(t=>t.id===id);if(!t)return;document.getElementById('teacher-note-id').value=id;document.getElementById('teacher-note-text').value=t.notes||'';openModal('teacher-note-modal');}
 function saveTeacherNote(){const id=parseInt(document.getElementById('teacher-note-id')?.value);const note=document.getElementById('teacher-note-text')?.value.trim();const teachers=lsLoad('teachers',[]);const idx=teachers.findIndex(t=>t.id===id);if(idx!==-1){teachers[idx].notes=note;lsSave('teachers',teachers);}closeModal('teacher-note-modal');renderTeachers();showToast('تم حفظ الملاحظة ✅','success');}
