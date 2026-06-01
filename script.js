@@ -1574,16 +1574,40 @@ function renderReports(){
     :'<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-muted)">لا توجد شواهد</td></tr>';
 }
 function saveReport(){
-  const report={id:Date.now(),title:document.getElementById('rep-title')?.value.trim(),type:document.getElementById('rep-type')?.value,programId:document.getElementById('rep-program')?.value,programName: document.getElementById('rep-program').selectedOptions[0]?.text || ''
-initiative:(programsCache.find(
-p=>String(p.id)===String(document.getElementById('rep-program')?.value)
-)||{}).name || '',
-person:document.getElementById('rep-person')?.value.trim(),date:new Date().toISOString().split('T')[0],link:document.getElementById('rep-link')?.value.trim(),notes:document.getElementById('rep-notes')?.value.trim()};
- if(!document.getElementById('rep-program')?.value){
+  const selectedProgramId = document.getElementById('rep-program')?.value || '';
+  const selectedProgram = programsCache.find(
+    p => String(p.id) === String(selectedProgramId)
+  );
+
+  const report = {
+    id: Date.now(),
+    title: document.getElementById('rep-title')?.value.trim(),
+    type: document.getElementById('rep-type')?.value,
+    programId: selectedProgramId,
+    programName: selectedProgram?.name || document.getElementById('rep-program')?.selectedOptions[0]?.text || '',
+    initiative: selectedProgram?.name || '',
+    person: document.getElementById('rep-person')?.value.trim(),
+    date: new Date().toISOString().split('T')[0],
+    link: document.getElementById('rep-link')?.value.trim(),
+    notes: document.getElementById('rep-notes')?.value.trim()
+  };
+
+  if (!selectedProgramId) {
     showToast('يرجى اختيار البرنامج','error');
     return;
-} if(!report.title){showToast('يرجى إدخال عنوان الشاهد','error');return;}
-  const data=lsLoad('reports',[]);data.push(report);lsSave('reports',data);closeModal('report-modal');renderReports();showToast('تم رفع الشاهد ✅','success');
+  }
+
+  if (!report.title) {
+    showToast('يرجى إدخال عنوان الشاهد','error');
+    return;
+  }
+
+  const data = lsLoad('reports', []);
+  data.push(report);
+  lsSave('reports', data);
+  closeModal('report-modal');
+  renderReports();
+  showToast('تم رفع الشاهد ✅','success');
 }
 function deleteReport(id){if(!confirm('حذف هذا الشاهد؟'))return;lsSave('reports',lsLoad('reports',[]).filter(r=>r.id!==id));renderReports();showToast('تم الحذف 🗑️','warning');}
 
