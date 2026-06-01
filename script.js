@@ -772,10 +772,11 @@ async function saveProgram() {
     let saved;
     if (editId) {
       const existing = programsCache.find(x => x.id === editId);
-      p.evidence = existing?.evidence || [];
+      p.evidence = existing?.evidence || p.evidence || [];
+p.reports = existing?.reports || p.reports || [];
       saved = await updateProgram(p);
       const idx = programsCache.findIndex(x => x.id === saved.id);
-      if (idx !== -1) programsCache[idx] = saved;
+     if (idx !== -1) programsCache[idx] = { ...programsCache[idx], ...saved };
     } else {
       saved = await insertProgram(p);
       saved.indicators = [];
@@ -1051,11 +1052,15 @@ function viewProgramDetail(id) {
   const status        = calcProgramStatus(p);
   const pct           = parseInt(p.progress) || 0;
   const progressColor = pct>=90?'#27ae60':pct>=60?'#2e86c1':pct>=30?'#f39c12':'#e74c3c';
- const reports = lsLoad('sop_reports', []);
-const evidence = reports.filter(r =>
-    String(r.programId) === String(id) ||
-    String(r.program) === String(id) ||
-    r.initiative === p.name
+const reports = [
+  ...lsLoad('reports', []),
+  ...lsLoad('sop_reports', [])
+];
+onst evidence = reports.filter(r =>
+  String(r.programId) === String(id) ||
+  String(r.program) === String(id) ||
+  r.programName === p.name ||
+  r.initiative === p.name
 );
 
   const inds          = indicatorsCache[id] || p.indicators || [];
@@ -1565,7 +1570,7 @@ function renderReports(){
     :'<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-muted)">لا توجد شواهد</td></tr>';
 }
 function saveReport(){
-  const report={id:Date.now(),title:document.getElementById('rep-title')?.value.trim(),type:document.getElementById('rep-type')?.value,programId:document.getElementById('rep-program')?.value,
+  const report={id:Date.now(),title:document.getElementById('rep-title')?.value.trim(),type:document.getElementById('rep-type')?.value,programId:document.getElementById('rep-program')?.value,programName: document.getElementById('rep-program').selectedOptions[0]?.text || ''
 initiative:(programsCache.find(
 p=>String(p.id)===String(document.getElementById('rep-program')?.value)
 )||{}).name || '',
