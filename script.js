@@ -321,12 +321,15 @@ async function updateProgram(p) {
   const row = programToSbRow(p);
   const { data, error } = await sb.from('programs').update(row).eq('id', p.id).select().single();
   if (error) throw error;
-  const existing = programsCache.find(x => x.id === p.id) || {};
-  p.evidence = existing.evidence || p.evidence || [];
- saveProgExtra(p.id, p);
+ const existing = programsCache.find(x => String(x.id) === String(p.id)) || {};
+p.id = existing.id || p.id;
+p.evidence = existing.evidence || p.evidence || [];
+p.reports = existing.reports || p.reports || [];
+saveProgExtra(p.id, p);
   const prog = sbRowToProgram(data);
   prog.indicators = indicatorsCache[prog.id] || [];
   prog.evidence   = p.evidence;
+   prog.reports = p.reports;
    const idx = programsCache.findIndex(x => x.id === p.id);
 if (idx !== -1) programsCache[idx] = prog;
   return prog;
