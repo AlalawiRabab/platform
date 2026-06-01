@@ -1048,7 +1048,11 @@ function refreshIndicatorsInCard(programId) {
 // ===== 21. PROGRAM DETAIL MODAL
 // =========================================================
 function viewProgramDetail(id) {
-  const p = programsCache.find(x => x.id === id); if (!p) return;
+ const p = programsCache.find(x => String(x.id) === String(id));
+if (!p) {
+  showToast('لم يتم العثور على البرنامج', 'error');
+  return;
+}
   const status        = calcProgramStatus(p);
   const pct           = parseInt(p.progress) || 0;
   const progressColor = pct>=90?'#27ae60':pct>=60?'#2e86c1':pct>=30?'#f39c12':'#e74c3c';
