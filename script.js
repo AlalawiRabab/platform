@@ -1056,7 +1056,7 @@ const reports = [
   ...lsLoad('reports', []),
   ...lsLoad('sop_reports', [])
 ];
-onst evidence = reports.filter(r =>
+const evidence = reports.filter(r =>
   String(r.programId) === String(id) ||
   String(r.program) === String(id) ||
   r.programName === p.name ||
