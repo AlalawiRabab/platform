@@ -1584,7 +1584,7 @@ function saveReport(){
     title: document.getElementById('rep-title')?.value.trim(),
     type: document.getElementById('rep-type')?.value,
     programId: selectedProgramId,
-    programName: selectedProgram?.name || document.getElementById('rep-program')?.selectedOptions[0]?.text || '',
+    programName: selectedProgram?.name || '',
     initiative: selectedProgram?.name || '',
     person: document.getElementById('rep-person')?.value.trim(),
     date: new Date().toISOString().split('T')[0],
