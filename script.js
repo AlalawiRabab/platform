@@ -523,7 +523,7 @@ async function doLogin() {
     if (loginBtn) { loginBtn.disabled = false; loginBtn.textContent = 'دخول إلى المنصة'; }
   }
 }
-
+window.doLogin = doLogin;
 function doLogout() {
   currentUser  = null;
   programsCache   = [];
