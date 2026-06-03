@@ -11,7 +11,10 @@
    Supabase Dashboard → Project Settings → API → Project URL + anon public key
    ================================================================ */
 
-const SUPABASE_URL  = 'https://YOUR_PROJECT_ID.supabase.co';
-const SUPABASE_ANON = 'YOUR_ANON_PUBLIC_KEY_HERE';   // anon key فقط — وليس service_role
+const SUPABASE_URL = 'https://qeabgktifyyyjrzphtpw.supabase.co';
 
-const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+const SUPABASE_ANON = 'sb_publishable_G3EvrlPIwhYfrnauHQDveA_bW4YpVwl';
+const supabaseClient = supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_ANON
+);
