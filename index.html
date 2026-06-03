@@ -1,65 +1,54 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
   <title>منصة الخطة التشغيلية المدرسية</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css"/>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&family=Cairo:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
 </head>
 <body>
 
-<!-- ===== LOGIN PAGE ===== -->
+<!-- LOGIN -->
 <div id="login-page" class="login-page">
   <div class="login-bg-shapes">
-    <div class="shape shape-1"></div>
-    <div class="shape shape-2"></div>
-    <div class="shape shape-3"></div>
+    <div class="shape shape-1"></div><div class="shape shape-2"></div><div class="shape shape-3"></div>
   </div>
   <div class="login-container">
     <div class="login-header">
       <div class="login-logo"><div class="logo-icon">🏫</div></div>
-      <h1>منصة الخطة التشغيلية</h1>
-      <p>المملكة العربية السعودية — وزارة التعليم</p>
+      <h1 id="login-school-title">منصة الخطة التشغيلية المدرسية</h1>
+      <p>إدارة الأداء والإنجاز المدرسي — المملكة العربية السعودية</p>
     </div>
     <div class="login-card">
       <h2>تسجيل الدخول</h2>
-      <div class="form-group">
-        <label>نوع المستخدم</label>
-        <div class="role-selector">
-          <button class="role-btn active" data-role="principal" onclick="selectRole(this,'principal')">
-            <span class="role-icon">👩‍💼</span><span>مديرة المدرسة</span>
-          </button>
-          <button class="role-btn" data-role="vice" onclick="selectRole(this,'vice')">
-            <span class="role-icon">👩‍🏫</span><span>وكيلة</span>
-          </button>
-          <button class="role-btn" data-role="teacher" onclick="selectRole(this,'teacher')">
-            <span class="role-icon">📚</span><span>معلمة</span>
-          </button>
-          <button class="role-btn" data-role="admin" onclick="selectRole(this,'admin')">
-            <span class="role-icon">🗂️</span><span>إدارية</span>
-          </button>
-        </div>
+      <div class="login-field-group">
+        <label for="login-email">البريد الإلكتروني</label>
+        <input type="email" id="login-email" placeholder="email@school.sa" autocomplete="email"/>
       </div>
-      <div class="form-group">
-        <label for="username">اسم المستخدم</label>
-        <input type="text" id="username" placeholder="أدخلي اسم المستخدم" value="admin" />
+      <div class="login-field-group">
+        <label for="login-password">كلمة المرور</label>
+        <input type="password" id="login-password" placeholder="كلمة المرور" autocomplete="current-password"
+               onkeydown="if(event.key==='Enter')doLogin()"/>
       </div>
-      <div class="form-group">
-        <label for="password">كلمة المرور</label>
-        <input type="password" id="password" placeholder="أدخلي كلمة المرور" value="1234" />
+      <button id="login-btn" class="btn-login" onclick="doLogin()">دخول إلى المنصة</button>
+      <div class="role-info-hint">
+        بيانات تجريبية:<br>
+        <strong>admin@school.sa</strong> / <strong>vice@school.sa</strong> / <strong>teacher@school.sa</strong><br>
+        كلمة المرور: <strong>1234</strong>
       </div>
-      <button class="btn-login" onclick="doLogin()">دخول إلى المنصة</button>
-      <p class="login-hint">دخول تجريبي — أي اسم مستخدم وكلمة مرور</p>
     </div>
   </div>
 </div>
 
-<!-- ===== MAIN APP ===== -->
+<!-- APP -->
 <div id="app" class="app hidden">
-
-  <!-- Sidebar -->
+  <div id="sidebar-overlay" class="sidebar-overlay" onclick="closeSidebar()"></div>
   <aside id="sidebar" class="sidebar">
     <div class="sidebar-header">
       <div class="sidebar-logo">🏫</div>
@@ -69,61 +58,62 @@
       </div>
     </div>
     <nav class="sidebar-nav">
-      <a href="#" class="nav-item active" data-section="dashboard" onclick="showSection('dashboard',this)">
+      <a href="#" class="nav-item active" data-section="dashboard" onclick="navTo('dashboard',this);return false">
         <span class="nav-icon">🏠</span><span>لوحة التحكم</span>
       </a>
-      <a href="#" class="nav-item nav-principal nav-vice" data-section="programs" onclick="showSection('programs',this)">
-        <span class="nav-icon">🗂️</span><span>برامج الخطة التشغيلية</span>
+      <a href="#" class="nav-item" data-section="programs" onclick="navTo('programs',this);return false">
+        <span class="nav-icon">🗂️</span><span>برامج الخطة</span>
       </a>
-      <a href="#" class="nav-item nav-principal nav-vice" data-section="plan" onclick="showSection('plan',this)">
+      <a href="#" class="nav-item" data-section="plan" onclick="navTo('plan',this);return false">
         <span class="nav-icon">📋</span><span>المبادرات</span>
       </a>
-      <a href="#" class="nav-item nav-principal nav-vice" data-section="kpi" onclick="showSection('kpi',this)">
+      <a href="#" class="nav-item" data-section="kpi" onclick="navTo('kpi',this);return false">
         <span class="nav-icon">📊</span><span>مؤشرات الأداء</span>
       </a>
-      <a href="#" class="nav-item nav-principal nav-vice nav-teacher" data-section="tasks" onclick="showSection('tasks',this)">
+      <a href="#" class="nav-item" data-section="tasks" onclick="navTo('tasks',this);return false">
         <span class="nav-icon">✅</span><span>المهام</span>
       </a>
-      <a href="#" class="nav-item nav-principal nav-vice nav-teacher nav-admin" data-section="reports" onclick="showSection('reports',this)">
+      <a href="#" class="nav-item" data-section="reports" onclick="navTo('reports',this);return false">
         <span class="nav-icon">📁</span><span>التقارير والشواهد</span>
       </a>
-      <a href="#" class="nav-item nav-principal nav-vice" data-section="teachers" onclick="showSection('teachers',this)">
+      <a href="#" class="nav-item" data-section="teachers" onclick="navTo('teachers',this);return false">
         <span class="nav-icon">👩‍🏫</span><span>متابعة المعلمات</span>
       </a>
-      <a href="#" class="nav-item nav-principal nav-vice nav-admin" data-section="calendar" onclick="showSection('calendar',this)">
+      <a href="#" class="nav-item" data-section="calendar" onclick="navTo('calendar',this);return false">
         <span class="nav-icon">📅</span><span>التقويم الزمني</span>
       </a>
-      <a href="#" class="nav-item nav-principal" data-section="stats" onclick="showSection('stats',this)">
+      <a href="#" class="nav-item" data-section="stats" onclick="navTo('stats',this);return false">
         <span class="nav-icon">📈</span><span>الإحصائيات</span>
       </a>
-      <a href="#" class="nav-item nav-principal" data-section="settings" onclick="showSection('settings',this)">
+      <a href="#" class="nav-item" data-section="settings" onclick="navTo('settings',this);return false">
         <span class="nav-icon">⚙️</span><span>الإعدادات</span>
+      </a>
+      <a href="#" class="nav-item" data-section="users" id="nav-users" style="display:none" onclick="navTo('users',this);return false">
+        <span class="nav-icon">👥</span><span>إدارة المستخدمين</span>
       </a>
     </nav>
     <div class="sidebar-footer">
-      <div class="user-badge"><span id="user-role-badge">مديرة المدرسة</span></div>
+      <div class="user-badge"><span id="user-role-badge">مدير</span></div>
       <button class="btn-logout" onclick="doLogout()">تسجيل الخروج</button>
     </div>
   </aside>
 
-  <!-- Main Content -->
   <div class="main-content">
     <header class="top-header">
-      <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
+      <button class="menu-toggle" onclick="toggleSidebar()" aria-label="القائمة">☰</button>
       <div class="header-title" id="section-title">لوحة التحكم</div>
       <div class="header-user">
-        <span id="header-user-name">أ. سارة العتيبي</span>
-        <div class="avatar">س</div>
+        <span id="header-user-name"></span>
+        <div class="avatar" id="header-avatar">م</div>
       </div>
     </header>
-
     <div class="content-area">
 
-      <!-- ===== DASHBOARD ===== -->
+      <!-- DASHBOARD -->
       <section id="section-dashboard" class="section active">
         <div class="section-intro">
-          <h2>مرحباً بك في منصة الخطة التشغيلية 👋</h2>
-          <p>نظرة عامة على سير العمل والإنجاز للعام الدراسي الحالي</p>
+          <h2 id="dash-greeting">منصة الخطة التشغيلية 👋</h2>
+          <p id="dash-subtitle">نظرة عامة على سير العمل والإنجاز للعام الدراسي الحالي</p>
         </div>
         <div class="stats-grid" id="dashboard-stats"></div>
         <div class="dashboard-row">
@@ -136,23 +126,19 @@
             <div id="upcoming-tasks-list"></div>
           </div>
         </div>
-        <div class="dashboard-row">
-          <div class="card full-width">
-            <div class="card-header"><h3>📊 نسبة إنجاز البرامج</h3></div>
-            <div id="initiatives-progress"></div>
-          </div>
+        <div class="card mt-20">
+          <div class="card-header"><h3>📊 نسبة إنجاز البرامج</h3></div>
+          <div id="initiatives-progress"></div>
         </div>
       </section>
 
-      <!-- ===== PROGRAMS (NEW) ===== -->
+      <!-- PROGRAMS -->
       <section id="section-programs" class="section">
         <div class="section-top">
           <h2>برامج الخطة التشغيلية</h2>
-          <button class="btn-primary" onclick="openProgramModal()">+ إضافة برنامج</button>
+          <button class="btn-primary" id="btn-add-program" onclick="openProgramModal()">+ إضافة برنامج</button>
         </div>
-        <!-- Stats Row -->
         <div class="stats-grid" id="programs-stats"></div>
-        <!-- Filter & Search -->
         <div class="filter-bar">
           <select id="prog-filter-status" onchange="renderPrograms()">
             <option value="all">جميع الحالات</option>
@@ -161,20 +147,19 @@
             <option value="done">منتهٍ</option>
             <option value="late">متأخر</option>
           </select>
-          <input type="text" id="prog-search" placeholder="🔍 بحث باسم البرنامج أو المسؤول..." oninput="renderPrograms()" />
+          <input type="text" id="prog-search" placeholder="🔍 بحث بالاسم أو المسؤول..." oninput="renderPrograms()"/>
         </div>
-        <!-- Programs Cards Grid -->
         <div class="programs-grid" id="programs-grid"></div>
       </section>
 
-      <!-- ===== PLAN (INITIATIVES) ===== -->
+      <!-- INITIATIVES -->
       <section id="section-plan" class="section">
         <div class="section-top">
           <h2>المبادرات</h2>
-          <button class="btn-primary" onclick="openModal('initiative-modal')">+ إضافة مبادرة</button>
+          <button class="btn-primary" id="btn-add-initiative" onclick="openInitiativeModal()">+ إضافة مبادرة</button>
         </div>
         <div class="filter-bar">
-          <select onchange="filterPlan(this.value)" id="plan-filter">
+          <select id="plan-filter" onchange="filterPlan(this.value)">
             <option value="all">جميع الأهداف</option>
             <option value="academic">تحسين التحصيل الدراسي</option>
             <option value="discipline">تعزيز الانضباط</option>
@@ -182,58 +167,53 @@
             <option value="community">الشراكة المجتمعية</option>
             <option value="identity">الهوية الوطنية</option>
           </select>
-          <input type="text" placeholder="🔍 بحث..." oninput="searchPlan(this.value)" />
+          <input type="text" id="plan-search" placeholder="🔍 بحث..." oninput="searchPlan(this.value)"/>
         </div>
         <div class="table-wrapper">
-          <table class="data-table" id="plan-table">
-            <thead>
-              <tr>
-                <th>#</th><th>الهدف الاستراتيجي</th><th>المبادرة</th>
-                <th>المسؤولة</th><th>البداية</th><th>النهاية</th>
-                <th>الحالة</th><th>الإنجاز</th><th>الدليل</th><th>إجراءات</th>
-              </tr>
-            </thead>
+          <table class="data-table">
+            <thead><tr>
+              <th>#</th><th>الهدف</th><th>المبادرة</th><th>المسؤولة</th>
+              <th>البداية</th><th>النهاية</th><th>الحالة</th><th>الإنجاز</th><th>الدليل</th><th>إجراءات</th>
+            </tr></thead>
             <tbody id="plan-tbody"></tbody>
           </table>
         </div>
       </section>
 
-      <!-- ===== KPI ===== -->
+      <!-- KPI -->
       <section id="section-kpi" class="section">
         <div class="section-top">
           <h2>مؤشرات الأداء KPI</h2>
-          <button class="btn-primary" onclick="openModal('kpi-modal')">+ إضافة مؤشر</button>
+          <button class="btn-primary" id="btn-add-kpi" onclick="openKpiModal()">+ إضافة مؤشر</button>
         </div>
         <div class="kpi-cards" id="kpi-cards"></div>
         <div class="card mt-20">
-          <div class="card-header"><h3>📊 رسم بياني لمؤشرات الأداء</h3></div>
-          <canvas id="kpi-chart" width="700" height="300"></canvas>
+          <div class="card-header"><h3>📊 رسم بياني للمؤشرات</h3></div>
+          <div style="overflow-x:auto"><canvas id="kpi-chart" height="300"></canvas></div>
         </div>
         <div class="table-wrapper mt-20">
           <table class="data-table">
-            <thead>
-              <tr><th>المؤشر</th><th>المستهدف</th><th>المتحقق</th><th>نسبة الإنجاز</th><th>الحالة</th></tr>
-            </thead>
+            <thead><tr><th>المؤشر</th><th>المستهدف</th><th>المتحقق</th><th>نسبة الإنجاز</th><th>الحالة</th><th>إجراءات</th></tr></thead>
             <tbody id="kpi-tbody"></tbody>
           </table>
         </div>
       </section>
 
-      <!-- ===== TASKS ===== -->
+      <!-- TASKS -->
       <section id="section-tasks" class="section">
         <div class="section-top">
           <h2>إدارة المهام</h2>
-          <button class="btn-primary" onclick="openModal('task-modal')">+ مهمة جديدة</button>
+          <button class="btn-primary" onclick="openTaskModal()">+ مهمة جديدة</button>
         </div>
         <div class="filter-bar">
-          <select onchange="filterTasks(this.value)">
+          <select id="task-filter-status" onchange="filterTasks(this.value)">
             <option value="all">جميع المهام</option>
             <option value="pending">معلقة</option>
             <option value="inprogress">قيد التنفيذ</option>
             <option value="done">منجزة</option>
             <option value="late">متأخرة</option>
           </select>
-          <select onchange="filterTasksPriority(this.value)">
+          <select id="task-filter-priority" onchange="filterTasksPriority(this.value)">
             <option value="all">كل الأولويات</option>
             <option value="high">عالية</option>
             <option value="medium">متوسطة</option>
@@ -243,7 +223,7 @@
         <div class="tasks-grid" id="tasks-grid"></div>
       </section>
 
-      <!-- ===== REPORTS ===== -->
+      <!-- REPORTS -->
       <section id="section-reports" class="section">
         <div class="section-top">
           <h2>التقارير والشواهد</h2>
@@ -251,34 +231,33 @@
         </div>
         <div class="table-wrapper">
           <table class="data-table">
-            <thead>
-              <tr>
-                <th>#</th><th>عنوان الشاهد</th><th>النوع</th><th>البرنامج / المبادرة</th>
-                <th>المسؤولة</th><th>تاريخ الرفع</th><th>الرابط / الملف</th><th>إجراءات</th>
-              </tr>
-            </thead>
+            <thead><tr>
+              <th>#</th><th>العنوان</th><th>النوع</th><th>البرنامج المرتبط</th>
+              <th>المسؤولة</th><th>التاريخ</th><th>الرابط</th><th>إجراءات</th>
+            </tr></thead>
             <tbody id="reports-tbody"></tbody>
           </table>
         </div>
       </section>
 
-      <!-- ===== TEACHERS ===== -->
+      <!-- TEACHERS -->
       <section id="section-teachers" class="section">
-        <div class="section-top"><h2>متابعة المعلمات</h2></div>
+        <div class="section-top">
+          <h2>متابعة المعلمات</h2>
+          <button class="btn-primary" id="btn-add-teacher" onclick="openTeacherModal()">+ إضافة سجل متابعة</button>
+        </div>
         <div class="table-wrapper">
           <table class="data-table">
-            <thead>
-              <tr>
-                <th>اسم المعلمة</th><th>المهام المسندة</th><th>المهام المنجزة</th>
-                <th>نسبة الإنجاز</th><th>آخر تقرير</th><th>ملاحظات القائدة</th><th>إجراءات</th>
-              </tr>
-            </thead>
+            <thead><tr>
+              <th>اسم المعلمة</th><th>المهام المسندة</th><th>المهام المنجزة</th>
+              <th>نسبة الإنجاز</th><th>آخر تقرير</th><th>الملاحظات</th><th>إجراءات</th>
+            </tr></thead>
             <tbody id="teachers-tbody"></tbody>
           </table>
         </div>
       </section>
 
-      <!-- ===== CALENDAR ===== -->
+      <!-- CALENDAR -->
       <section id="section-calendar" class="section">
         <div class="section-top">
           <h2>التقويم الزمني</h2>
@@ -291,7 +270,7 @@
         <div id="calendar-container"></div>
       </section>
 
-      <!-- ===== STATS ===== -->
+      <!-- STATS -->
       <section id="section-stats" class="section">
         <div class="section-top"><h2>الإحصائيات العامة</h2></div>
         <div class="stats-grid" id="stats-cards"></div>
@@ -301,173 +280,139 @@
             <canvas id="tasks-pie-chart" width="320" height="250"></canvas>
           </div>
           <div class="card">
-            <div class="card-header"><h3>🏆 أعلى البرامج إنجازًا</h3></div>
+            <div class="card-header"><h3>🏆 أعلى البرامج إنجازاً</h3></div>
             <div id="top-initiatives"></div>
           </div>
         </div>
         <div class="card mt-20">
           <div class="card-header"><h3>📈 مقارنة الإنجاز بالمستهدف</h3></div>
-          <canvas id="compare-chart" width="700" height="280"></canvas>
+          <div style="overflow-x:auto"><canvas id="compare-chart" height="280"></canvas></div>
         </div>
       </section>
 
-      <!-- ===== SETTINGS ===== -->
+      <!-- SETTINGS -->
       <section id="section-settings" class="section">
         <div class="section-top"><h2>الإعدادات</h2></div>
         <div class="settings-grid">
           <div class="card">
             <div class="card-header"><h3>⚙️ إعدادات المدرسة</h3></div>
             <div style="padding:20px">
-              <div class="form-group"><label>اسم المدرسة</label><input type="text" id="setting-school" /></div>
-              <div class="form-group"><label>العام الدراسي</label><input type="text" id="setting-year" /></div>
-              <div class="form-group"><label>اسم القائدة</label><input type="text" id="setting-principal" /></div>
-              <div class="form-group"><label>المنطقة التعليمية</label><input type="text" id="setting-region" /></div>
+              <div class="form-group"><label>اسم المدرسة</label><input type="text" id="setting-school"/></div>
+              <div class="form-group"><label>العام الدراسي</label><input type="text" id="setting-year"/></div>
+              <div class="form-group"><label>اسم القائدة</label><input type="text" id="setting-principal"/></div>
+              <div class="form-group"><label>المنطقة التعليمية</label><input type="text" id="setting-region"/></div>
               <button class="btn-primary" onclick="saveSettings()">💾 حفظ الإعدادات</button>
             </div>
           </div>
           <div class="card">
             <div class="card-header"><h3>🔄 إدارة البيانات</h3></div>
             <div style="padding:20px">
-              <p style="color:var(--text-muted);margin-bottom:16px;font-size:13px">جميع البيانات محفوظة في المتصفح (LocalStorage). يمكنك إعادة ضبط البيانات التجريبية في أي وقت.</p>
-              <button class="btn-warning" onclick="resetToDemo()">🔄 إعادة تحميل البيانات التجريبية</button>
-              <button class="btn-danger mt-10" onclick="clearAllData()">🗑️ مسح جميع البيانات</button>
+              <p style="color:var(--text-muted);margin-bottom:16px;font-size:13px">البيانات محفوظة في Supabase.</p>
+              <button class="btn-warning" onclick="resetToDemo()" style="width:100%;margin-bottom:10px">🔄 إعادة تحميل البيانات</button>
+              <button class="btn-danger" onclick="clearLocalCache()" style="width:100%">🗑️ مسح الكاش المحلي</button>
             </div>
           </div>
         </div>
       </section>
 
-    </div><!-- end content-area -->
-  </div><!-- end main-content -->
-</div><!-- end app -->
+      <!-- USERS -->
+      <section id="section-users" class="section">
+        <!-- Rendered dynamically -->
+      </section>
 
-<!-- ========== MODALS ========== -->
+    </div>
+  </div>
+</div>
 
-<!-- Program Modal (NEW) -->
+<!-- ════════════ MODALS ════════════ -->
+
+<!-- Program Modal -->
 <div id="program-modal" class="modal-overlay hidden">
   <div class="modal modal-lg">
     <div class="modal-header">
       <h3 id="program-modal-title">إضافة برنامج جديد</h3>
-      <button onclick="closeModal('program-modal')">✕</button>
+      <button onclick="closeModal('program-modal')" class="modal-close">✕</button>
     </div>
     <div class="modal-body">
-      <input type="hidden" id="prog-edit-id" />
+      <input type="hidden" id="prog-edit-id"/>
       <div class="form-row">
-        <div class="form-group">
-          <label>اسم البرنامج <span class="req">*</span></label>
-          <input type="text" id="prog-name" placeholder="اسم البرنامج" />
-        </div>
-        <div class="form-group">
-          <label>المسؤول عن التنفيذ <span class="req">*</span></label>
-          <input type="text" id="prog-resp" placeholder="اسم المسؤولة" />
-        </div>
+        <div class="form-group"><label>اسم البرنامج <span class="req">*</span></label><input type="text" id="prog-name" placeholder="اسم البرنامج"/></div>
+        <div class="form-group"><label>المسؤول <span class="req">*</span></label><input type="text" id="prog-resp" placeholder="اسم المسؤولة"/></div>
       </div>
-      <div class="form-group">
-        <label>وصف البرنامج</label>
-        <textarea id="prog-desc" placeholder="وصف مختصر للبرنامج وأهدافه..."></textarea>
+      <div class="form-group"><label>وصف البرنامج</label><textarea id="prog-desc" placeholder="وصف مختصر للبرنامج وأهدافه..."></textarea></div>
+      <div class="form-row">
+        <div class="form-group"><label>الفئة المستهدفة</label><input type="text" id="prog-target" placeholder="مثال: طالبات المرحلة المتوسطة"/></div>
+        <div class="form-group"><label>تاريخ البدء</label><input type="date" id="prog-start" onchange="autoCalcProgStatus()"/></div>
+        <div class="form-group"><label>تاريخ الانتهاء</label><input type="date" id="prog-end" onchange="autoCalcProgStatus()"/></div>
       </div>
       <div class="form-row">
-        <div class="form-group">
-          <label>الفئة المستهدفة</label>
-          <input type="text" id="prog-target" placeholder="مثال: طالبات المرحلة المتوسطة" />
-        </div>
-        <div class="form-group">
-          <label>تاريخ البدء <span class="req">*</span></label>
-          <input type="date" id="prog-start" onchange="autoCalcProgStatus()" />
-        </div>
-        <div class="form-group">
-          <label>تاريخ الانتهاء <span class="req">*</span></label>
-          <input type="date" id="prog-end" onchange="autoCalcProgStatus()" />
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>نسبة الإنجاز (%)</label>
-          <input type="number" id="prog-progress" min="0" max="100" placeholder="0" oninput="autoCalcProgStatus()" />
-        </div>
-        <div class="form-group">
-          <label>حالة البرنامج (تلقائية)</label>
-          <input type="text" id="prog-status-display" readonly placeholder="ستُحسب تلقائياً" style="background:#f8f9fa;cursor:default" />
-          <input type="hidden" id="prog-status" />
-        </div>
-      </div>
-      <div class="form-group">
-        <label>مؤشرات الإنجاز (اكتبي كل مؤشر في سطر)</label>
-        <textarea id="prog-indicators" placeholder="مثال:&#10;تم تنفيذ 3 ورش تدريبية&#10;استفادت 120 طالبة&#10;تحسّن المعدل العام بنسبة 10%"></textarea>
+        <div class="form-group"><label>نسبة الإنجاز (%)</label><input type="number" id="prog-progress" min="0" max="100" placeholder="0" oninput="autoCalcProgStatus()"/></div>
+        <div class="form-group"><label>الحالة (تلقائية)</label><input type="text" id="prog-status-display" readonly style="background:#f8f9fa;cursor:default"/><input type="hidden" id="prog-status"/></div>
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn-primary" onclick="saveProgram()">💾 حفظ البرنامج</button>
+      <button class="btn-primary" id="prog-save-btn" onclick="saveProgram()">💾 حفظ البرنامج</button>
       <button class="btn-secondary" onclick="closeModal('program-modal')">إلغاء</button>
     </div>
   </div>
 </div>
 
-<!-- Evidence Modal (NEW) -->
+<!-- Program Detail Modal -->
+<div id="program-detail-modal" class="modal-overlay hidden">
+  <div class="modal modal-xl">
+    <div class="modal-header">
+      <h3 id="detail-modal-title">تفاصيل البرنامج</h3>
+      <button onclick="closeModal('program-detail-modal')" class="modal-close">✕</button>
+    </div>
+    <div class="modal-body" id="program-detail-body"></div>
+    <div class="modal-footer"><button class="btn-secondary" onclick="closeModal('program-detail-modal')">إغلاق</button></div>
+  </div>
+</div>
+
+<!-- Evidence Modal -->
 <div id="evidence-modal" class="modal-overlay hidden">
   <div class="modal">
     <div class="modal-header">
       <h3 id="evidence-modal-title">إضافة شاهد</h3>
-      <button onclick="closeModal('evidence-modal')">✕</button>
+      <button onclick="closeModal('evidence-modal')" class="modal-close">✕</button>
     </div>
     <div class="modal-body">
-      <input type="hidden" id="ev-program-id" />
-      <input type="hidden" id="ev-edit-id" />
+      <input type="hidden" id="ev-program-id"/><input type="hidden" id="ev-edit-id"/>
       <div class="form-row">
-        <div class="form-group">
-          <label>اسم الشاهد <span class="req">*</span></label>
-          <input type="text" id="ev-title" placeholder="عنوان الشاهد أو التقرير" />
-        </div>
-        <div class="form-group">
-          <label>نوع الشاهد</label>
+        <div class="form-group"><label>عنوان الشاهد <span class="req">*</span></label><input type="text" id="ev-title" placeholder="عنوان الشاهد"/></div>
+        <div class="form-group"><label>نوع الشاهد</label>
           <select id="ev-type" onchange="toggleEvidenceInput()">
             <option value="link">🔗 رابط خارجي</option>
-            <option value="file">📎 ملف (PDF / Word / Excel)</option>
+            <option value="file">📎 ملف</option>
             <option value="image">🖼️ صورة</option>
           </select>
         </div>
       </div>
-
-      <!-- Link input -->
       <div id="ev-link-group" class="form-group">
         <label>الرابط الخارجي</label>
-        <input type="url" id="ev-link" placeholder="https://drive.google.com/... أو YouTube أو أي رابط" />
-        <small style="color:var(--text-muted)">Google Drive · YouTube · رابط تقرير · أي رابط خارجي</small>
+        <input type="url" id="ev-link" placeholder="https://drive.google.com/..."/>
+        <small style="color:var(--text-muted)">Google Drive · YouTube · رابط تقرير</small>
       </div>
-
-      <!-- File input -->
       <div id="ev-file-group" class="form-group hidden">
         <label>رفع ملف (PDF / Word / Excel)</label>
-        <div class="file-upload-area" id="file-upload-area" onclick="document.getElementById('ev-file-input').click()">
-          <div class="file-upload-icon">📎</div>
-          <div class="file-upload-text">انقري للاختيار أو اسحبي الملف هنا</div>
+        <div class="file-upload-area" onclick="document.getElementById('ev-file-input').click()">
+          <div class="file-upload-icon">📎</div><div class="file-upload-text">انقري للاختيار</div>
           <div class="file-upload-sub">PDF · DOCX · XLSX (الحجم الأقصى: 5 MB)</div>
         </div>
-        <input type="file" id="ev-file-input" accept=".pdf,.doc,.docx,.xls,.xlsx" style="display:none" onchange="handleFileSelect(this)" />
+        <input type="file" id="ev-file-input" accept=".pdf,.doc,.docx,.xls,.xlsx" style="display:none" onchange="handleFileSelect(this)"/>
         <div id="ev-file-preview" class="file-preview hidden"></div>
       </div>
-
-      <!-- Image input -->
       <div id="ev-image-group" class="form-group hidden">
         <label>رفع صورة</label>
-        <div class="file-upload-area" id="image-upload-area" onclick="document.getElementById('ev-image-input').click()">
-          <div class="file-upload-icon">🖼️</div>
-          <div class="file-upload-text">انقري للاختيار أو اسحبي الصورة هنا</div>
+        <div class="file-upload-area" onclick="document.getElementById('ev-image-input').click()">
+          <div class="file-upload-icon">🖼️</div><div class="file-upload-text">انقري للاختيار</div>
           <div class="file-upload-sub">JPG · PNG · GIF · WebP</div>
         </div>
-        <input type="file" id="ev-image-input" accept="image/*" style="display:none" onchange="handleImageSelect(this)" />
+        <input type="file" id="ev-image-input" accept="image/*" style="display:none" onchange="handleImageSelect(this)"/>
         <div id="ev-image-preview" class="image-preview hidden"></div>
       </div>
-
-      <div class="form-row">
-        <div class="form-group">
-          <label>المسؤولة / الرافعة</label>
-          <input type="text" id="ev-person" placeholder="اسم المعلمة أو المسؤولة" />
-        </div>
-      </div>
-      <div class="form-group">
-        <label>ملاحظات</label>
-        <textarea id="ev-notes" placeholder="ملاحظات إضافية..."></textarea>
-      </div>
+      <div class="form-group"><label>المسؤولة / الرافعة</label><input type="text" id="ev-person" placeholder="اسم المعلمة"/></div>
+      <div class="form-group"><label>ملاحظات</label><textarea id="ev-notes" placeholder="ملاحظات إضافية..."></textarea></div>
     </div>
     <div class="modal-footer">
       <button class="btn-primary" onclick="saveEvidence()">📎 حفظ الشاهد</button>
@@ -476,32 +421,17 @@
   </div>
 </div>
 
-<!-- Program Detail Modal (View) -->
-<div id="program-detail-modal" class="modal-overlay hidden">
-  <div class="modal modal-xl">
-    <div class="modal-header">
-      <h3 id="detail-modal-title">تفاصيل البرنامج</h3>
-      <button onclick="closeModal('program-detail-modal')">✕</button>
-    </div>
-    <div class="modal-body" id="program-detail-body"></div>
-    <div class="modal-footer">
-      <button class="btn-secondary" onclick="closeModal('program-detail-modal')">إغلاق</button>
-    </div>
-  </div>
-</div>
-
 <!-- Initiative Modal -->
 <div id="initiative-modal" class="modal-overlay hidden">
-  <div class="modal">
+  <div class="modal modal-lg">
     <div class="modal-header">
-      <h3>إضافة / تعديل مبادرة</h3>
-      <button onclick="closeModal('initiative-modal')">✕</button>
+      <h3 id="ini-modal-title">إضافة مبادرة جديدة</h3>
+      <button onclick="closeModal('initiative-modal')" class="modal-close">✕</button>
     </div>
     <div class="modal-body">
-      <input type="hidden" id="initiative-edit-id" />
+      <input type="hidden" id="ini-edit-id"/>
       <div class="form-row">
-        <div class="form-group">
-          <label>الهدف الاستراتيجي</label>
+        <div class="form-group"><label>الهدف الاستراتيجي</label>
           <select id="ini-goal">
             <option value="تحسين التحصيل الدراسي">تحسين التحصيل الدراسي</option>
             <option value="تعزيز الانضباط">تعزيز الانضباط</option>
@@ -511,32 +441,16 @@
             <option value="متابعة الفاقد التعليمي">متابعة الفاقد التعليمي</option>
           </select>
         </div>
-        <div class="form-group">
-          <label>اسم المبادرة</label>
-          <input type="text" id="ini-name" placeholder="اسم المبادرة" />
-        </div>
+        <div class="form-group"><label>اسم المبادرة <span class="req">*</span></label><input type="text" id="ini-name" placeholder="اسم المبادرة"/></div>
       </div>
-      <div class="form-group">
-        <label>وصف المبادرة</label>
-        <textarea id="ini-desc" placeholder="وصف مختصر للمبادرة..."></textarea>
+      <div class="form-group"><label>وصف المبادرة</label><textarea id="ini-desc" placeholder="وصف مختصر..."></textarea></div>
+      <div class="form-row">
+        <div class="form-group"><label>المسؤولة</label><input type="text" id="ini-resp" placeholder="اسم المسؤولة"/></div>
+        <div class="form-group"><label>تاريخ البداية</label><input type="date" id="ini-start"/></div>
+        <div class="form-group"><label>تاريخ النهاية</label><input type="date" id="ini-end"/></div>
       </div>
       <div class="form-row">
-        <div class="form-group">
-          <label>المسؤولة</label>
-          <input type="text" id="ini-resp" placeholder="اسم المسؤولة" />
-        </div>
-        <div class="form-group">
-          <label>تاريخ البداية</label>
-          <input type="date" id="ini-start" />
-        </div>
-        <div class="form-group">
-          <label>تاريخ النهاية</label>
-          <input type="date" id="ini-end" />
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>حالة التنفيذ</label>
+        <div class="form-group"><label>حالة التنفيذ</label>
           <select id="ini-status">
             <option value="لم تبدأ">لم تبدأ</option>
             <option value="قيد التنفيذ">قيد التنفيذ</option>
@@ -544,18 +458,12 @@
             <option value="متأخرة">متأخرة</option>
           </select>
         </div>
-        <div class="form-group">
-          <label>نسبة الإنجاز (%)</label>
-          <input type="number" id="ini-progress" min="0" max="100" placeholder="0" />
-        </div>
+        <div class="form-group"><label>نسبة الإنجاز (%)</label><input type="number" id="ini-progress" min="0" max="100" placeholder="0"/></div>
       </div>
-      <div class="form-group">
-        <label>رابط الدليل / الشاهد</label>
-        <input type="url" id="ini-link" placeholder="https://drive.google.com/..." />
-      </div>
+      <div class="form-group"><label>رابط الدليل / الشاهد</label><input type="url" id="ini-link" placeholder="https://drive.google.com/..."/></div>
     </div>
     <div class="modal-footer">
-      <button class="btn-primary" onclick="saveInitiative()">حفظ</button>
+      <button class="btn-primary" id="ini-save-btn" onclick="saveInitiative()">💾 حفظ المبادرة</button>
       <button class="btn-secondary" onclick="closeModal('initiative-modal')">إلغاء</button>
     </div>
   </div>
@@ -565,102 +473,62 @@
 <div id="task-modal" class="modal-overlay hidden">
   <div class="modal">
     <div class="modal-header">
-      <h3>إضافة مهمة جديدة</h3>
-      <button onclick="closeModal('task-modal')">✕</button>
+      <h3 id="task-modal-title">إضافة مهمة جديدة</h3>
+      <button onclick="closeModal('task-modal')" class="modal-close">✕</button>
     </div>
     <div class="modal-body">
-      <input type="hidden" id="task-edit-id" />
+      <input type="hidden" id="task-edit-id"/>
       <div class="form-row">
-        <div class="form-group">
-          <label>اسم المهمة</label>
-          <input type="text" id="task-name" placeholder="اسم المهمة" />
-        </div>
-        <div class="form-group">
-          <label>المسؤولة</label>
-          <input type="text" id="task-resp" placeholder="اسم المسؤولة" />
-        </div>
+        <div class="form-group"><label>اسم المهمة <span class="req">*</span></label><input type="text" id="task-name" placeholder="اسم المهمة"/></div>
+        <div class="form-group"><label>المسؤولة</label><input type="text" id="task-resp" placeholder="اسم المسؤولة"/></div>
       </div>
       <div class="form-row">
-        <div class="form-group">
-          <label>تاريخ الاستحقاق</label>
-          <input type="date" id="task-due" />
+        <div class="form-group"><label>تاريخ الاستحقاق</label><input type="date" id="task-due"/></div>
+        <div class="form-group"><label>الأولوية</label>
+          <select id="task-priority"><option value="high">عالية</option><option value="medium">متوسطة</option><option value="low">منخفضة</option></select>
         </div>
-        <div class="form-group">
-          <label>الأولوية</label>
-          <select id="task-priority">
-            <option value="high">عالية</option>
-            <option value="medium">متوسطة</option>
-            <option value="low">منخفضة</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>الحالة</label>
-          <select id="task-status">
-            <option value="pending">معلقة</option>
-            <option value="inprogress">قيد التنفيذ</option>
-            <option value="done">منجزة</option>
-          </select>
+        <div class="form-group"><label>الحالة</label>
+          <select id="task-status"><option value="pending">معلقة</option><option value="inprogress">قيد التنفيذ</option><option value="done">منجزة</option></select>
         </div>
       </div>
-      <div class="form-group">
-        <label>ملاحظات</label>
-        <textarea id="task-notes" placeholder="ملاحظات إضافية..."></textarea>
-      </div>
+      <div class="form-group"><label>ملاحظات</label><textarea id="task-notes" placeholder="ملاحظات إضافية..."></textarea></div>
     </div>
     <div class="modal-footer">
-      <button class="btn-primary" onclick="saveTask()">حفظ</button>
+      <button class="btn-primary" id="task-save-btn" onclick="saveTask()">💾 حفظ المهمة</button>
       <button class="btn-secondary" onclick="closeModal('task-modal')">إلغاء</button>
     </div>
   </div>
 </div>
 
-<!-- Report Modal (enhanced) -->
+<!-- Report Modal -->
 <div id="report-modal" class="modal-overlay hidden">
   <div class="modal">
     <div class="modal-header">
       <h3>رفع تقرير / شاهد</h3>
-      <button onclick="closeModal('report-modal')">✕</button>
+      <button onclick="closeModal('report-modal')" class="modal-close">✕</button>
     </div>
     <div class="modal-body">
+      <input type="hidden" id="rep-edit-id"/>
       <div class="form-row">
-        <div class="form-group">
-          <label>عنوان الشاهد</label>
-          <input type="text" id="rep-title" placeholder="عنوان الشاهد أو التقرير" />
-        </div>
-        <div class="form-group">
-          <label>نوع الشاهد</label>
+        <div class="form-group"><label>عنوان الشاهد <span class="req">*</span></label><input type="text" id="rep-title" placeholder="عنوان الشاهد أو التقرير"/></div>
+        <div class="form-group"><label>نوع الشاهد</label>
           <select id="rep-type">
-            <option value="صورة">📷 صورة</option>
-            <option value="PDF">📄 ملف PDF</option>
-            <option value="Word">📝 ملف Word</option>
-            <option value="Excel">📊 ملف Excel</option>
-            <option value="Google Drive">☁️ رابط Google Drive</option>
-            <option value="YouTube">🎥 رابط YouTube</option>
+            <option value="صورة">📷 صورة</option><option value="PDF">📄 ملف PDF</option>
+            <option value="Word">📝 ملف Word</option><option value="Excel">📊 ملف Excel</option>
+            <option value="Google Drive">☁️ Google Drive</option><option value="YouTube">🎥 YouTube</option>
             <option value="رابط خارجي">🔗 رابط خارجي</option>
           </select>
         </div>
       </div>
       <div class="form-row">
-        <div class="form-group">
-          <label>البرنامج / المبادرة المرتبطة</label>
-          <select id="rep-program" required></select>
-        </div>
-        <div class="form-group">
-          <label>المسؤولة</label>
-          <input type="text" id="rep-person" placeholder="اسم المعلمة أو المسؤولة" />
-        </div>
+        <div class="form-group"><label>البرنامج المرتبط</label><select id="rep-program-id"><option value="">— اختر البرنامج —</option></select></div>
+        <div class="form-group"><label>المسؤولة</label><input type="text" id="rep-person" placeholder="اسم المعلمة أو المسؤولة"/></div>
       </div>
-      <div class="form-group">
-        <label>رابط الشاهد</label>
-        <input type="url" id="rep-link" placeholder="https://drive.google.com/..." />
-      </div>
-      <div class="form-group">
-        <label>ملاحظات</label>
-        <textarea id="rep-notes" placeholder="ملاحظات إضافية..."></textarea>
-      </div>
+      <div class="form-group"><label>رابط الشاهد</label><input type="url" id="rep-link" placeholder="https://drive.google.com/..."/></div>
+      <div class="form-group"><label>ملاحظات</label><textarea id="rep-notes" placeholder="ملاحظات إضافية..."></textarea></div>
     </div>
     <div class="modal-footer">
-      <button class="btn-primary" onclick="saveReport()">رفع الشاهد</button>
+      <button class="btn-primary" id="rep-save-btn" onclick="saveReport()">📤 رفع الشاهد</button>
       <button class="btn-secondary" onclick="closeModal('report-modal')">إلغاء</button>
     </div>
   </div>
@@ -670,53 +538,48 @@
 <div id="kpi-modal" class="modal-overlay hidden">
   <div class="modal">
     <div class="modal-header">
-      <h3>إضافة مؤشر أداء</h3>
-      <button onclick="closeModal('kpi-modal')">✕</button>
+      <h3 id="kpi-modal-title">إضافة مؤشر أداء</h3>
+      <button onclick="closeModal('kpi-modal')" class="modal-close">✕</button>
     </div>
     <div class="modal-body">
-      <div class="form-group">
-        <label>اسم المؤشر</label>
-        <input type="text" id="kpi-name" placeholder="اسم مؤشر الأداء" />
-      </div>
+      <input type="hidden" id="kpi-edit-id"/>
+      <div class="form-group"><label>اسم المؤشر <span class="req">*</span></label><input type="text" id="kpi-name" placeholder="اسم مؤشر الأداء"/></div>
       <div class="form-row">
-        <div class="form-group">
-          <label>القيمة المستهدفة</label>
-          <input type="number" id="kpi-target" placeholder="المستهدف" />
-        </div>
-        <div class="form-group">
-          <label>القيمة المتحققة</label>
-          <input type="number" id="kpi-achieved" placeholder="المتحقق" />
-        </div>
+        <div class="form-group"><label>القيمة المستهدفة</label><input type="number" id="kpi-target" placeholder="المستهدف"/></div>
+        <div class="form-group"><label>القيمة المتحققة</label><input type="number" id="kpi-achieved" placeholder="المتحقق"/></div>
       </div>
-      <div class="form-group">
-        <label>وحدة القياس</label>
-        <input type="text" id="kpi-unit" placeholder="مثال: %، طالبة، ساعة..." />
-      </div>
+      <div class="form-group"><label>وحدة القياس</label><input type="text" id="kpi-unit" placeholder="مثال: %، طالبة، ساعة..."/></div>
     </div>
     <div class="modal-footer">
-      <button class="btn-primary" onclick="saveKPI()">حفظ</button>
+      <button class="btn-primary" id="kpi-save-btn" onclick="saveKPI()">💾 حفظ المؤشر</button>
       <button class="btn-secondary" onclick="closeModal('kpi-modal')">إلغاء</button>
     </div>
   </div>
 </div>
 
-<!-- Teacher Note Modal -->
-<div id="teacher-note-modal" class="modal-overlay hidden">
+<!-- Teacher Modal -->
+<div id="teacher-modal" class="modal-overlay hidden">
   <div class="modal">
     <div class="modal-header">
-      <h3>ملاحظة للمعلمة</h3>
-      <button onclick="closeModal('teacher-note-modal')">✕</button>
+      <h3 id="teacher-modal-title">إضافة سجل متابعة معلمة</h3>
+      <button onclick="closeModal('teacher-modal')" class="modal-close">✕</button>
     </div>
     <div class="modal-body">
-      <input type="hidden" id="teacher-note-id" />
-      <div class="form-group">
-        <label>الملاحظة</label>
-        <textarea id="teacher-note-text" placeholder="أدخلي ملاحظتك هنا..."></textarea>
+      <input type="hidden" id="tf-edit-id"/>
+      <div class="form-row">
+        <div class="form-group"><label>اسم المعلمة <span class="req">*</span></label><input type="text" id="tf-name" placeholder="اسم المعلمة الكامل"/></div>
+        <div class="form-group"><label>عدد المهام المسندة</label><input type="number" id="tf-assigned" min="0" placeholder="0"/></div>
       </div>
+      <div class="form-row">
+        <div class="form-group"><label>عدد المهام المنجزة</label><input type="number" id="tf-done" min="0" placeholder="0"/></div>
+        <div class="form-group"><label>آخر تاريخ تقرير</label><input type="date" id="tf-last-report"/></div>
+      </div>
+      <div class="form-group"><label>رابط Google Drive</label><input type="url" id="tf-link" placeholder="https://drive.google.com/..."/></div>
+      <div class="form-group"><label>ملاحظات القائدة</label><textarea id="tf-notes" placeholder="ملاحظاتك على المعلمة..."></textarea></div>
     </div>
     <div class="modal-footer">
-      <button class="btn-primary" onclick="saveTeacherNote()">حفظ الملاحظة</button>
-      <button class="btn-secondary" onclick="closeModal('teacher-note-modal')">إلغاء</button>
+      <button class="btn-primary" id="tf-save-btn" onclick="saveTeacher()">💾 حفظ</button>
+      <button class="btn-secondary" onclick="closeModal('teacher-modal')">إلغاء</button>
     </div>
   </div>
 </div>
@@ -724,9 +587,6 @@
 <!-- Toast -->
 <div id="toast" class="toast hidden"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
-<script src="config.js"></script>
- <script src="script.js?v=7"></script>
+<script src="script.js"></script>
 </body>
 </html>
