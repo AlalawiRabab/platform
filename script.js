@@ -1101,17 +1101,12 @@ if (ti) ti.textContent = p.name;
       }).join('')
     : '<p style="color:var(--text-muted);font-size:13px;padding:8px 0">لا توجد شواهد مرتبطة. تُضاف الشواهد من صفحة «التقارير والشواهد».</p>';
 
- const body = document.getElementById('program-detail-body');
-
-if (!body) {
-  showToast('program-detail-body غير موجود', 'error');
-  return;
-
-
+const body = document.getElementById('program-detail-body');
 if (!body) {
   showToast('program-detail-body غير موجود', 'error');
   return;
 }
+ 
   body.innerHTML = `
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;padding:16px;background:var(--bg);border-radius:10px">
       <div style="flex:1">
