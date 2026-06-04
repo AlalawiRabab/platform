@@ -285,7 +285,7 @@ async function doLogin() {
     if (btn) { btn.disabled = false; btn.textContent = 'دخول إلى المنصة'; }
   }
 }
-
+window.doLogin = doLogin;
 function doLogout() {
   currentUser = null;
   [programsCache, initiativesCache, tasksCache, evidencesCache, teachersCache, kpiCache] = [[], [], [], [], [], []];
