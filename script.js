@@ -275,7 +275,7 @@ async function doLogin() {
     document.getElementById('login-page').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
     applyRoleUI();
-    await loadAllData();
+    await loadAllData(false);
     navTo('dashboard', document.querySelector('.nav-item[data-section="dashboard"]'));
   } catch (err) {
     showLoadingOverlay(false);
@@ -326,8 +326,9 @@ function applyRoleUI() {
 /* ─────────────────────────────────────────────────────────────
    §9  LOAD ALL DATA
    ───────────────────────────────────────────────────────────── */
-async function loadAllData() {
+async function loadAllData(renderAfter = true) {
   showLoadingOverlay(true);
+
   try {
     await Promise.all([
       fetchPrograms(),
@@ -338,10 +339,17 @@ async function loadAllData() {
       fetchKPI(),
       loadSettings(),
     ]);
-  } catch (e) { console.error('[loadAllData]', e.message); }
-  finally { showLoadingOverlay(false); }
-}
 
+    if (renderAfter) {
+      renderSection(_activeSection);
+    }
+
+  } catch (e) {
+    console.error('[loadAllData]', e.message);
+  } finally {
+    showLoadingOverlay(false);
+  }
+}
 /* ─────────────────────────────────────────────────────────────
    §10  NAVIGATION
    ───────────────────────────────────────────────────────────── */
@@ -855,7 +863,7 @@ function applySettingsToUI(s) {
 
 async function resetToDemo() {
   if (!confirm('إعادة تحميل البيانات؟')) return;
-  await loadAllData(); renderSection(_activeSection); showToast('تم تحديث البيانات ✅','success');
+await loadAllData(false); renderSection(_activeSection); showToast('تم تحديث البيانات ✅','success');
 }
 function clearLocalCache() {
   if (!confirm('مسح الكاش المحلي؟')) return;
