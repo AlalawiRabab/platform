@@ -276,7 +276,9 @@ async function doLogin() {
     document.getElementById('app').classList.remove('hidden');
     applyRoleUI();
     await loadAllData(false);
-    navTo('dashboard', document.querySelector('.nav-item[data-section="dashboard"]'));
+   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+document.getElementById('section-dashboard')?.classList.add('active');
+renderDashboard();
   } catch (err) {
     showLoadingOverlay(false);
     console.error('[Login]', err.message);
