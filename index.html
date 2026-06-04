@@ -35,7 +35,7 @@
         <input type="password" id="login-password" placeholder="كلمة المرور" autocomplete="current-password"
                onkeydown="if(event.key==='Enter')doLogin()"/>
       </div>
-      <button id="login-btn" class="btn-login" onclick="doLogin()">دخول إلى المنصة</button>
+      <button id="login-btn" class="btn-login">دخول إلى المنصة</button>
       <div class="role-info-hint">
         بيانات تجريبية:<br>
         <strong>admin@school.sa</strong> / <strong>vice@school.sa</strong> / <strong>teacher@school.sa</strong><br>
@@ -588,5 +588,11 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="config.js"></script>
   <script src="script.js"></script>
+  <script>
+document.getElementById('login-btn')?.addEventListener('click', () => window.doLogin?.();
+document.getElementById('login-password')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') window.doLogin?.();
+});
+</script>
 </body>
 </html>
