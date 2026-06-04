@@ -331,6 +331,7 @@ async function loadAllData(renderAfter = true) {
 
   try {
     await Promise.all([
+       if (renderAfter) renderSection(_activeSection);
       fetchPrograms(),
       fetchInitiatives(),
       fetchTasks(),
