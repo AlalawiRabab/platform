@@ -1980,4 +1980,3 @@ window.openAddUserModal = openAddUserModal;
 window.handleAddUser = handleAddUser;
 window.handleDelUser = handleDelUser;
 window.handleChgRole = handleChgRole;
-}
