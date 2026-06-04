@@ -328,10 +328,8 @@ function applyRoleUI() {
    ───────────────────────────────────────────────────────────── */
 async function loadAllData(renderAfter = true) {
   showLoadingOverlay(true);
-
   try {
     await Promise.all([
-       if (renderAfter) renderSection(_activeSection);
       fetchPrograms(),
       fetchInitiatives(),
       fetchTasks(),
@@ -341,9 +339,7 @@ async function loadAllData(renderAfter = true) {
       loadSettings(),
     ]);
 
-    if (renderAfter) {
-      renderSection(_activeSection);
-    }
+    if (renderAfter) renderSection(_activeSection);
 
   } catch (e) {
     console.error('[loadAllData]', e.message);
