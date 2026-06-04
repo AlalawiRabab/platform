@@ -1058,12 +1058,13 @@ async function deleteProgram(id) {
    §23  PROGRAM DETAIL MODAL
    ───────────────────────────────────────────────────────────── */
 function viewProgramDetail(id) {
-  const p = programsCache.find(x => x.id === id); if (!p) return;
+  const p = programsCache.find(x => String(x.id) === String(id));
+if (!p) return;
   const status = calcProgramStatus(p);
   const pct    = parseInt(p.progress)||0;
   const clr    = pct>=90?'#27ae60':pct>=60?'#2e86c1':pct>=30?'#f39c12':'#e74c3c';
   const inds   = indicatorsCache[id]||p.indicators||[];
-  const evs    = evidencesCache.filter(e => e.program_id === id);
+  const evs = evidencesCache.filter(e => String(e.program_id) === String(id))
   const ti     = document.getElementById('detail-modal-title'); if (ti) ti.textContent = p.name;
 
   const indsHtml = inds.length
