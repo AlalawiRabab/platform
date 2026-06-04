@@ -1967,6 +1967,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // البيانات تُحمَّل بعد doLogin()
 });
   window.doLogin = doLogin; 
+window.renderDashboard = renderDashboard;
 window.openAddUserModal = openAddUserModal;
 window.handleAddUser = handleAddUser;
 window.handleDelUser = handleDelUser;
