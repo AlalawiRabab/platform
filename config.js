@@ -11,10 +11,10 @@
    Supabase Dashboard → Project Settings → API → Project URL + anon public key
    ================================================================ */
 
-const SUPABASE_URL = 'https://qeabgktifyyyjrzphtpw.supabase.co';
-
-const SUPABASE_ANON = 'sb_publishable_G3EvrlPIwhYfrnauHQDveA_bW4YpVwl';
-const supabaseClient = supabase.createClient(
-  SUPABASE_URL,
-  SUPABASE_ANON
+window.SUPABASE_URL = 'رابطك';
+window.SUPABASE_ANON = 'مفتاحك';
+window.supabaseClient = supabase.createClient(
+  window.SUPABASE_URL,
+  window.SUPABASE_ANON
 );
+ 
