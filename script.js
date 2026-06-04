@@ -1059,14 +1059,19 @@ async function deleteProgram(id) {
    ───────────────────────────────────────────────────────────── */
 function viewProgramDetail(id) {
   const p = programsCache.find(x => String(x.id) === String(id));
-if (!p) return;
-  const status = calcProgramStatus(p);
-  const pct    = parseInt(p.progress)||0;
-  const clr    = pct>=90?'#27ae60':pct>=60?'#2e86c1':pct>=30?'#f39c12':'#e74c3c';
-  const inds   = indicatorsCache[id]||p.indicators||[];
-  const evs = evidencesCache.filter(e => String(e.program_id) === String(id))
-  const ti     = document.getElementById('detail-modal-title'); if (ti) ti.textContent = p.name;
+  if (!p) {
+    showToast('لم يتم العثور على البرنامج رقم ' + id, 'error');
+    return;
+  }
 
+  const status = calcProgramStatus(p);
+  const pct = parseInt(p.progress) || 0;
+  const clr = pct >= 90 ? '#27ae60' : pct >= 60 ? '#2e86c1' : pct >= 30 ? '#f39c12' : '#e74c3c';
+  const inds = indicatorsCache[id] || p.indicators || [];
+  const evs = evidencesCache.filter(e => String(e.program_id) === String(id));
+
+  const ti = document.getElementById('detail-modal-title');
+if (ti) ti.textContent = p.name;
   const indsHtml = inds.length
     ? inds.map(ind => `
         <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-light)">
@@ -1096,7 +1101,17 @@ if (!p) return;
       }).join('')
     : '<p style="color:var(--text-muted);font-size:13px;padding:8px 0">لا توجد شواهد مرتبطة. تُضاف الشواهد من صفحة «التقارير والشواهد».</p>';
 
-  const body = document.getElementById('program-detail-body'); if (!body) return;
+ const body = document.getElementById('program-detail-body');
+
+if (!body) {
+  showToast('program-detail-body غير موجود', 'error');
+  return;
+
+
+if (!body) {
+  showToast('program-detail-body غير موجود', 'error');
+  return;
+}
   body.innerHTML = `
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;padding:16px;background:var(--bg);border-radius:10px">
       <div style="flex:1">
