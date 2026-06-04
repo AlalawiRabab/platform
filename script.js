@@ -1966,8 +1966,7 @@ document.addEventListener('DOMContentLoaded', () => {
   calendarYear  = new Date().getFullYear();
   // البيانات تُحمَّل بعد doLogin()
 });
-  window.doLogin = doLogin; 
-window.renderDashboard = renderDashboard;
+window.doLogin = doLogin; 
 window.openAddUserModal = openAddUserModal;
 window.handleAddUser = handleAddUser;
 window.handleDelUser = handleDelUser;
