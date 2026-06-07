@@ -297,32 +297,32 @@ canvas{display:block;max-width:100%;padding:14px}
   canvas{padding:8px}
 }
 #login-page {
+  position: fixed !important;
+  inset: 0 !important;
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
-  min-height: 100vh !important;
-  background: #ffffff !important;
-  color: #111 !important;
-  position: relative !important;
-  z-index: 9999 !important;
+  background: #fff !important;
+  z-index: 999999 !important;
+  overflow: auto !important;
+  padding: 20px !important;
 }
 
 #login-page.hidden {
   display: none !important;
 }
 
-#login-page * {
-  visibility: visible !important;
-  opacity: 1 !important;
+.login-bg-shapes {
+  display: none !important;
 }
 
-.login-card,
-.login-container {
-  background: white !important;
-  color: #111 !important;
-  padding: 30px !important;
-  border-radius: 16px !important;
+.login-container,
+.login-card {
+  position: static !important;
   max-width: 420px !important;
-  width: 90% !important;
-  box-shadow: 0 8px 30px rgba(0,0,0,0.15) !important;
+  width: 100% !important;
+  background: #fff !important;
+  color: #111 !important;
+  visibility: visible !important;
+  opacity: 1 !important;
 }
