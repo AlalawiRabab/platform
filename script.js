@@ -306,7 +306,12 @@ function applyRoleUI() {
   const r = currentUser.role;
   const rl = {admin:'مدير',vice:'وكيل',teacher:'معلم'};
   const badge = document.getElementById('user-role-badge'); if (badge) badge.textContent = rl[r]||r;
-  const nm = document.getElementById('header-user-name'); if (nm) nm.textContent = currentUser.name;
+ const nm = document.getElementById('header-user-name');
+if (nm) {
+  nm.textContent = currentUser.role === 'admin'
+    ? (settingsCache?.principal_name || currentUser.name)
+    : currentUser.name;
+}
   const av = document.getElementById('header-avatar'); if (av) av.textContent = currentUser.name.charAt(0);
 
   const navAllowed = {
