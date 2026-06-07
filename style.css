@@ -296,3 +296,33 @@ canvas{display:block;max-width:100%;padding:14px}
   .stat-number{font-size:22px}
   canvas{padding:8px}
 }
+#login-page {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-height: 100vh !important;
+  background: #ffffff !important;
+  color: #111 !important;
+  position: relative !important;
+  z-index: 9999 !important;
+}
+
+#login-page.hidden {
+  display: none !important;
+}
+
+#login-page * {
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+.login-card,
+.login-container {
+  background: white !important;
+  color: #111 !important;
+  padding: 30px !important;
+  border-radius: 16px !important;
+  max-width: 420px !important;
+  width: 90% !important;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.15) !important;
+}
