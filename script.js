@@ -145,6 +145,7 @@ const sb = (typeof supabaseClient !== 'undefined') ? supabaseClient : null;
    §1  GLOBAL STATE
    ───────────────────────────────────────────────────────────── */
 let currentUser      = null;
+let settingsCache = {};
 let programsCache    = [];
 let indicatorsCache  = {};
 let initiativesCache = [];
