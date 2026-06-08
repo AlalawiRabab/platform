@@ -1371,8 +1371,10 @@ async function saveEvidence() {
     evidencesCache.unshift(saved);
     syncEvidencesToPrograms();
    if (ev.program_id) await syncProgress(ev.program_id);
+     await loadAllData(false);
+renderPrograms();
+renderReports();
     closeModal('evidence-modal');
-    renderPrograms(); renderReports();
     showToast('تم حفظ الشاهد ✅','success');
   } catch (err) { console.error('[saveEvidence]',err.message); showToast('خطأ: '+err.message,'error'); }
   finally { if (btn) { btn.disabled=false; btn.textContent='📎 حفظ الشاهد'; } }
