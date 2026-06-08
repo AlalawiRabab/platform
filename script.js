@@ -564,24 +564,36 @@ async function sbAddIndicator(progId, text) {
 }
 
 async function sbToggleIndicator(progId, indId) {
-  const ind = (indicatorsCache[progId]||[]).find(i => i.id === indId);
-  if (!ind) return;
-  const nv = !ind.is_completed;
-  ind.is_completed = nv;
-  if (sb) {
-    const { error } = await sb.from('program_indicators').update({is_completed:nv}).eq('id', indId);
-    if (error) { ind.is_completed = !nv; throw error; }
-  }
-  await syncProgress(progId);
-}
+  const pid = String(progId);
+  const iid = String(indId);
 
-async function sbDeleteIndicator(progId, indId) {
-  if (sb) {
-    const { error } = await sb.from('program_indicators').delete().eq('id', indId);
-    if (error) throw error;
+  const list = indicatorsCache[progId] || indicatorsCache[pid] || [];
+  const ind = list.find(i => String(i.id) === iid);
+
+  if (!ind) {
+    console.error('Indicator not found', progId, indId, indicatorsCache);
+    return;
   }
-  if (indicatorsCache[progId]) indicatorsCache[progId] = indicatorsCache[progId].filter(i => i.id !== indId);
+
+  const nv = !(ind.is_completed === true || ind.is_completed === 'true');
+  ind.is_completed = nv;
+
+  if (sb) {
+    const { error } = await sb
+      .from('program_indicators')
+      .update({ is_completed: nv })
+      .eq('id', indId);
+
+    if (error) {
+      console.error('[sbToggleIndicator]', error.message);
+      ind.is_completed = !nv;
+      return;
+    }
+  }
+
   await syncProgress(progId);
+  renderPrograms();
+  viewProgramDetail(progId);
 }
 
 /* ─────────────────────────────────────────────────────────────
