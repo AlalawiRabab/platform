@@ -1269,13 +1269,16 @@ function fillEvidenceIndicators(progId) {
 
   sel.innerHTML = '<option value="">اختر المؤشر</option>';
 
-  (indicatorsCache[progId] || []).forEach(ind => {
+  (indicatorsCache[progId] || indicatorsCache[String(progId)] || []).forEach(ind => {
     sel.innerHTML += `<option value="${ind.id}">${ind.indicator_text}</option>`;
   });
 }
 
 function openEvidenceModal(progId, evId) {
-  if (!can('addEvidence')) { showToast('ليس لديك صلاحية رفع الشواهد','error'); return; }
+  if (!can('addEvidence')) {
+    showToast('ليس لديك صلاحية رفع الشواهد','error');
+    return;
+  }
 
   pendingFileData = null;
   pendingImageData = null;
@@ -1286,9 +1289,11 @@ function openEvidenceModal(progId, evId) {
   const ps = document.getElementById('ev-program-select');
   if (ps) {
     ps.innerHTML = '<option value="">اختر البرنامج</option>';
+
     programsCache.forEach(p => {
-    ps.innerHTML += `<option value="${p.id}">${p.name}</option>`;
+      ps.innerHTML += `<option value="${p.id}">${p.name}</option>`;
     });
+
     ps.value = progId || '';
   }
 
@@ -1308,7 +1313,6 @@ function openEvidenceModal(progId, evId) {
   toggleEvidenceInput();
   openModal('evidence-modal');
 }
-
 function handleFileSelect(input) {
   const file = input.files[0]; if (!file) return;
   if (file.size>5*1024*1024) { showToast('الملف أكبر من 5 MB','error'); input.value=''; return; }
