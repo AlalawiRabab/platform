@@ -1270,7 +1270,7 @@ function fillEvidenceIndicators(progId) {
   sel.innerHTML = '<option value="">اختر المؤشر</option>';
 
   (indicatorsCache[progId] || []).forEach(ind => {
-    sel.innerHTML += <option value="${ind.id}">${ind.indicator_text}</option>;
+    sel.innerHTML += `<option value="${ind.id}">${ind.indicator_text}</option>`;
   });
 }
 
