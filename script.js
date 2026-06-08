@@ -1086,11 +1086,12 @@ function viewProgramDetail(id) {
   const ti = document.getElementById('detail-modal-title');
 if (ti) ti.textContent = p.name;
   const indsHtml = inds.length
-    ? inds.map(ind => `
-        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-light)">
-          <span style="font-size:18px">${ind.is_completed?'✅':'⬜'}</span>
-          <span style="font-size:13px;${ind.is_completed?'text-decoration:line-through;color:var(--text-muted)':''}">${ind.indicator_text}</span>
-        </div>`).join('')
+   ? inds.map(ind => `
+  <div onclick="sbToggleIndicator('${p.id}','${ind.id}'); setTimeout(()=>viewProgramDetail('${p.id}'),300);"
+       style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-light)">
+    <span style="font-size:18px">${ind.is_completed ? '✅' : '⬜'}</span>
+    <span style="font-size:13px;${ind.is_completed ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">${ind.indicator_text}</span>
+  </div>`).join('')
     : '<p style="color:var(--text-muted);font-size:13px;padding:8px 0">لا توجد مؤشرات</p>';
 
   const evHtml = evs.length
