@@ -1370,7 +1370,7 @@ async function saveEvidence() {
     const saved = await sbInsertEvidence(ev);
     evidencesCache.unshift(saved);
     syncEvidencesToPrograms();
-    if (saved.program_id) await syncProgress(saved.program_id);
+   if (ev.program_id) await syncProgress(ev.program_id);
     closeModal('evidence-modal');
     renderPrograms(); renderReports();
     showToast('تم حفظ الشاهد ✅','success');
