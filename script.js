@@ -529,14 +529,20 @@ async function sbDeleteProgram(id) {
 async function syncProgress(progId) {
   const inds = indicatorsCache[progId]||[];
   const total = inds.length;
-  const done  = inds.filter(i => i.is_completed).length;
+
+const done = inds.filter(ind => {
+  const completed = ind.is_completed === true || ind.is_completed === 'true';
+
+  const hasEvidence = evidencesCache.some(ev =>
+    String(ev.program_id) === String(progId) &&
+    String(ev.indicator_id) === String(ind.id)
+  );
+
+  return completed && hasEvidence;
+}).length;
   // النسبة الأساسية من المؤشرات المكتملة
   let progress = total > 0 ? Math.round((done/total)*100) : 0;
   // إذا لا توجد مؤشرات لكن تم ربط شواهد، نعطي تقدّماً مبدئياً حسب عدد الشواهد
-  if (total === 0) {
-    const evCount = evidencesCache.filter(e => e.program_id === progId).length;
-    if (evCount > 0) progress = Math.min(100, evCount * 25);
-  }
   const pIdx = programsCache.findIndex(p => p.id === progId);
   if (pIdx !== -1) { programsCache[pIdx].progress = progress; programsCache[pIdx].indicators = inds; }
   if (!sb) { lsSave('programs_local', programsCache); return; }
@@ -734,7 +740,9 @@ async function sbInsertEvidence(ev) {
   }
   const { data, error } = await sb.from('evidences').insert({
     title:ev.title, type:ev.type||null,
-    program_id:ev.program_id||null, initiative_label:ev.initiative_label||null,
+    program_id:ev.program_id||null,
+     indicator_id: ev.indicator_id || null,
+     initiative_label:ev.initiative_label||null,
     person:ev.person||null, upload_date:ev.date||new Date().toISOString().split('T')[0],
     link:ev.link||null, notes:ev.notes||null, file_data:ev.file_data||null,
   }).select().single();
@@ -1310,6 +1318,7 @@ async function saveEvidence() {
   const ev = {
     id:null, title, type,
     program_id     : progId||null,
+     indicator_id : g('ev-indicator-id') || null,
     initiative_label: '',
     person : g('ev-person').trim(),
     date   : new Date().toISOString().split('T')[0],
