@@ -1268,6 +1268,13 @@ function openEvidenceModal(progId, evId) {
   pendingFileData = null; pendingImageData = null;
   document.getElementById('ev-program-id').value = progId;
   document.getElementById('ev-edit-id').value    = evId||'';
+   const sel = document.getElementById('ev-indicator-id');
+if (sel) {
+  sel.innerHTML = '<option value="">اختر المؤشر</option>';
+  (indicatorsCache[progId] || []).forEach(ind => {
+    sel.innerHTML += '<option value="${ind.id}">${ind.indicator_text}</option>';
+  });
+}
   const ti = document.getElementById('evidence-modal-title'); if(ti) ti.textContent = evId?'تعديل الشاهد':'إضافة شاهد';
   ['ev-title','ev-link','ev-person','ev-notes'].forEach(f => { const e=document.getElementById(f); if(e) e.value=''; });
   const te = document.getElementById('ev-type'); if(te) te.value='link';
