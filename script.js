@@ -1274,7 +1274,7 @@ if (sel) {
  (Object.values(indicatorsCache).flat()
   .filter(ind => String(ind.program_id) === String(progId))
 ).forEach(ind => {
-    sel.innerHTML += '<option value="${ind.id}">${ind.indicator_text}</option>';
+    sel.innerHTML += `<option value="${ind.id}">${ind.indicator_text}</option>`;
   });
 }
   const ti = document.getElementById('evidence-modal-title'); if(ti) ti.textContent = evId?'تعديل الشاهد':'إضافة شاهد';
