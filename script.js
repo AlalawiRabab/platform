@@ -1263,21 +1263,48 @@ function toggleEvidenceInput() {
   });
 }
 
-function openEvidenceModal(progId, evId) {
-  if (!can('addEvidence')) { showToast('ليس لديك صلاحية رفع الشواهد','error'); return; }
-  pendingFileData = null; pendingImageData = null;
-  document.getElementById('ev-program-id').value = progId;
-  document.getElementById('ev-edit-id').value    = evId||'';
-   const sel = document.getElementById('ev-indicator-id');
-if (sel) {
+function fillEvidenceIndicators(progId) {
+  const sel = document.getElementById('ev-indicator-id');
+  if (!sel) return;
+
   sel.innerHTML = '<option value="">اختر المؤشر</option>';
-(indicatorsCache[progId] || []).forEach(ind => {
-    sel.innerHTML += `<option value="${ind.id}">${ind.indicator_text}</option>`;
+
+  (indicatorsCache[progId] || []).forEach(ind => {
+    sel.innerHTML += <option value="${ind.id}">${ind.indicator_text}</option>;
   });
 }
-  const ti = document.getElementById('evidence-modal-title'); if(ti) ti.textContent = evId?'تعديل الشاهد':'إضافة شاهد';
-  ['ev-title','ev-link','ev-person','ev-notes'].forEach(f => { const e=document.getElementById(f); if(e) e.value=''; });
-  const te = document.getElementById('ev-type'); if(te) te.value='link';
+
+function openEvidenceModal(progId, evId) {
+  if (!can('addEvidence')) { showToast('ليس لديك صلاحية رفع الشواهد','error'); return; }
+
+  pendingFileData = null;
+  pendingImageData = null;
+
+  document.getElementById('ev-program-id').value = progId || '';
+  document.getElementById('ev-edit-id').value = evId || '';
+
+  const ps = document.getElementById('ev-program-select');
+  if (ps) {
+    ps.innerHTML = '<option value="">اختر البرنامج</option>';
+    programsCache.forEach(p => {
+      ps.innerHTML += `<option value="${p.id}">${p.name}</option>`;
+    });
+    ps.value = progId || '';
+  }
+
+  fillEvidenceIndicators(progId);
+
+  const ti = document.getElementById('evidence-modal-title');
+  if (ti) ti.textContent = evId ? 'تعديل شاهد' : 'إضافة شاهد';
+
+  ['ev-title','ev-link','ev-person','ev-notes'].forEach(f => {
+    const e = document.getElementById(f);
+    if (e) e.value = '';
+  });
+
+  const te = document.getElementById('ev-type');
+  if (te) te.value = 'link';
+
   toggleEvidenceInput();
   openModal('evidence-modal');
 }
