@@ -1271,7 +1271,9 @@ function openEvidenceModal(progId, evId) {
    const sel = document.getElementById('ev-indicator-id');
 if (sel) {
   sel.innerHTML = '<option value="">اختر المؤشر</option>';
-  (indicatorsCache[progId] || []).forEach(ind => {
+ (Object.values(indicatorsCache).flat()
+  .filter(ind => String(ind.program_id) === String(progId))
+).forEach(ind => {
     sel.innerHTML += '<option value="${ind.id}">${ind.indicator_text}</option>';
   });
 }
