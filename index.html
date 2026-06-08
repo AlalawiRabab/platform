@@ -378,6 +378,12 @@
     <div class="modal-body">
       <input type="hidden" id="ev-program-id"/><input type="hidden" id="ev-edit-id"/>
       <div class="form-group">
+  <label>البرنامج المرتبط</label>
+  <select id="ev-program-select" onchange="document.getElementById('ev-program-id').value=this.value; fillEvidenceIndicators(this.value)">
+    <option value="">اختر البرنامج</option>
+  </select>
+</div>
+      <div class="form-group">
   <label>المؤشر المرتبط بالشاهد</label>
   <select id="ev-indicator-id">
     <option value="">اختر المؤشر</option>
