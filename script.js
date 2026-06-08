@@ -1287,7 +1287,7 @@ function openEvidenceModal(progId, evId) {
   if (ps) {
     ps.innerHTML = '<option value="">اختر البرنامج</option>';
     programsCache.forEach(p => {
-      ps.innerHTML += `<option value="${p.id}">${p.name}</option>`;
+    ps.innerHTML += `<option value="${p.id}">${p.name}</option>`;
     });
     ps.value = progId || '';
   }
