@@ -939,18 +939,42 @@ function buildProgramCard(p) {
   const total  = inds.length;
   const done   = inds.filter(i => i.is_completed).length;
 
-  const indsHtml = total
-    ? inds.map(ind => {
-        const d=ind.is_completed, tc=can('toggleIndicator'), dc=can('deleteIndicator');
-        return `<div class="indicator-row" id="irow-${ind.id}">
-          <button class="ind-toggle" ${tc?`onclick="handleToggle('${p.id}','${ind.id}')"`:'disabled'}
-            title="${d?'إلغاء الإنجاز':'وضع علامة مكتمل'}">${d?'✅':'⬜'}</button>
-          <span class="ind-text" style="${d?'text-decoration:line-through;color:var(--text-muted)':''}">${ind.indicator_text}</span>
-          ${dc?`<button class="ind-delete" onclick="handleDelInd('${p.id}','${ind.id}')">✕</button>`:''}
-        </div>`;
-      }).join('')
-    : '<div style="font-size:12px;color:var(--text-muted);padding:4px 0">لا توجد مؤشرات بعد</div>';
+ const indsHtml = total
+  ? inds.map(ind => {
+      const d = ind.is_completed === true || ind.is_completed === 'true';
 
+      const indEvs = evidencesCache.filter(ev =>
+        String(ev.program_id) === String(p.id) &&
+        String(ev.indicator_id) === String(ind.id)
+      );
+
+      const evsUnderInd = indEvs.length
+        ? indEvs.map(ev => `
+            <div style="font-size:12px;margin:6px 0 0 28px;padding:6px;border-radius:8px;background:var(--bg)">
+              📎 ${ev.title || 'شاهد'}
+              ${ev.link ? `<a href="${ev.link}" target="_blank" style="margin-right:8px">فتح الرابط</a>` : ''}
+            </div>
+          `).join('')
+        : `<div style="font-size:12px;color:var(--text-muted);margin:6px 0 0 28px">لا توجد شواهد لهذا المؤشر</div>`;
+
+      return `
+        <div class="indicator-row" id="irow-${ind.id}">
+          <button class="ind-toggle" ${tc ? `onclick="handleToggle('${p.id}','${ind.id}')"` : ''}
+            title="${d ? 'إلغاء الإنجاز' : 'وضع علامة مكتمل'}">${d ? '✅' : '⬜'}</button>
+
+          <span class="ind-text" style="${d ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">
+            ${ind.indicator_text}
+          </span>
+
+          ${dc ? `<button class="ind-delete" onclick="handleDelInd('${p.id}','${ind.id}')">×</button>` : ''}
+
+          <div style="width:100%">
+            ${evsUnderInd}
+          </div>
+        </div>
+      `;
+    }).join('')
+  : '<div style="font-size:12px;color:var(--text-muted);padding:4px 0">لا توجد مؤشرات بعد</div>';
   const addIndHtml = can('addIndicator')
     ? `<div class="add-indicator-row">
         <input id="iinput-${p.id}" class="ind-input" type="text" placeholder="أضف مؤشر إنجاز…"
@@ -1712,7 +1736,13 @@ async function saveReport() {
   const progId=g('rep-program-id');
    const indicatorId = g('rep-indicator-id');
   const person = g('rep-person').trim() || currentUser?.name || '';
-  const ev={id:null,title,type:g('rep-type'),program_id:progId||null,indicator_id: indicatorId || null, initiative_label:'',person,date:new Date().toISOString().split('T')[0],link:g('rep-link').trim(),notes:g('rep-notes').trim(),file_data:null};
+  const ev={
+     id:null,
+     title,
+     type:g('rep-type'),
+     program_id:progId||null,
+     indicator_id: indicatorId || null, 
+     initiative_label:'',person,date:new Date().toISOString().split('T')[0],link:g('rep-link').trim(),notes:g('rep-notes').trim(),file_data:null};
   const btn=document.getElementById('rep-save-btn');
   if(btn){btn.disabled=true;btn.textContent='جارٍ الرفع…';}
   try{
