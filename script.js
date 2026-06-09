@@ -1295,15 +1295,20 @@ function openEvidenceModal(progId, evId) {
   document.getElementById('ev-edit-id').value = evId || '';
 
   const ps = document.getElementById('ev-program-select');
-  if (ps) {
-    ps.innerHTML = '<option value="">اختر البرنامج</option>';
+if (ps) {
+  ps.innerHTML = '<option value="">اختر البرنامج</option>';
 
-    programsCache.forEach(p => {
-      ps.innerHTML += `<option value="${p.id}">${p.name}</option>`;
-    });
+  programsCache.forEach(p => {
+    ps.innerHTML += `<option value="${p.id}">${p.name}</option>`;
+  });
 
-    ps.value = progId || '';
-  }
+  ps.value = progId || '';
+
+  ps.onchange = function () {
+    document.getElementById('ev-program-id').value = this.value;
+    fillEvidenceIndicators(this.value);
+  };
+}
 
   fillEvidenceIndicators(progId);
 
