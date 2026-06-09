@@ -1646,15 +1646,47 @@ async function deleteTask(id) {
    §29  REPORTS SECTION
    ───────────────────────────────────────────────────────────── */
 function openReportModal() {
-  const sel=document.getElementById('rep-program-id');
-  if(sel) sel.innerHTML='<option value="">— اختر البرنامج —</option>'+programsCache.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
-  ['rep-edit-id','rep-title','rep-link','rep-notes'].forEach(f=>{const e=document.getElementById(f);if(e)e.value='';});
-  // تعبئة اسم الرافعة تلقائياً بالمستخدم الحالي (المعلمة)
-  const pe=document.getElementById('rep-person'); if(pe) pe.value=currentUser?.name||'';
-  const rt=document.getElementById('rep-type'); if(rt) rt.value='صورة';
+  const sel = document.getElementById('rep-program-id');
+
+  if (sel) {
+    sel.innerHTML = '<option value="">— اختر البرنامج —</option>' +
+      programsCache.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+
+    sel.onchange = function () {
+      fillReportIndicators(this.value);
+    };
+  }
+
+  const indSel = document.getElementById('rep-indicator-id');
+  if (indSel) {
+    indSel.innerHTML = '<option value="">اختر المؤشر</option>';
+  }
+
+  ['rep-edit-id','rep-title','rep-link','rep-notes'].forEach(f => {
+    const e = document.getElementById(f);
+    if (e) e.value = '';
+  });
+
+  const pe = document.getElementById('rep-person');
+  if (pe) pe.value = currentUser?.name || '';
+
+  const rt = document.getElementById('rep-type');
+  if (rt) rt.value = 'صورة';
+
   openModal('report-modal');
 }
+function fillReportIndicators(progId) {
+  const sel = document.getElementById('rep-indicator-id');
+  if (!sel) return;
 
+  sel.innerHTML = '<option value="">اختر المؤشر</option>';
+
+  const list = indicatorsCache[progId] || indicatorsCache[String(progId)] || [];
+
+  list.forEach(ind => {
+    sel.innerHTML += `<option value="${ind.id}">${ind.indicator_text}</option>`;
+  });
+}
 function renderReports() {
   const TI={'صورة':'📷','PDF':'📄','Word':'📝','Excel':'📊','Google Drive':'☁️','YouTube':'🎥','رابط خارجي':'🔗'};
   const tbody=document.getElementById('reports-tbody'); if(!tbody)return;
@@ -1674,8 +1706,9 @@ async function saveReport() {
   const g=id=>(document.getElementById(id)?.value||'');
   const title=g('rep-title').trim(); if(!title){showToast('يرجى إدخال عنوان الشاهد','error');return;}
   const progId=g('rep-program-id');
+   const indicatorId = g('rep-indicator-id');
   const person = g('rep-person').trim() || currentUser?.name || '';
-  const ev={id:null,title,type:g('rep-type'),program_id:progId||null,initiative_label:'',person,date:new Date().toISOString().split('T')[0],link:g('rep-link').trim(),notes:g('rep-notes').trim(),file_data:null};
+  const ev={id:null,title,type:g('rep-type'),program_id:progId||null,indicator_id: indicatorId || null, initiative_label:'',person,date:new Date().toISOString().split('T')[0],link:g('rep-link').trim(),notes:g('rep-notes').trim(),file_data:null};
   const btn=document.getElementById('rep-save-btn');
   if(btn){btn.disabled=true;btn.textContent='جارٍ الرفع…';}
   try{
