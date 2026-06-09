@@ -1681,7 +1681,11 @@ function fillReportIndicators(progId) {
 
   sel.innerHTML = '<option value="">اختر المؤشر</option>';
 
-  const list = indicatorsCache[progId] || indicatorsCache[String(progId)] || [];
+  const allIndicators = Object.values(indicatorsCache).flat();
+
+  const list = allIndicators.filter(ind =>
+    String(ind.program_id) === String(progId)
+  );
 
   list.forEach(ind => {
     sel.innerHTML += `<option value="${ind.id}">${ind.indicator_text}</option>`;
