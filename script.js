@@ -959,14 +959,14 @@ function buildProgramCard(p) {
 
       return `
         <div class="indicator-row" id="irow-${ind.id}">
-          <button class="ind-toggle" ${tc ? `onclick="handleToggle('${p.id}','${ind.id}')"` : ''}
+          <button class="ind-toggle" ${can('toggleIndicator') ? `onclick="handleToggle('${p.id}','${ind.id}')"` : ''}
             title="${d ? 'إلغاء الإنجاز' : 'وضع علامة مكتمل'}">${d ? '✅' : '⬜'}</button>
 
           <span class="ind-text" style="${d ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">
             ${ind.indicator_text}
           </span>
 
-          ${dc ? `<button class="ind-delete" onclick="handleDelInd('${p.id}','${ind.id}')">×</button>` : ''}
+         ${can('deleteIndicator') ? `<button class="ind-delete" onclick="handleDelInd('${p.id}','${ind.id}')">×</button>` : ''}
 
           <div style="width:100%">
             ${evsUnderInd}
