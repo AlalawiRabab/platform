@@ -1269,7 +1269,15 @@ function fillEvidenceIndicators(progId) {
 
   sel.innerHTML = '<option value="">اختر المؤشر</option>';
 
-  (indicatorsCache[progId] || indicatorsCache[String(progId)] || []).forEach(ind => {
+  const allIndicators = Array.isArray(indicatorsCache)
+    ? indicatorsCache
+    : Object.values(indicatorsCache).flat();
+
+  const relatedIndicators = allIndicators.filter(ind =>
+    String(ind.program_id) === String(progId)
+  );
+
+  relatedIndicators.forEach(ind => {
     sel.innerHTML += `<option value="${ind.id}">${ind.indicator_text}</option>`;
   });
 }
