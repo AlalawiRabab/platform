@@ -715,31 +715,74 @@ async function sbUpdateTaskStatus(id, status) {
    §17  SUPABASE: EVIDENCES
    ───────────────────────────────────────────────────────────── */
 async function fetchEvidences() {
-  if (!sb) { evidencesCache = lsLoad('evidences',[]); syncEvidencesToPrograms(); return; }
-  const { data, error } = await sb.from('evidences').select('*').order('created_at', {ascending:false});
-  if (error) { console.error('[fetchEvidences]', error.message); evidencesCache = lsLoad('evidences',[]); syncEvidencesToPrograms(); return; }
-  evidencesCache = (data||[]).map(r => ({
-    id:r.id, title:r.title||'', type:r.type||'',
-   async function fetchEvidences() {
-  if (!sb) { evidencesCache = lsLoad('evidences',[]); syncEvidencesToPrograms(); return; }
-  const { data, error } = await sb.from('evidences').select('*').order('created_at', {ascending:false});
-  if (error) { console.error('[fetchEvidences]', error.message); evidencesCache = lsLoad('evidences',[]); syncEvidencesToPrograms(); return; }
-  evidencesCache = (data||[]).map(r => ({
-    id:r.id, title:r.title||'', type:r.type||'',
-    program_id:r.program_id||null, initiative_label:r.initiative_label||'',
-    person:r.person||'', date:r.upload_date||'',
-    link:r.link||'', notes:r.notes||'', file_data:r.file_data||null,
+  if (!sb) {
+    evidencesCache = lsLoad('evidences', []);
+    syncEvidencesToPrograms();
+    return;
+  }
+
+  const { data, error } = await sb
+    .from('evidences')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('[fetchEvidences]', error.message);
+    evidencesCache = lsLoad('evidences', []);
+    syncEvidencesToPrograms();
+    return;
+  }
+
+  evidencesCache = (data || []).map(r => ({
+    id: r.id,
+    title: r.title || '',
+    type: r.type || '',
+    program_id: r.program_id || null,
+    indicator_id: r.indicator_id || null,
+    initiative_label: r.initiative_label || '',
+    person: r.person || '',
+    date: r.upload_date || '',
+    link: r.link || '',
+    notes: r.notes || '',
+    file_data: r.file_data || null,
   }));
+
   lsSave('evidences', evidencesCache);
   syncEvidencesToPrograms();
 }
 
 function syncEvidencesToPrograms() {
   programsCache.forEach(p => {
-    p.evidence = evidencesCache.filter(e => e.program_id === p.id);
+    p.evidence = evidencesCache.filter(e =>
+      String(e.program_id) === String(p.id)
+    );
   });
 }
 
+async function sbInsertEvidence(ev) {
+  if (!sb) {
+    ev.id = 'L' + Date.now();
+    evidencesCache.unshift(ev);
+    lsSave('evidences', evidencesCache);
+    return ev;
+  }
+
+  const { data, error } = await sb.from('evidences').insert({
+    title: ev.title,
+    type: ev.type || null,
+    program_id: ev.program_id || null,
+    indicator_id: ev.indicator_id || null,
+    initiative_label: ev.initiative_label || null,
+    person: ev.person || null,
+    upload_date: ev.date || new Date().toISOString().split('T')[0],
+    link: ev.link || null,
+    notes: ev.notes || null,
+    file_data: ev.file_data || null,
+  }).select().single();
+
+  if (error) throw error;
+  return { ...ev, id: data.id };
+}
 async function sbInsertEvidence(ev) {
   if (!sb) {
     ev.id = 'L'+Date.now(); evidencesCache.unshift(ev); lsSave('evidences', evidencesCache); return ev;
