@@ -527,7 +527,7 @@ async function sbDeleteProgram(id) {
    §14  SUPABASE: INDICATORS
    ───────────────────────────────────────────────────────────── */
 async function syncProgress(progId) {
-  const inds = indicatorsCache[progId]||[];
+ const inds = indicatorsCache[progId] || indicatorsCache[String(progId)] || [];
   const total = inds.length;
 
 const done = inds.filter(ind => {
@@ -543,7 +543,7 @@ const done = inds.filter(ind => {
   // النسبة الأساسية من المؤشرات المكتملة
   let progress = total > 0 ? Math.round((done/total)*100) : 0;
   // إذا لا توجد مؤشرات لكن تم ربط شواهد، نعطي تقدّماً مبدئياً حسب عدد الشواهد
-  const pIdx = programsCache.findIndex(p => p.id === progId);
+ const inds = indicatorsCache[progId] || indicatorsCache[String(progId)] || [];
   if (pIdx !== -1) { programsCache[pIdx].progress = progress; programsCache[pIdx].indicators = inds; }
   if (!sb) { lsSave('programs_local', programsCache); return; }
   const prog   = programsCache[pIdx] || {};
@@ -1388,12 +1388,17 @@ async function saveEvidence() {
   if (!can('addEvidence')) { showToast('ليس لديك صلاحية رفع الشواهد','error'); return; }
   const g = id => (document.getElementById(id)?.value||'');
   const progId = g('ev-program-id');
+   const indicatorId = g('ev-indicator-id');
+if (!indicatorId) {
+  showToast('يرجى اختيار المؤشر المرتبط بالشاهد','error');
+  return;
+}
   const title  = g('ev-title').trim(); if (!title) { showToast('يرجى إدخال عنوان الشاهد','error'); return; }
   const type   = g('ev-type');
   const ev = {
     id:null, title, type,
     program_id     : progId||null,
-     indicator_id : g('ev-indicator-id') || null,
+    indicator_id : indicatorId,
     initiative_label: '',
     person : g('ev-person').trim(),
     date   : new Date().toISOString().split('T')[0],
