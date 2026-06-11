@@ -2191,3 +2191,5 @@ window.openAddUserModal = openAddUserModal;
 window.handleAddUser = handleAddUser;
 window.handleDelUser = handleDelUser;
 window.handleChgRole = handleChgRole;
+window.doLogin = doLogin;
+window.doLogin = doLogout;
