@@ -1435,17 +1435,35 @@ if (evProg2) evProg2.value = this.value;
   openModal('evidence-modal');
 }
 function handleFileSelect(input) {
-  const file = input.files[0]; if (!file) return;
-  if (file.size>5*1024*1024) { showToast('الملف أكبر من 5 MB','error'); input.value=''; return; }
+  const file = input.files[0]; 
+  if (!file) return;
+
+  if (file.size > 5 * 1024 * 1024) { 
+    showToast('الملف أكبر من 5 MB','error'); 
+    input.value = ''; 
+    return; 
+  }
+
   const reader = new FileReader();
+
   reader.onload = e => {
-    pendingFileData = {name:file.name,mimeType:file.type,base64:e.target.result};
-    const prev = document.getElementById('ev-file-preview'); if(!prev) return;
+    pendingFileData = {
+      name: file.name,
+      mimeType: file.type,
+      base64: e.target.result
+    };
+
+    const prev = document.getElementById('ev-file-preview'); 
+    if (!prev) return;
+
     prev.classList.remove('hidden');
-   prev.innerHTML = `<span style="font-size:20px">${getFileIcon(file.name)}</span>
-  <span class="file-name">${file.name}</span>
-  <span style="font-size:11px;color:var(--text-muted)">${(file.size/1024).toFixed(0)} KB</span>
-  <span class="file-remove" onclick="pendingFileData=null;const f=document.getElementById('ev-file-input');if(f)f.value='';this.parentElement.classList.add('hidden')">✕</span>`;
+
+    prev.innerHTML = `<span style="font-size:20px">${getFileIcon(file.name)}</span>
+      <span class="file-name">${file.name}</span>
+      <span style="font-size:11px;color:var(--text-muted)">${(file.size/1024).toFixed(0)} KB</span>
+      <span class="file-remove" onclick="pendingFileData=null;const f=document.getElementById('ev-file-input');if(f)f.value='';this.parentElement.classList.add('hidden')">✕</span>`;
+  };
+
   reader.readAsDataURL(file);
 }
 
