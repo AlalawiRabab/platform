@@ -1306,7 +1306,11 @@ if (barEl) {
   barEl.style.width = pct + '%';
   barEl.style.background = clr;
 }
-  if (lblEl) lblEl.textContent = `نسبة الإنجاز${total?` (${done}/${total} مؤشر)`:''}`;
+ if (lblEl) {
+  lblEl.textContent = total
+    ? 'نسبة الإنجاز (' + done + '/' + total + ' مؤشر)'
+    : 'نسبة الإنجاز';
+}
   const card = document.getElementById('pcard-'+progId);
   if (card) {
     card.className = 'program-card status-'+calcProgramStatus(p);
