@@ -1319,16 +1319,11 @@ if (barEl) {
   }
   const listEl = document.getElementById('ilist-'+progId); if (!listEl) return;
   if (!inds.length) { listEl.innerHTML='<div style="font-size:12px;color:var(--text-muted);padding:4px 0">لا توجد مؤشرات بعد</div>'; return; }
-  listEl.innerHTML = inds.map(ind => {
-    const d=ind.is_completed, tc=can('toggleIndicator'), dc=can('deleteIndicator');
-    return `<div class="indicator-row" id="irow-${ind.id}">
-      <button class="ind-toggle" ${tc?`onclick="handleToggle('${progId}','${ind.id}')"`:'disabled'}
-        title="${d?'إلغاء الإنجاز':'وضع علامة مكتمل'}">${d?'✅':'⬜'}</button>
-      <span class="ind-text" style="${d?'text-decoration:line-through;color:var(--text-muted)':''}">${ind.indicator_text}</span>
-      ${dc?`<button class="ind-delete" onclick="handleDelInd('${progId}','${ind.id}')">✕</button>`:''}
-    </div>`;
-  }).join('');
-}
+  listEl.innerHTML = inds.map(ind => `
+<div class="indicator-row">
+  <span>${ind.indicator_text || ind.text || ''}</span>
+</div>
+`).join('');
 
 /* ─────────────────────────────────────────────────────────────
    §25  EVIDENCE MODAL
