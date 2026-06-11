@@ -1278,6 +1278,7 @@ if (!body) {
     `;
   }).join('')}
 </div>
+`;
   openModal('program-detail-modal');
 }
 
