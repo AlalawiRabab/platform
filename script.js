@@ -1324,6 +1324,7 @@ if (barEl) {
   <span>${ind.indicator_text || ind.text || ''}</span>
 </div>
 `).join('');
+}
 
 /* ─────────────────────────────────────────────────────────────
    §25  EVIDENCE MODAL
