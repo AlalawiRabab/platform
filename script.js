@@ -543,7 +543,6 @@ const done = inds.filter(ind => {
   // النسبة الأساسية من المؤشرات المكتملة
   let progress = total > 0 ? Math.round((done/total)*100) : 0;
   // إذا لا توجد مؤشرات لكن تم ربط شواهد، نعطي تقدّماً مبدئياً حسب عدد الشواهد
- const inds = indicatorsCache[progId] || indicatorsCache[String(progId)] || [];
   if (pIdx !== -1) { programsCache[pIdx].progress = progress; programsCache[pIdx].indicators = inds; }
   if (!sb) { lsSave('programs_local', programsCache); return; }
   const prog   = programsCache[pIdx] || {};
