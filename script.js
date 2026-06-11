@@ -1302,7 +1302,10 @@ function repaintCard(progId) {
   const barEl  = document.getElementById('pbar-'+progId);
   const lblEl  = document.getElementById('plbl-'+progId);
   if (pctEl) { pctEl.textContent = pct+'%'; pctEl.style.color = clr; }
-  if (barEl) { barEl.style.width = pct+'%'; barEl.style.background = `linear-gradient(90deg,${clr},${clr}cc)`; }
+if (barEl) {
+  barEl.style.width = pct + '%';
+  barEl.style.background = clr;
+}
   if (lblEl) lblEl.textContent = `نسبة الإنجاز${total?` (${done}/${total} مؤشر)`:''}`;
   const card = document.getElementById('pcard-'+progId);
   if (card) {
