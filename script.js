@@ -1228,15 +1228,35 @@ if (!body) {
       ${p.desc?`<div style="margin-top:12px;padding:12px 14px;background:var(--bg);border-radius:8px;font-size:13px;line-height:1.7">${p.desc}</div>`:''}
     </div>
     <div class="detail-section">
-      <h4>📌 مؤشرات الإنجاز (${inds.filter(i=>i.is_completed).length}/${inds.length})</h4>
-      ${indsHtml}
-    </div>
-    <div class="detail-section">
-      <h4 style="display:flex;justify-content:space-between;align-items:center">
-        📎 الشواهد المرتبطة (${evs.length})
-      </h4>
-      <div class="evidence-list-detail">${evHtml}</div>
-    </div>`;
+  <h4>📌 المؤشرات مع الشواهد المرتبطة</h4>
+
+  ${inds.map(ind => {
+    const linked = evs.filter(ev =>
+      String(ev.indicator_id) === String(ind.id)
+    );
+
+    return `
+      <div class="indicator-detail-box">
+        <div>
+          ${ind.indicator_text || ind.text || ind.name || ind.id}
+          ${ind.is_completed === true || ind.is_completed === 'true' ? '✅' : '◻️'}
+        </div>
+
+        <div class="evidence-list-detail">
+          ${linked.length
+            ? linked.map(ev => `
+              <div class="evidence-item-detail">
+                🔗 ${ev.title || ev.name || 'شاهد'}
+                ${ev.link ? `<a href="${ev.link}" target="_blank">فتح الرابط</a>` : ''}
+              </div>
+            `).join('')
+            : `<div style="color:#888">لا توجد شواهد مرتبطة بهذا المؤشر</div>`
+          }
+        </div>
+      </div>
+    `;
+  }).join('')}
+</div>
   openModal('program-detail-modal');
 }
 
