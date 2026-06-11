@@ -542,6 +542,9 @@ const done = inds.filter(ind => {
 }).length;
   // النسبة الأساسية من المؤشرات المكتملة
   let progress = total > 0 ? Math.round((done/total)*100) : 0;
+   const pIdx = programsCache.findIndex(
+  p => String(p.id) === String(progId)
+);
   // إذا لا توجد مؤشرات لكن تم ربط شواهد، نعطي تقدّماً مبدئياً حسب عدد الشواهد
   if (pIdx !== -1) { programsCache[pIdx].progress = progress; programsCache[pIdx].indicators = inds; }
   if (!sb) { lsSave('programs_local', programsCache); return; }
