@@ -1420,7 +1420,7 @@ function handleFileSelect(input) {
     prev.innerHTML = `<span style="font-size:20px">${getFileIcon(file.name)}</span>
       <span class="file-name">${file.name}</span>
       <span style="font-size:11px;color:var(--text-muted)">${(file.size/1024).toFixed(0)} KB</span>
-      <span class="file-remove" onclick="pendingFileData=null;document.getElementById('ev-file-input').value='';this.parentElement.classList.add('hidden')">✕</span>`;
+      <span class="file-remove" onclick="pendingFileData=null;const f=document.getElementById('ev-file-input');if(f)f.value='';this.parentElement.classList.add('hidden')">✕</span>
   };
   reader.readAsDataURL(file);
 }
