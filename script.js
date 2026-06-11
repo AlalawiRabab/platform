@@ -1004,9 +1004,6 @@ function buildProgramCard(p) {
 
          ${can('deleteIndicator') ? `<button class="ind-delete" onclick="handleDelInd('${p.id}','${ind.id}')">×</button>` : ''}
 
-          <div style="width:100%">
-            ${evsUnderInd}
-          </div>
         </div>
       `;
     }).join('')
