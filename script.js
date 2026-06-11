@@ -297,9 +297,8 @@ function doLogout() {
   document.getElementById('login-page').classList.remove('hidden');
   const e = document.getElementById('login-email'); if (e) e.value = '';
   const p = document.getElementById('login-password'); if (p) p.value = '';
-window.doLogout = doLogout;
 }
-
+window.doLogout = doLogout;
 /* ─────────────────────────────────────────────────────────────
    §8  APPLY ROLE UI
    ───────────────────────────────────────────────────────────── */
