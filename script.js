@@ -925,9 +925,9 @@ async function saveSettings() {
   academic_year: s.year,
   region: s.region
 };
-   
-applyRoleUI(s);
-applySettingsToUI();
+
+   applySettingsToUI(s);
+applyRoleUI();
   if (sb) {
     const { error } = await sb.from('settings').upsert({
       id:1, school_name:s.schoolName, academic_year:s.year,
