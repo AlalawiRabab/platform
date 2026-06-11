@@ -880,30 +880,54 @@ const DEFAULT_SETTINGS = {schoolName:'مدرسة النور الابتدائية
 
 async function loadSettings() {
   let s = {...DEFAULT_SETTINGS};
+
   if (sb) {
-    const { data, error } = await sb.from('settings').select('*').eq('id',1).maybeSingle();
-    if (error) { console.error('[loadSettings]', error.message); }
-    if (data) s = {schoolName:data.school_name||s.schoolName, year:data.academic_year||s.year, principal:data.principal_name||s.principal, region:data.region||s.region};
+    const { data, error } = await sb
+      .from('settings')
+      .select('*')
+      .eq('id',1)
+      .maybeSingle();
+
+    if (error) console.error('[loadSettings]', error.message);
+
+    if (data) {
+      s = {
+        schoolName: data.school_name || s.schoolName,
+        year: data.academic_year || s.year,
+        principal: data.principal_name || s.principal,
+        region: data.region || s.region
+      };
+    }
   } else {
     s = lsLoad('settings', s);
   }
+
+  settingsCache = {
+    principal_name: s.principal,
+    school_name: s.schoolName,
+    academic_year: s.year,
+    region: s.region
+  };
+
   lsSave('settings', s);
   applySettingsToUI(s);
-}
 
-function loadSettingsForm() {
-  const s = lsLoad('settings', DEFAULT_SETTINGS);
-  const sv = (id,v) => { const e=document.getElementById(id); if(e) e.value=v||''; };
-  sv('setting-school',s.schoolName); sv('setting-year',s.year);
-  sv('setting-principal',s.principal); sv('setting-region',s.region);
+  if (currentUser) applyRoleUI();
 }
-
 async function saveSettings() {
   if (!can('editSettings')) { showToast('ليس لديك صلاحية تعديل الإعدادات','error'); return; }
   const g = id => (document.getElementById(id)?.value||'');
   const s = {schoolName:g('setting-school'),year:g('setting-year'),principal:g('setting-principal'),region:g('setting-region')};
   lsSave('settings', s);
-  applySettingsToUI(s);
+   settingsCache = {
+  principal_name: s.principal,
+  school_name: s.schoolName,
+  academic_year: s.year,
+  region: s.region
+};
+   
+applyRoleUI(s);
+applySettingsToUI();
   if (sb) {
     const { error } = await sb.from('settings').upsert({
       id:1, school_name:s.schoolName, academic_year:s.year,
