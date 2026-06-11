@@ -1657,30 +1657,64 @@ function filterTasksPriority(v) { _taskPriFilter=v; renderTasks(); }
 
 function renderTasks() {
   let tasks = [...tasksCache];
-  if (currentUser?.role==='teacher') tasks=tasks.filter(t=>t.resp&&t.resp.includes(currentUser.name));
-  if (_taskFilter==='late') tasks=tasks.filter(t=>t.status!=='done'&&t.due&&new Date(t.due)<new Date());
-  else if (_taskFilter!=='all') tasks=tasks.filter(t=>t.status===_taskFilter);
-  if (_taskPriFilter!=='all') tasks=tasks.filter(t=>t.priority===_taskPriFilter);
-  const PL={high:'عالية',medium:'متوسطة',low:'منخفضة'};
-  const SL2={pending:'معلقة',inprogress:'قيد التنفيذ',done:'منجزة'};
-  const SBM={pending:'badge-warning',inprogress:'badge-info',done:'badge-success'};
-  const grid=document.getElementById('tasks-grid'); if(!grid)return;
-  grid.innerHTML=tasks.length?tasks.map(t=>{
-    const late=t.status!=='done'&&t.due&&new Date(t.due)<new Date();
-    return`<div class="task-card priority-${t.priority}">
-      <div class="task-card-header"><div class="task-title">${t.name}</div><span class="badge ${late?'badge-danger':SBM[t.status]}">${late?'⚠️ متأخرة':SL2[t.status]}</span></div>
-      <div class="task-meta"><span>👩‍🏫 ${t.resp||'—'}</span><span>📅 ${fmtDate(t.due)}</span><span>🔴 ${PL[t.priority]||t.priority}</span>${t.notes?`<span>📝 ${t.notes}</span>`:''}</div>
-      <div class="task-actions">
-        <select class="task-status-select" onchange="chgTaskStatus('${t.id}',this.value)">
-          <option value="pending" ${t.status==='pending'?'selected':''}>معلقة</option>
-          <option value="inprogress" ${t.status==='inprogress'?'selected':''}>قيد التنفيذ</option>
-          <option value="done" ${t.status==='done'?'selected':''}>منجزة</option>
-        </select>
-        ${can('editTask')?`<button class="btn-sm btn-edit" onclick="openTaskModal('${t.id}')">✏️</button>`:''}
-        ${can('deleteTask')?`<button class="btn-sm btn-delete" onclick="deleteTask('${t.id}')">🗑️</button>`:''}
+
+  if (currentUser?.role === 'teacher') {
+    tasks = tasks.filter(t => t.resp && t.resp.includes(currentUser.name));
+  }
+
+  if (_taskFilter === 'late') {
+    tasks = tasks.filter(t => t.status !== 'done' && t.due && new Date(t.due) < new Date());
+  } else if (_taskFilter !== 'all') {
+    tasks = tasks.filter(t => t.status === _taskFilter);
+  }
+
+  if (_taskPriFilter !== 'all') {
+    tasks = tasks.filter(t => t.priority === _taskPriFilter);
+  }
+
+  const PL = { high:'عالية', medium:'متوسطة', low:'منخفضة' };
+  const SL2 = { pending:'معلقة', inprogress:'قيد التنفيذ', done:'منجزة' };
+  const SBM = { pending:'badge-warning', inprogress:'badge-info', done:'badge-success' };
+
+  const grid = document.getElementById('tasks-grid');
+  if (!grid) return;
+
+  if (!tasks.length) {
+    grid.innerHTML = '<p style="grid-column:1/-1;text-align:center;color:var(--text-muted);padding:40px">لا توجد مهام</p>';
+    return;
+  }
+
+  grid.innerHTML = tasks.map(t => {
+    const late = t.status !== 'done' && t.due && new Date(t.due) < new Date();
+
+    return `
+      <div class="task-card priority-${t.priority}">
+        <div class="task-card-header">
+          <div class="task-title">${t.name}</div>
+          <span class="badge ${late ? 'badge-danger' : SBM[t.status]}">
+            ${late ? '⚠️ متأخرة' : SL2[t.status]}
+          </span>
+        </div>
+
+        <div class="task-meta">
+          <span>👩‍🏫 ${t.resp || '—'}</span>
+          <span>📅 ${fmtDate(t.due)}</span>
+          <span>🔴 ${PL[t.priority] || t.priority}</span>
+          ${t.notes ? `<span>📝 ${t.notes}</span>` : ''}
+        </div>
+
+        <div class="task-actions">
+          <select class="task-status-select" onchange="chgTaskStatus('${t.id}', this.value)">
+            <option value="pending" ${t.status === 'pending' ? 'selected' : ''}>معلقة</option>
+            <option value="inprogress" ${t.status === 'inprogress' ? 'selected' : ''}>قيد التنفيذ</option>
+            <option value="done" ${t.status === 'done' ? 'selected' : ''}>منجزة</option>
+          </select>
+          ${can('editTask') ? `<button class="btn-sm btn-edit" onclick="openTaskModal('${t.id}')">✏️</button>` : ''}
+          ${can('deleteTask') ? `<button class="btn-sm btn-delete" onclick="deleteTask('${t.id}')">🗑️</button>` : ''}
+        </div>
       </div>
-    </div>`;
-  }).join(''):'<p style="grid-column:1/-1;text-align:center;color:var(--text-muted);padding:40px">لا توجد مهام</p>';
+    `;
+  }).join('');
 }
 
 async function chgTaskStatus(id, status) {
