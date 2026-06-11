@@ -1371,9 +1371,11 @@ function openEvidenceModal(progId, evId) {
   pendingFileData = null;
   pendingImageData = null;
 
-  document.getElementById('ev-program-id').value = progId || '';
-  document.getElementById('ev-edit-id').value = evId || '';
+ const evProg = document.getElementById('ev-program-id');
+if (evProg) evProg.value = progId || '';
 
+const evEdit = document.getElementById('ev-edit-id');
+if (evEdit) evEdit.value = evId || '';
   const ps = document.getElementById('ev-program-select');
 if (ps) {
   ps.innerHTML = '<option value="">اختر البرنامج</option>';
@@ -1385,7 +1387,8 @@ if (ps) {
   ps.value = progId || '';
 
   ps.onchange = function () {
-    document.getElementById('ev-program-id').value = this.value;
+   const evProg2 = document.getElementById('ev-program-id');
+if (evProg2) evProg2.value = this.value;
     fillEvidenceIndicators(this.value);
   };
 }
