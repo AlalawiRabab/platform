@@ -1319,11 +1319,11 @@ if (barEl) {
   }
   const listEl = document.getElementById('ilist-'+progId); if (!listEl) return;
   if (!inds.length) { listEl.innerHTML='<div style="font-size:12px;color:var(--text-muted);padding:4px 0">لا توجد مؤشرات بعد</div>'; return; }
-  listEl.innerHTML = inds.map(ind => `
-<div class="indicator-row">
-  <span>${ind.indicator_text || ind.text || ''}</span>
-</div>
-`).join('');
+ listEl.innerHTML = inds.map(ind =>
+  '<div class="indicator-row">' +
+  '<span>' + (ind.indicator_text || ind.text || '') + '</span>' +
+  '</div>'
+).join('');
 }
 
 /* ─────────────────────────────────────────────────────────────
