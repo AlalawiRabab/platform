@@ -291,8 +291,8 @@ async function doLogin() {
     currentUser = data;
     localStorage.setItem('currentUser', JSON.stringify(currentUser));
 
-    document.getElementById('login-screen').style.display = 'none';
-    document.getElementById('app').style.display = 'block';
+   document.getElementById('login-page')?.classList.add('hidden');
+document.getElementById('app')?.classList.remove('hidden');
 
     await loadAllData?.();
     applyRoleUI?.();
