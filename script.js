@@ -252,43 +252,64 @@ const FALLBACK_USERS = [
 
 async function doLogin() {
   const email = (document.getElementById('login-email')?.value || '').trim().toLowerCase();
-  const pass  = (document.getElementById('login-password')?.value || '').trim();
-  if (!email || !pass) { showToast('يرجى إدخال البريد وكلمة المرور','error'); return; }
+  const pass = (document.getElementById('login-password')?.value || '').trim();
+
+  if (!email || !pass) {
+    showToast('يرجى إدخال البريد وكلمة المرور', 'error');
+    return;
+  }
+
   const btn = document.getElementById('login-btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'جارٍ التحقق…'; }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'جارٍ التحقق…';
+  }
+
   try {
-    showLoadingOverlay(true);
-    let user = null;
-    if (sb) {
-      const { data, error } = await sb.from('users')
-        .select('id,name,email,role')
-        .eq('email', email)
-        .eq('password', pass)
-        .maybeSingle();
-      if (error) { console.error('[Auth]', error.message); }
-      else user = data;
-    } else {
-      user = FALLBACK_USERS.find(u => u.email === email && u.password === pass) || null;
+    showLoadingOverlay?.(true);
+
+    const { data, error } = await sb
+      .from('users')
+      .select('id,name,email,role')
+      .eq('email', email)
+      .eq('password', pass)
+      .maybeSingle();
+
+    showLoadingOverlay?.(false);
+
+    if (error) {
+      console.error('[Auth]', error.message);
+      showToast('خطأ في الاتصال بقاعدة البيانات', 'error');
+      return;
     }
-    showLoadingOverlay(false);
-    if (!user) { showToast('البريد الإلكتروني أو كلمة المرور غير صحيحة','error'); return; }
-    currentUser = { id:user.id, name:user.name, email:user.email, role:user.role };
-    document.getElementById('login-page').classList.add('hidden');
-    document.getElementById('app').classList.remove('hidden');
-    applyRoleUI();
-    await loadAllData(false);
-   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-document.getElementById('section-dashboard')?.classList.add('active');
-renderDashboard();
+
+    if (!data) {
+      showToast('البريد الإلكتروني أو كلمة المرور غير صحيحة', 'error');
+      return;
+    }
+
+    currentUser = data;
+    localStorage.setItem('currentUser', JSON.stringify(currentUser));
+
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+
+    await loadAllData?.();
+    applyRoleUI?.();
+
+    showToast('تم تسجيل الدخول بنجاح', 'success');
+
   } catch (err) {
-    showLoadingOverlay(false);
-    console.error('[Login]', err.message);
-    showToast('خطأ في تسجيل الدخول: ' + err.message, 'error');
+    showLoadingOverlay?.(false);
+    console.error('[doLogin]', err);
+    showToast('حدث خطأ أثناء تسجيل الدخول', 'error');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'دخول إلى المنصة'; }
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'دخول';
+    }
   }
 }
-window.doLogin = doLogin;
 function doLogout() {
   currentUser = null;
   [programsCache, initiativesCache, tasksCache, evidencesCache, teachersCache, kpiCache] = [[], [], [], [], [], []];
