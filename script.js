@@ -1025,13 +1025,6 @@ function buildProgramCard(p) {
   ? inds.map(ind => {
       const d = ind.is_completed === true || ind.is_completed === 'true';
 
-      const indEvs = evidencesCache.filter(ev =>
-        String(ev.program_id) === String(p.id) &&
-        String(ev.indicator_id) === String(ind.id)
-      );
-
-        : `<div style="font-size:12px;color:var(--text-muted);margin:6px 0 0 28px">لا توجد شواهد لهذا المؤشر</div>`;
-
       return `
         <div class="indicator-row" id="irow-${ind.id}">
           <button class="ind-toggle" ${can('toggleIndicator') ? `onclick="handleToggle('${p.id}','${ind.id}')"` : ''}
