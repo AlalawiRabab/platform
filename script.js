@@ -310,6 +310,7 @@ async function doLogin() {
     }
   }
 }
+window.doLogin = doLogin;
 function doLogout() {
   currentUser = null;
   [programsCache, initiativesCache, tasksCache, evidencesCache, teachersCache, kpiCache] = [[], [], [], [], [], []];
