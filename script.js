@@ -1030,13 +1030,6 @@ function buildProgramCard(p) {
         String(ev.indicator_id) === String(ind.id)
       );
 
-      const evsUnderInd = indEvs.length
-        ? indEvs.map(ev => `
-            <div style="font-size:12px;margin:6px 0 0 28px;padding:6px;border-radius:8px;background:var(--bg)">
-              📎 ${ev.title || 'شاهد'}
-              ${ev.link ? `<a href="${ev.link}" target="_blank" style="margin-right:8px">فتح الرابط</a>` : ''}
-            </div>
-          `).join('')
         : `<div style="font-size:12px;color:var(--text-muted);margin:6px 0 0 28px">لا توجد شواهد لهذا المؤشر</div>`;
 
       return `
