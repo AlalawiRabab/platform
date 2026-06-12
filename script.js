@@ -1014,40 +1014,54 @@ function renderPrograms() {
 
 function buildProgramCard(p) {
   const status = calcProgramStatus(p);
-  const pct    = parseInt(p.progress)||0;
+  const pct    = parseInt(p.progress) || 0;
   const inds   = p.indicators || indicatorsCache[p.id] || [];
-  const clr    = pct>=90?'#27ae60':pct>=60?'#2e86c1':pct>=30?'#f39c12':'#e74c3c';
+  const clr    = pct >= 90 ? '#27ae60' : pct >= 60 ? '#2e86c1' : pct >= 30 ? '#f39c12' : '#e74c3c';
   const total  = inds.length;
-  const done   = inds.filter(i => i.is_completed).length;
 
- const indsHtml = total
-  ? inds.map(ind => {
-      const d = ind.is_completed === true || ind.is_completed === 'true';
+  const done = inds.filter(ind => {
+    const completed = ind.is_completed === true || ind.is_completed === 'true';
+    const hasEvidence = evidencesCache.some(ev =>
+      String(ev.program_id) === String(p.id) &&
+      String(ev.indicator_id) === String(ind.id)
+    );
+    return completed && hasEvidence;
+  }).length;
 
-      return `
-        <div class="indicator-row" id="irow-${ind.id}">
-          <button class="ind-toggle" ${can('toggleIndicator') ? `onclick="handleToggle('${p.id}','${ind.id}')"` : ''}
-            title="${d ? 'إلغاء الإنجاز' : 'وضع علامة مكتمل'}">${d ? '✅' : '⬜'}</button>
+  const indsHtml = total
+    ? inds.map(ind => {
+        const d = ind.is_completed === true || ind.is_completed === 'true';
 
-          <span class="ind-text" style="${d ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">
-            ${ind.indicator_text}
-          </span>
+        return `
+          <div class="indicator-row" id="irow-${ind.id}">
+            <button class="ind-toggle" ${can('toggleIndicator') ? `onclick="handleToggle('${p.id}','${ind.id}')"` : ''}
+              title="${d ? 'إلغاء الإنجاز' : 'وضع علامة مكتمل'}">${d ? '✅' : '⬜'}</button>
 
-         ${can('deleteIndicator') ? `<button class="ind-delete" onclick="handleDelInd('${p.id}','${ind.id}')">×</button>` : ''}
+            <span class="ind-text" style="${d ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">
+              ${ind.indicator_text}
+            </span>
 
-        </div>
-      `;
-    }).join('')
-  : '<div style="font-size:12px;color:var(--text-muted);padding:4px 0">لا توجد مؤشرات بعد</div>';
+            ${can('deleteIndicator') ? `<button class="ind-delete" onclick="handleDelInd('${p.id}','${ind.id}')">×</button>` : ''}
+          </div>
+        `;
+      }).join('')
+    : '<div style="font-size:12px;color:var(--text-muted);padding:4px 0">لا توجد مؤشرات بعد</div>';
+
   const addIndHtml = can('addIndicator')
     ? `<div class="add-indicator-row">
         <input id="iinput-${p.id}" class="ind-input" type="text" placeholder="أضف مؤشر إنجاز…"
                onkeydown="if(event.key==='Enter')handleAddInd('${p.id}')"/>
         <button class="btn-sm btn-evidence" onclick="handleAddInd('${p.id}')">+</button>
-      </div>` : '';
+      </div>`
+    : '';
 
-  const editBtn  = can('editProgram')   ? `<button class="btn-sm btn-edit"    onclick="openProgramModal('${p.id}')">✏️ تعديل</button>`  : '';
-  const delBtn   = can('deleteProgram') ? `<button class="btn-sm btn-delete"  onclick="deleteProgram('${p.id}')">🗑️ حذف</button>`     : '';
+  const editBtn = can('editProgram')
+    ? `<button class="btn-sm btn-edit" onclick="event.stopPropagation(); openProgramModal('${p.id}')">✏️ تعديل</button>`
+    : '';
+
+  const delBtn = can('deleteProgram')
+    ? `<button class="btn-sm btn-delete" onclick="event.stopPropagation(); deleteProgram('${p.id}')">🗑️ حذف</button>`
+    : '';
 
   return `
   <div class="program-card status-${status}" id="pcard-${p.id}">
@@ -1055,17 +1069,20 @@ function buildProgramCard(p) {
       <div class="program-card-title">${p.name}</div>
       <span class="badge ${SB[status]}">${SI[status]} ${SL[status]}</span>
     </div>
+
     <div class="program-card-body">
       ${p.desc ? `<div class="program-card-desc">${p.desc}</div>` : ''}
+
       <div class="program-meta-grid">
-        <div class="program-meta-item">👩‍🏫 <strong>${p.resp||'—'}</strong></div>
-        <div class="program-meta-item">🎯 <strong>${p.target||'—'}</strong></div>
+        <div class="program-meta-item">👩‍🏫 <strong>${p.resp || '—'}</strong></div>
+        <div class="program-meta-item">🎯 <strong>${p.target || '—'}</strong></div>
         <div class="program-meta-item">📅 <strong>${fmtDate(p.start)}</strong></div>
         <div class="program-meta-item">🏁 <strong>${fmtDate(p.end)}</strong></div>
       </div>
+
       <div class="program-progress-section">
         <div class="program-progress-label">
-          <span id="plbl-${p.id}">نسبة الإنجاز${total?` (${done}/${total} مؤشر)`:''}</span>
+          <span id="plbl-${p.id}">نسبة الإنجاز${total ? ` (${done}/${total} مؤشر)` : ''}</span>
           <span id="ppct-${p.id}" style="font-weight:800;color:${clr}">${pct}%</span>
         </div>
         <div class="progress-bar" style="height:10px">
@@ -1073,25 +1090,20 @@ function buildProgramCard(p) {
                style="width:${pct}%;background:linear-gradient(90deg,${clr},${clr}cc)"></div>
         </div>
       </div>
+
       <div class="program-indicators">
         <div class="program-indicators-title">📌 مؤشرات الإنجاز</div>
         <div class="indicators-list" id="ilist-${p.id}">${indsHtml}</div>
         ${addIndHtml}
       </div>
-      <div class="program-evidence-section">
-        <div class="program-evidence-title">
-          <span>📎 الشواهد (${evs.length})</span>
-        </div>
-        <div class="evidence-chips" id="echips-${p.id}">${evHtml}</div>
-      </div>
     </div>
+
     <div class="program-card-actions">
-      <button class="btn-sm btn-detail" onclick="viewProgramDetail('${p.id}')">👁️ التفاصيل</button>
+      <button class="btn-sm btn-detail" onclick="event.stopPropagation(); viewProgramDetail('${p.id}')">👁️ التفاصيل</button>
       ${editBtn}${delBtn}
     </div>
   </div>`;
 }
-
 /* ─────────────────────────────────────────────────────────────
    §22  PROGRAM MODAL
    ───────────────────────────────────────────────────────────── */
