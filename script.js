@@ -1016,7 +1016,6 @@ function buildProgramCard(p) {
   const status = calcProgramStatus(p);
   const pct    = parseInt(p.progress)||0;
   const inds   = p.indicators || indicatorsCache[p.id] || [];
-  const evs    = evidencesCache.filter(e => e.program_id === p.id);
   const clr    = pct>=90?'#27ae60':pct>=60?'#2e86c1':pct>=30?'#f39c12':'#e74c3c';
   const total  = inds.length;
   const done   = inds.filter(i => i.is_completed).length;
@@ -1046,15 +1045,6 @@ function buildProgramCard(p) {
                onkeydown="if(event.key==='Enter')handleAddInd('${p.id}')"/>
         <button class="btn-sm btn-evidence" onclick="handleAddInd('${p.id}')">+</button>
       </div>` : '';
-
-  const evHtml = evs.length
-    ? evs.map(ev => {
-        const icon = getEvIcon(ev.type);
-        const href = ev.link ? `href="${ev.link}" target="_blank"` : '';
-        const tag  = ev.link ? 'a' : 'span';
-        return `<${tag} class="evidence-chip${ev.link?'':' no-link'}" ${href} title="${ev.person?('أضافتها: '+ev.person):''}">${icon} ${ev.title}</${tag}>`;
-      }).join('')
-    : '<span style="font-size:12px;color:var(--text-muted)">لا توجد شواهد بعد</span>';
 
   const editBtn  = can('editProgram')   ? `<button class="btn-sm btn-edit"    onclick="openProgramModal('${p.id}')">✏️ تعديل</button>`  : '';
   const delBtn   = can('deleteProgram') ? `<button class="btn-sm btn-delete"  onclick="deleteProgram('${p.id}')">🗑️ حذف</button>`     : '';
