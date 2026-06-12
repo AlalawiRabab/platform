@@ -549,33 +549,40 @@ async function sbDeleteProgram(id) {
    §14  SUPABASE: INDICATORS
    ───────────────────────────────────────────────────────────── */
 async function syncProgress(progId) {
- const inds = indicatorsCache[progId] || indicatorsCache[String(progId)] || [];
+  if (!progId) return;
+
+  const inds = indicatorsCache[progId] || indicatorsCache[String(progId)] || [];
   const total = inds.length;
 
-const done = inds.filter(ind => {
-  const completed = ind.is_completed === true || ind.is_completed === 'true';
+  const done = inds.filter(ind => {
+    const completed = ind.is_completed === true || ind.is_completed === 'true';
 
-  const hasEvidence = evidencesCache.some(ev =>
-    String(ev.program_id) === String(progId) &&
-    String(ev.indicator_id) === String(ind.id)
-  );
+    const hasEvidence = evidencesCache.some(ev =>
+      String(ev.program_id) === String(progId) &&
+      String(ev.indicator_id) === String(ind.id)
+    );
 
-  return completed && hasEvidence;
-}).length;
-  // النسبة الأساسية من المؤشرات المكتملة
-  let progress = total > 0 ? Math.round((done/total)*100) : 0;
-   const pIdx = programsCache.findIndex(
-  p => String(p.id) === String(progId)
-);
-  // إذا لا توجد مؤشرات لكن تم ربط شواهد، نعطي تقدّماً مبدئياً حسب عدد الشواهد
-  if (pIdx !== -1) { programsCache[pIdx].progress = progress; programsCache[pIdx].indicators = inds; }
-  if (!sb) { lsSave('programs_local', programsCache); return; }
-  const prog   = programsCache[pIdx] || {};
-  const status = calcProgramStatus({...prog, progress});
-  const { error } = await sb.from('programs').update({ progress, status }).eq('id', progId);
-  if (error) console.error('[syncProgress]', error.message);
+    return completed && hasEvidence;
+  }).length;
+
+  const progress = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  const pIdx = programsCache.findIndex(p => String(p.id) === String(progId));
+  if (pIdx !== -1) {
+    programsCache[pIdx].progress = progress;
+  }
+
+  if (sb) {
+    const { error } = await sb
+      .from('programs')
+      .update({ progress })
+      .eq('id', progId);
+
+    if (error) console.error('[syncProgress]', error.message);
+  }
+
+  renderPrograms();
 }
-
 async function sbAddIndicator(progId, text) {
   if (!sb) {
     const ind = {id:'L'+Date.now(),program_id:progId,indicator_text:text,is_completed:false,created_at:new Date().toISOString()};
@@ -1055,13 +1062,13 @@ function buildProgramCard(p) {
       </div>`
     : '';
 
-  const editBtn = can('editProgram')
-    ? `<button class="btn-sm btn-edit" onclick="event.stopPropagation(); openProgramModal('${p.id}')">✏️ تعديل</button>`
-    : '';
+ const editBtn = can('editProgram')
+  ? `<button class="btn-sm btn-edit" onclick="event.stopPropagation(); openProgramModal('${p.id}')">✏️ تعديل</button>`
+  : '';
 
-  const delBtn = can('deleteProgram')
-    ? `<button class="btn-sm btn-delete" onclick="event.stopPropagation(); deleteProgram('${p.id}')">🗑️ حذف</button>`
-    : '';
+ const delBtn = can('deleteProgram')
+  ? `<button class="btn-sm btn-delete" onclick="event.stopPropagation(); deleteProgram('${p.id}')">🗑️ حذف</button>`
+  : '';
 
   return `
   <div class="program-card status-${status}" id="pcard-${p.id}">
@@ -1313,18 +1320,19 @@ async function handleToggle(progId, indId) {
   if (currentUser.role === 'teacher') {
     const prog = programsCache.find(p => p.id === progId);
     if (prog?.resp && !prog.resp.includes(currentUser.name)) {
-      showToast('يمكنك تحديث مؤشرات برامجك فقط','error'); return;
+      showToast('يمكنك تحديث مؤشرات برامجك فقط', 'error');
+      return;
     }
   }
-  try { await sbToggleIndicator(progId, indId); repaintCard(progId); }
-  catch (err) { console.error('[handleToggle]',err.message); showToast('خطأ: '+err.message,'error'); }
-}
 
-async function handleDelInd(progId, indId) {
-  if (!can('deleteIndicator')) { showToast('ليس لديك صلاحية حذف مؤشرات','error'); return; }
-  if (!confirm('حذف هذا المؤشر؟')) return;
-  try { await sbDeleteIndicator(progId, indId); repaintCard(progId); showToast('تم الحذف 🗑️','warning'); }
-  catch (err) { console.error('[handleDelInd]',err.message); showToast('خطأ: '+err.message,'error'); }
+  try {
+    await sbToggleIndicator(progId, indId);
+    await syncProgress(progId);
+    renderPrograms();
+  } catch (err) {
+    console.error('[handleToggle]', err.message);
+    showToast('خطأ: ' + err.message, 'error');
+  }
 }
 
 function repaintCard(progId) {
