@@ -1533,6 +1533,17 @@ if (!indicatorId) {
   if (btn) { btn.disabled=true; btn.textContent='جارٍ الحفظ…'; }
   try {
     const saved = await sbInsertEvidence(ev);
+     if (indicatorId) {
+  const ind = indicatorsCache.find(i => String(i.id) === String(indicatorId));
+  if (ind) ind.is_completed = true;
+
+  if (sb) {
+    await sb
+      .from('program_indicators')
+      .update({ is_completed: true })
+      .eq('id', indicatorId);
+  }
+}
     evidencesCache.unshift(saved);
     syncEvidencesToPrograms();
    if (ev.program_id) await syncProgress(ev.program_id);
