@@ -582,6 +582,8 @@ async function syncProgress(progId) {
   }
 
   renderPrograms();
+   renderDashboard();
+   drawDashPie();
 }
 async function sbAddIndicator(progId, text) {
   if (!sb) {
@@ -977,7 +979,11 @@ function applySettingsToUI(s) {
 
 async function resetToDemo() {
   if (!confirm('إعادة تحميل البيانات؟')) return;
-await loadAllData(false); renderSection(_activeSection); showToast('تم تحديث البيانات ✅','success');
+await loadAllData(false);
+renderSection(_activeSection);
+renderPrograms();
+renderDashboard();
+drawDashPie(); showToast('تم تحديث البيانات ✅','success');
 }
 function clearLocalCache() {
   if (!confirm('مسح الكاش المحلي؟')) return;
@@ -2121,7 +2127,6 @@ function renderDashboard() {
 
   setTimeout(() => drawDashPie(), 60);
 }
-
 function drawDashPie() {
   const c=document.getElementById('initiatives-chart'); if(!c)return;
   const ctx=c.getContext('2d'),W=c.width,H=c.height; ctx.clearRect(0,0,W,H);
@@ -2289,10 +2294,17 @@ async function handleChgRole(id, role) {
 /* ─────────────────────────────────────────────────────────────
    §35  ENTRY POINT
    ───────────────────────────────────────────────────────────── */
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   calendarMonth = new Date().getMonth();
-  calendarYear  = new Date().getFullYear();
-  // البيانات تُحمَّل بعد doLogin()
+  calendarYear = new Date().getFullYear();
+
+  await loadAllData(false);
+
+  renderSection(_activeSection || 'dashboard');
+  renderDashboard();
+  renderPrograms();
+  renderReports();
+  drawDashPie();
 });
 window.doLogin = doLogin; 
 window.openAddUserModal = openAddUserModal;
