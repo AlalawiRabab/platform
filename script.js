@@ -414,7 +414,7 @@ function renderSection(name) {
     teachers: renderTeachers,
     calendar: renderCalendar,
     stats: renderStats,
-    settings: loadSettingsForm,
+    settings: loadSettings,
   }[name]?.());
 
   if (name === 'dashboard') {
