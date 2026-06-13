@@ -405,14 +405,23 @@ function showSection(name, el) { navTo(name, el); }
 
 function renderSection(name) {
   ({
-    dashboard:renderDashboard, programs:renderPrograms,
-    plan:renderPlan, kpi:renderKPI, tasks:renderTasks,
-    reports:renderReports, teachers:renderTeachers,
-    calendar:renderCalendar, stats:renderStats,
-    settings:loadSettingsForm,
-  })[name]?.();
-}
+    dashboard: renderDashboard,
+    programs: renderPrograms,
+    plan: renderPlan,
+    kpi: renderKPI,
+    tasks: renderTasks,
+    reports: renderReports,
+    teachers: renderTeachers,
+    calendar: renderCalendar,
+    stats: renderStats,
+    settings: loadSettingsForm,
+  }[name]?.());
 
+  if (name === 'dashboard') {
+    renderDashboard();
+    setTimeout(() => drawDashPie(), 100);
+  }
+}
 /* ─────────────────────────────────────────────────────────────
    §11  SIDEBAR
    ───────────────────────────────────────────────────────────── */
