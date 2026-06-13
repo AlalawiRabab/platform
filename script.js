@@ -1124,7 +1124,7 @@ function openProgramModal(id) {
   const ti = document.getElementById('program-modal-title');
   if (ti) ti.textContent = 'إضافة برنامج جديد';
   if (id) {
-    const p = programsCache.find(x => x.id === id); if (!p) return;
+   const p = programsCache.find(x => String(x.id) === String(id)); if (!p) return;
     const sv = (fid,v) => { const e=document.getElementById(fid); if(e) e.value=v??''; };
     sv('prog-edit-id',p.id); sv('prog-name',p.name); sv('prog-resp',p.resp);
     sv('prog-desc',p.desc); sv('prog-target',p.target);
