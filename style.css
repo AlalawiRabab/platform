@@ -344,3 +344,10 @@ canvas{display:block;max-width:100%;padding:14px}
   height: 70px;
   object-fit: contain;
 }
+.login-school-logo {
+  width: 95px !important;
+  height: 95px !important;
+  object-fit: contain !important;
+  display: block !important;
+  margin: 0 auto 15px !important;
+}
