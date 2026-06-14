@@ -333,3 +333,14 @@ canvas{display:block;max-width:100%;padding:14px}
   border-radius: 20px;
   margin-bottom: 10px;
 }
+.school-header {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.school-logo {
+  width: 70px;
+  height: 70px;
+  object-fit: contain;
+}
