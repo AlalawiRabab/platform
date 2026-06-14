@@ -27,7 +27,7 @@ button{cursor:pointer}
 .mt-10{margin-top:10px}.mt-20{margin-top:20px}
 
 /* ── LOGIN ── */
-.login-page{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#0a3d33 0%,#0f6e5c 50%,#1f7a8c 100%);position:relative;overflow:hidden;padding:20px}
+.login-page{min-height:100vh;display:flex;align-items:center;justify-content:center;background: linear-gradient(135deg, #c084fc 0%, #7dd3fc 100%);position:relative;overflow:hidden;padding:20px}
 .login-bg-shapes{position:absolute;inset:0;pointer-events:none}
 .shape{position:absolute;border-radius:50%;opacity:0.08;background:white}
 .shape-1{width:400px;height:400px;top:-100px;left:-100px}.shape-2{width:300px;height:300px;bottom:-80px;right:-80px}.shape-3{width:200px;height:200px;top:50%;left:50%;transform:translate(-50%,-50%)}
@@ -325,4 +325,11 @@ canvas{display:block;max-width:100%;padding:14px}
   color: #111 !important;
   visibility: visible !important;
   opacity: 1 !important;
+}
+.school-logo {
+  width: 120px;
+  height: 120px;
+  object-fit: contain;
+  border-radius: 20px;
+  margin-bottom: 10px;
 }
