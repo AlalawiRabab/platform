@@ -916,7 +916,7 @@ async function fetchKPI() {
 /* ─────────────────────────────────────────────────────────────
    §20  SETTINGS
    ───────────────────────────────────────────────────────────── */
-const DEFAULT_SETTINGS = {schoolName:'مدرسة النور الابتدائية',year:'١٤٤٦ / ١٤٤٧هـ',principal:'أ. سارة العتيبي',region:'منطقة المدينة المنورة'};
+const DEFAULT_SETTINGS = {schoolName:'مدرسة 127 الابتدائية',year:'١٤٤٦ / ١٤٤٧هـ',principal:'أ. ليلى الحربي',region:'منطقة المدينة المنورة'};
 
 async function loadSettings() {
   let s = {...DEFAULT_SETTINGS};
