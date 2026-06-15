@@ -757,40 +757,64 @@ body, button, input, select, textarea {
 }
 
 /* أزرار الشريط الجانبي مثل الصورة بلون أزرق */
-.sidebar-nav {
-  display: flex !important;
-  flex-direction: column !important;
-  gap: 12px !important;
-  padding: 14px !important;
+/* الشريط الجانبي */
+.sidebar{
+  background: linear-gradient(180deg,#3B2F63,#5B4B8A) !important;
 }
 
-.sidebar-nav .nav-item {
+/* رفع عناصر القائمة للأعلى */
+.sidebar-header{
+  padding-bottom: 8px !important;
+  min-height: auto !important;
+}
+
+.sidebar-nav{
+  margin-top: -10px !important;
+  padding-top: 0 !important;
+}
+
+/* خلفية الصفحة الرئيسية أبيض */
+body,
+.app,
+.main-content,
+.content-area,
+.section,
+.dashboard-row{
   background: #ffffff !important;
-  color: #2F5F8F !important;
-  border-radius: 40px !important;
-  padding: 13px 18px !important;
-  border: 1px solid #BBD7EA !important;
-  box-shadow: 0 6px 16px rgba(47,95,143,.12) !important;
-  display: flex !important;
-  align-items: center !important;
-  gap: 12px !important;
-  font-weight: 800 !important;
 }
 
-.sidebar-nav .nav-icon {
-  width: 42px !important;
-  height: 42px !important;
-  min-width: 42px !important;
-  border-radius: 50% !important;
-  background: #2F5F8F !important;
+/* الكروت */
+.card,
+.stat-card,
+.program-card{
+  background: #ffffff !important;
+  border: 1px solid #eef2f7 !important;
+  box-shadow: 0 8px 25px rgba(91,75,138,.08) !important;
+}
+
+/* أزرار القائمة */
+.sidebar-nav .nav-item{
+  background: rgba(255,255,255,.95) !important;
+  color: #3B2F63 !important;
+}
+
+.sidebar-nav .nav-item.active,
+.sidebar-nav .nav-item:hover{
+  background: #3B2F63 !important;
   color: white !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  font-size: 18px !important;
-  box-shadow: 0 5px 12px rgba(47,95,143,.20) !important;
 }
 
+/* أيقونات القائمة */
+.sidebar-nav .nav-icon{
+  background: #3B2F63 !important;
+  color: white !important;
+}
+
+.sidebar-nav .nav-item.active .nav-icon,
+.sidebar-nav .nav-item:hover .nav-icon{
+  background: white !important;
+  color: #3B2F63 !important;
+}
 .sidebar-nav .nav-item.active,
 .sidebar-nav .nav-item:hover {
   background: linear-gradient(90deg,#2F5F8F,#6FA8DC) !important;
