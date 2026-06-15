@@ -839,3 +839,30 @@ body, button, input, select, textarea {
   background: linear-gradient(90deg,#2F5F8F,#7C83FD,#F3A6C8) !important;
   color: white !important;
 }
+/* رسائل التنبيه Toast */
+.toast,
+#toast {
+  border-radius: 18px !important;
+  padding: 14px 22px !important;
+  color: #fff !important;
+  font-weight: 800 !important;
+  box-shadow: 0 10px 25px rgba(47,95,143,.18) !important;
+}
+
+/* نجاح */
+.toast.success,
+#toast.success {
+  background: linear-gradient(90deg,#2F5F8F,#7C83FD,#F3A6C8) !important;
+}
+
+/* تحذير */
+.toast.warning,
+#toast.warning {
+  background: linear-gradient(90deg,#F3A6C8,#7C83FD) !important;
+}
+
+/* خطأ */
+.toast.error,
+#toast.error {
+  background: linear-gradient(90deg,#C36A50,#F3A6C8) !important;
+}
