@@ -525,3 +525,69 @@ button,
 input[type="checkbox"]{
   accent-color:#2F5F8F !important;
 }
+/* ===== تنسيق نهائي للقائمة الجانبية ===== */
+
+/* الخلفية بألوان الشعار */
+.sidebar{
+  background: linear-gradient(180deg, #f4f9fd, #dcecf8) !important;
+}
+
+/* ترتيب الهيدر */
+.sidebar-header{
+  display:flex !important;
+  flex-direction:column !important;
+  align-items:center !important;
+  justify-content:flex-start !important;
+  padding-top:6px !important;
+  padding-bottom:18px !important;
+  gap:8px !important;
+}
+
+/* الشعار */
+.sidebar-logo{
+  display:flex !important;
+  justify-content:center !important;
+  align-items:center !important;
+}
+
+.school-logo{
+  width:125px !important;
+  height:125px !important;
+  object-fit:contain !important;
+  background:#ffffff !important;
+  padding:8px !important;
+  border-radius:26px !important;
+  border:1px solid #d7e8f4 !important;
+  box-shadow:0 8px 20px rgba(47,95,143,.12) !important;
+}
+
+/* اسم المدرسة */
+.school-header h1{
+  margin:0 !important;
+  font-size:24px !important;
+  font-weight:800 !important;
+  color:#2F5F8F !important;
+  text-align:center !important;
+}
+
+/* السنة */
+#sidebar-year{
+  display:block !important;
+  margin-top:4px !important;
+  font-size:13px !important;
+  color:#64748B !important;
+  text-align:center !important;
+}
+
+/* عناصر القائمة */
+.nav-item{
+  color:#2F5F8F !important;
+  border-radius:14px !important;
+  margin:6px 10px !important;
+}
+
+.nav-item.active{
+  background:linear-gradient(90deg,#2F5F8F,#6FA8DC) !important;
+  color:white !important;
+  box-shadow:0 6px 14px rgba(47,95,143,.15) !important;
+}
