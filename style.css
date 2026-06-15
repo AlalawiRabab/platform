@@ -351,3 +351,43 @@ canvas{display:block;max-width:100%;padding:14px}
   display: block !important;
   margin: 0 auto 15px !important;
 }
+.login-logo {
+  display: flex !important;
+  justify-content: center !important;
+  margin-bottom: 16px !important;
+}
+
+.login-school-logo {
+  width: 95px !important;
+  height: 95px !important;
+  object-fit: contain !important;
+  background: white !important;
+  padding: 10px !important;
+  border-radius: 22px !important;
+  box-shadow: 0 8px 24px rgba(139, 92, 246, 0.22) !important;
+}
+
+.login-page {
+  background: linear-gradient(135deg, #f7f0ff, #eef6ff) !important;
+}
+
+.login-container {
+  border: 1px solid #eadcff !important;
+  box-shadow: 0 18px 45px rgba(139, 92, 246, 0.18) !important;
+}
+
+.login-header h1,
+#login-school-title {
+  color: #6d28d9 !important;
+  font-size: 24px !important;
+}
+
+.login-header p {
+  color: #64748b !important;
+}
+
+button,
+.login-btn,
+#login-btn {
+  background: linear-gradient(90deg, #8b5cf6, #60a5fa) !important;
+}
