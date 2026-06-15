@@ -711,3 +711,76 @@ main,
   width:calc(100% - 280px) !important;
   padding:20px !important;
 }
+/* خط أوضح */
+body, button, input, select, textarea {
+  font-family: "Tajawal", "Cairo", Arial, sans-serif !important;
+  font-weight: 500 !important;
+}
+
+/* تكبير شعار صفحة الدخول */
+.login-school-logo {
+  width: 150px !important;
+  height: 150px !important;
+  object-fit: contain !important;
+  background: #fff !important;
+  padding: 14px !important;
+  border-radius: 36px !important;
+  box-shadow: 0 12px 30px rgba(47,95,143,.20) !important;
+}
+
+/* أزرار الشريط الجانبي مثل الصورة بلون أزرق */
+.sidebar-nav {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 12px !important;
+  padding: 14px !important;
+}
+
+.sidebar-nav .nav-item {
+  background: #ffffff !important;
+  color: #2F5F8F !important;
+  border-radius: 40px !important;
+  padding: 13px 18px !important;
+  border: 1px solid #BBD7EA !important;
+  box-shadow: 0 6px 16px rgba(47,95,143,.12) !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  font-weight: 800 !important;
+}
+
+.sidebar-nav .nav-icon {
+  width: 42px !important;
+  height: 42px !important;
+  min-width: 42px !important;
+  border-radius: 50% !important;
+  background: #2F5F8F !important;
+  color: white !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 18px !important;
+  box-shadow: 0 5px 12px rgba(47,95,143,.20) !important;
+}
+
+.sidebar-nav .nav-item.active,
+.sidebar-nav .nav-item:hover {
+  background: linear-gradient(90deg,#2F5F8F,#6FA8DC) !important;
+  color: white !important;
+}
+
+.sidebar-nav .nav-item.active .nav-icon,
+.sidebar-nav .nav-item:hover .nav-icon {
+  background: white !important;
+  color: #2F5F8F !important;
+}
+
+/* ألوان التحليلات والتقدم */
+.progress-bar,
+.progress-fill,
+.progress > div,
+.bar-fill,
+.kpi-progress,
+.stat-progress {
+  background: linear-gradient(90deg,#2F5F8F,#7C83FD,#F3A6C8) !important;
+}
