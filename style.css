@@ -718,14 +718,42 @@ body, button, input, select, textarea {
 }
 
 /* تكبير شعار صفحة الدخول */
-.login-school-logo {
-  width: 150px !important;
-  height: 150px !important;
+/* شعار صفحة الدخول */
+.login-school-logo{
+  width: 190px !important;
+  height: 190px !important;
   object-fit: contain !important;
-  background: #fff !important;
-  padding: 14px !important;
-  border-radius: 36px !important;
-  box-shadow: 0 12px 30px rgba(47,95,143,.20) !important;
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* شعار الصفحة الرئيسية */
+.school-logo{
+  width: 170px !important;
+  height: 170px !important;
+  object-fit: contain !important;
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* رفع شعار القائمة للأعلى */
+.sidebar-logo{
+  margin-top: -18px !important;
+  margin-bottom: 10px !important;
+  display:flex !important;
+  justify-content:center !important;
+}
+
+/* رفع شعار تسجيل الدخول */
+.login-logo{
+  margin-top: -30px !important;
+  margin-bottom: 12px !important;
+  display:flex !important;
+  justify-content:center !important;
 }
 
 /* أزرار الشريط الجانبي مثل الصورة بلون أزرق */
