@@ -812,3 +812,30 @@ body, button, input, select, textarea {
 .stat-progress {
   background: linear-gradient(90deg,#2F5F8F,#7C83FD,#F3A6C8) !important;
 }
+/* تكبير شعار تسجيل الدخول فقط */
+.login-logo img,
+.login-school-logo {
+  width: 240px !important;
+  height: 240px !important;
+  max-width: 240px !important;
+  object-fit: contain !important;
+  background: transparent !important;
+  padding: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* حذف شعار الصفحة الداخلية / الرئيسية */
+.sidebar-logo,
+.sidebar .school-logo {
+  display: none !important;
+}
+
+/* ألوان رسائل النجاح بدل الأخضر */
+.toast.success,
+.toast-success,
+#toast.success {
+  background: linear-gradient(90deg,#2F5F8F,#7C83FD,#F3A6C8) !important;
+  color: white !important;
+}
