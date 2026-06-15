@@ -507,3 +507,186 @@ input[type="checkbox"] {
   border: 1px solid #ddd6fe !important;
   box-shadow: 0 8px 24px rgba(124,58,237,.12) !important;
 }
+/* ==============================
+   هوية موحدة للمنصة - الابتدائية 127
+   ============================== */
+
+:root{
+  --soft-purple:#8E9AAF;
+  --soft-purple-2:#CBC0D3;
+  --soft-blue:#A7C7E7;
+  --soft-bg:#F6F7FB;
+  --text:#374151;
+  --white:#ffffff;
+}
+
+/* الخلفية */
+body{
+  background: var(--soft-bg) !important;
+  color: var(--text) !important;
+}
+
+/* القائمة الجانبية */
+.sidebar,
+.side-menu,
+.nav-menu{
+  background: linear-gradient(180deg,#8E9AAF,#A7C7E7) !important;
+}
+
+/* صندوق الشعار واسم المدرسة */
+.sidebar-header,
+.school-header,
+.school-brand,
+.logo-area{
+  display:flex !important;
+  flex-direction:column !important;
+  align-items:center !important;
+  justify-content:center !important;
+  gap:8px !important;
+  text-align:center !important;
+  padding:18px 10px 14px !important;
+}
+
+/* شعار المدرسة */
+.school-logo,
+.header-logo,
+.app-logo,
+.sidebar-logo,
+.sidebar-logo img,
+.logo-area img{
+  width:86px !important;
+  height:86px !important;
+  object-fit:contain !important;
+  background:#fff !important;
+  padding:9px !important;
+  border-radius:24px !important;
+  border:1px solid rgba(255,255,255,.7) !important;
+  box-shadow:0 8px 22px rgba(55,65,81,.18) !important;
+  display:block !important;
+}
+
+/* اسم المدرسة */
+.school-name,
+#school-name,
+.header-title,
+.app-title,
+.sidebar-title,
+.logo-title{
+  font-size:18px !important;
+  font-weight:800 !important;
+  color:#ffffff !important;
+  margin:0 !important;
+  line-height:1.4 !important;
+  text-align:center !important;
+}
+
+/* تصغير السنة وتفاصيل المدرسة */
+.school-subtitle,
+.sidebar-subtitle,
+.logo-subtitle,
+.academic-year{
+  font-size:12px !important;
+  color:rgba(255,255,255,.78) !important;
+  margin:0 !important;
+  line-height:1.4 !important;
+  text-align:center !important;
+}
+
+/* عناصر القائمة */
+.menu-item,
+.nav-item{
+  color:white !important;
+  border-radius:16px !important;
+  margin:6px 12px !important;
+}
+
+.menu-item.active,
+.nav-item.active{
+  background:rgba(255,255,255,.28) !important;
+  color:white !important;
+  border:1px solid rgba(255,255,255,.35) !important;
+  box-shadow:0 6px 16px rgba(255,255,255,.12) !important;
+}
+
+/* الأزرار العامة */
+button,
+.btn{
+  background:linear-gradient(90deg,#8E9AAF,#A7C7E7) !important;
+  color:white !important;
+  border:1px solid #CBD5E1 !important;
+  border-radius:12px !important;
+  font-weight:700 !important;
+}
+
+/* إضافة */
+.add-btn,
+.btn-add,
+button[onclick*="add"],
+button[onclick*="openProgramModal"]{
+  background:linear-gradient(90deg,#8E9AAF,#A7C7E7) !important;
+  color:white !important;
+}
+
+/* تفاصيل */
+.details-btn,
+.btn-details,
+button[onclick*="viewProgramDetail"]{
+  background:#ffffff !important;
+  color:#64748B !important;
+  border:1px solid #CBD5E1 !important;
+}
+
+/* تعديل */
+.edit-btn,
+.btn-edit,
+button[onclick*="editProgram"]{
+  background:#F8FAFC !important;
+  color:#7C6A9E !important;
+  border:1px solid #D8CDE3 !important;
+}
+
+/* حذف */
+.delete-btn,
+.btn-delete,
+button[onclick*="deleteProgram"]{
+  background:#FFF7ED !important;
+  color:#C76B4A !important;
+  border:1px solid #F4B6A6 !important;
+}
+
+/* أشرطة التقدم */
+.progress-bar,
+.progress-fill,
+.progress > div,
+.bar-fill{
+  background:linear-gradient(90deg,#8E9AAF,#A7C7E7) !important;
+}
+
+/* علامة الصح */
+input[type="checkbox"]{
+  width:28px !important;
+  height:28px !important;
+  accent-color:#8E9AAF !important;
+}
+
+/* الدائرة عند اسم المديرة */
+.user-avatar,
+.profile-circle,
+.admin-avatar,
+.header-user-avatar{
+  background:linear-gradient(135deg,#CBC0D3,#A7C7E7) !important;
+  color:#374151 !important;
+  border:2px solid #fff !important;
+  box-shadow:0 4px 12px rgba(142,154,175,.25) !important;
+}
+
+/* البطاقات */
+.card,
+.program-card,
+.kpi-card,
+.stat-card{
+  background:#fff !important;
+  border:1px solid #E5E7EB !important;
+  border-radius:18px !important;
+  box-shadow:0 8px 24px rgba(142,154,175,.12) !important;
+}
