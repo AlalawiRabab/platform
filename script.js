@@ -1731,12 +1731,78 @@ function deleteKPI(id) {
 }
 
 function drawKPIBars() {
-  const c=document.getElementById('kpi-chart'); if(!c||!kpiCache.length)return;
-  const W=c.parentElement?.offsetWidth||700; c.width=W; c.height=300;
-  const ctx=c.getContext('2d'); ctx.clearRect(0,0,W,300);
-  const pL=20,pR=20,pT=20,pB=80,cW=W-pL-pR,cH=300-pT-pB,n=kpiCache.length,gap=cW/n,bW=Math.min(38,gap/2.5);
-  for(let i=0;i<=5;i++){const y=pT+cH-(cH*i/5);ctx.strokeStyle='#eaecee';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(pL,y);ctx.lineTo(W-pR,y);ctx.stroke();ctx.fillStyle='#aaa';ctx.font='11px Tajawal';ctx.textAlign='left';ctx.fillText((i*20)+'%',pL,y-3);}
-  kpiCache.forEach((k,i)=>{const pct=k.target>0?Math.min(100,(k.achieved/k.target)*100):0,x=pL+i*gap+gap/2,bH=(pct/100)*cH;ctx.fillStyle='#dce8f5';ctx.fillRect(x-bW*.6,pT,bW*1.2,cH);const clr=pct>=90?'#27ae60':pct>=70?'#f39c12':'#e74c3c';ctx.fillStyle=clr;ctx.fillRect(x-bW/2,pT+cH-bH,bW,bH);ctx.fillStyle='#333';ctx.font='bold 11px Tajawal';ctx.textAlign='center';ctx.fillText(Math.round(pct)+'%',x,pT+cH-bH-5);const w=k.name.split(' ');ctx.fillStyle='#555';ctx.font='11px Tajawal';ctx.fillText(w.slice(0,2).join(' '),x,300-pB+16);if(w.length>2)ctx.fillText(w.slice(2).join(' '),x,300-pB+30);});
+  const c = document.getElementById('kpi-chart');
+  if (!c || !kpiCache.length) return;
+
+  const W = c.parentElement?.offsetWidth || 700;
+  c.width = W;
+  c.height = 300;
+
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, W, 300);
+
+  const pL = 20, pR = 20, pT = 20, pB = 80;
+  const cW = W - pL - pR;
+  const cH = 300 - pT - pB;
+  const n = kpiCache.length;
+  const gap = cW / n;
+  const bW = Math.min(38, gap / 2.5);
+
+  /* خطوط الخلفية */
+  for (let i = 0; i <= 5; i++) {
+    const y = pT + cH - (cH * i / 5);
+
+    ctx.strokeStyle = '#E3EAF4';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pL, y);
+    ctx.lineTo(W - pR, y);
+    ctx.stroke();
+
+    ctx.fillStyle = '#7A8CA5';
+    ctx.font = '11px Tajawal';
+    ctx.textAlign = 'left';
+    ctx.fillText((i * 20) + '%', pL, y - 3);
+  }
+
+  kpiCache.forEach((k, i) => {
+    const pct = k.target > 0
+      ? Math.min(100, (k.achieved / k.target) * 100)
+      : 0;
+
+    const x = pL + i * gap + gap / 2;
+    const bH = (pct / 100) * cH;
+
+    /* خلفية العمود */
+    ctx.fillStyle = '#EDF3FA';
+    ctx.fillRect(x - bW * .6, pT, bW * 1.2, cH);
+
+    /* تدرج العمود */
+    const grad = ctx.createLinearGradient(0, pT, 0, pT + cH);
+    grad.addColorStop(0, '#2F5F8F');   // أزرق الشعار
+    grad.addColorStop(0.5, '#7C83FD'); // موف هادئ
+    grad.addColorStop(1, '#F3A6C8');   // وردي ناعم
+
+    ctx.fillStyle = grad;
+    ctx.fillRect(x - bW / 2, pT + cH - bH, bW, bH);
+
+    /* نسبة الإنجاز */
+    ctx.fillStyle = '#2F3E52';
+    ctx.font = 'bold 11px Tajawal';
+    ctx.textAlign = 'center';
+    ctx.fillText(Math.round(pct) + '%', x, pT + cH - bH - 5);
+
+    /* اسم المؤشر */
+    const w = k.name.split(' ');
+    ctx.fillStyle = '#5C6E82';
+    ctx.font = '11px Tajawal';
+
+    ctx.fillText(w.slice(0, 2).join(' '), x, 300 - pB + 16);
+
+    if (w.length > 2) {
+      ctx.fillText(w.slice(2).join(' '), x, 300 - pB + 30);
+    }
+  });
 }
 
 /* ─────────────────────────────────────────────────────────────
