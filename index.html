@@ -38,30 +38,28 @@
                onkeydown="if(event.key==='Enter')doLogin()"/>
       </div>
      <button id="login-btn" class="btn-login" onclick="window.doLogin()">دخول إلى المنصة</button>
-      <div class="role-info-hint">
-        بيانات تجريبية:<br>
-        <strong>admin@school.sa</strong> / <strong>vice@school.sa</strong> / <strong>teacher@school.sa</strong><br>
-        كلمة المرور: <strong>1234</strong>
-      </div>
+      
     </div>
   </div>
 </div>
 
 <!-- APP -->
-<div id="app" class="app hidden">
-  <div id="sidebar-overlay" class="sidebar-overlay" onclick="closeSidebar()"></div>
-  <aside id="sidebar" class="sidebar">
-    <div class="sidebar-header">
-      <div class="sidebar-logo"></div>
-      <div class="sidebar-school-info">
-        <div class="school-header">
-  <img src="logo.png" alt="شعار المدرسة" class="school-logo">
-  <h1>الابتدائية ١٢٧</h1>
-</div>
-        <span id="sidebar-school-name">الابتدائية 127</span>
-        <span id="sidebar-year">١٤٤٦/١٤٤٧</span>
-      </div>
+<div class="sidebar-header">
+
+  <div class="sidebar-logo">
+    <img src="logo.png" alt="شعار المدرسة" class="school-logo">
+  </div>
+
+  <div class="sidebar-school-info">
+    <div class="school-header">
+      <h1>الابتدائية ١٢٧</h1>
     </div>
+
+    <span id="sidebar-year">1447/1448</span>
+  </div>
+
+</div>
+    
     <nav class="sidebar-nav">
       <a href="#" class="nav-item active" data-section="dashboard" onclick="navTo('dashboard',this);return false">
         <span class="nav-icon"></span><span>لوحة التحكم</span>
