@@ -391,3 +391,119 @@ button,
 #login-btn {
   background: linear-gradient(90deg, #8b5cf6, #60a5fa) !important;
 }
+/* ===== إصلاح الهوية والألوان ===== */
+:root{
+  --mof:#7c3aed;
+  --mof2:#a78bfa;
+  --blue:#38bdf8;
+  --text:#334155;
+}
+
+/* تكبير شعار الواجهة الرئيسية */
+.school-logo,
+.header-logo,
+.app-logo,
+.sidebar-logo img {
+  width: 82px !important;
+  height: 82px !important;
+  object-fit: contain !important;
+  background: #fff !important;
+  padding: 8px !important;
+  border-radius: 20px !important;
+  box-shadow: 0 8px 22px rgba(124,58,237,.22) !important;
+}
+
+/* اسم المدرسة في الرئيسية */
+.school-name,
+#school-name,
+.header-title,
+.app-title {
+  font-size: 20px !important;
+  color: #6d28d9 !important;
+  font-weight: 800 !important;
+  margin: 0 !important;
+  line-height: 1.4 !important;
+}
+
+/* إزالة الأخضر من القائمة الجانبية */
+.sidebar,
+.side-menu,
+.nav-menu {
+  background: linear-gradient(180deg,#6d28d9,#2563eb) !important;
+}
+
+.menu-item,
+.nav-item {
+  color: #fff !important;
+}
+
+.menu-item.active,
+.nav-item.active {
+  background: linear-gradient(90deg,#a78bfa,#38bdf8) !important;
+  color: #fff !important;
+  border-radius: 16px !important;
+}
+
+/* أشرطة التقدم بدل الأخضر */
+.progress-bar,
+.progress-fill,
+.progress > div,
+.bar-fill {
+  background: linear-gradient(90deg,#7c3aed,#38bdf8) !important;
+}
+
+/* شارة منجز / متأخر */
+.badge,
+.status,
+.done,
+.completed {
+  background: linear-gradient(90deg,#ede9fe,#dbeafe) !important;
+  color: #5b21b6 !important;
+  border: 1px solid #c4b5fd !important;
+}
+
+/* أزرار التفاصيل والتعديل والحذف */
+button,
+.btn {
+  color: #fff !important;
+  font-weight: 700 !important;
+}
+
+.btn-details,
+.details-btn,
+button[onclick*="Detail"] {
+  background: linear-gradient(90deg,#2563eb,#38bdf8) !important;
+  color: #fff !important;
+}
+
+.btn-edit,
+.edit-btn,
+button[onclick*="Edit"] {
+  background: linear-gradient(90deg,#7c3aed,#a78bfa) !important;
+  color: #fff !important;
+}
+
+.btn-delete,
+.delete-btn,
+button[onclick*="Delete"],
+button[onclick*="del"] {
+  background: linear-gradient(90deg,#ef4444,#f97316) !important;
+  color: #fff !important;
+}
+
+/* علامة الصح للمؤشرات */
+input[type="checkbox"] {
+  width: 28px !important;
+  height: 28px !important;
+  accent-color: #7c3aed !important;
+  cursor: pointer !important;
+}
+
+/* البطاقات */
+.card,
+.program-card,
+.kpi-card,
+.stat-card {
+  border: 1px solid #ddd6fe !important;
+  box-shadow: 0 8px 24px rgba(124,58,237,.12) !important;
+}
