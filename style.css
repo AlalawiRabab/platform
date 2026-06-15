@@ -591,3 +591,51 @@ input[type="checkbox"]{
   color:white !important;
   box-shadow:0 6px 14px rgba(47,95,143,.15) !important;
 }
+/* إصلاح sidebar بعد الكسر */
+#sidebar,
+.sidebar{
+  width: 280px !important;
+  min-width: 280px !important;
+  height: 100vh !important;
+  position: fixed !important;
+  right: 0 !important;
+  top: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow-y: auto !important;
+  z-index: 999 !important;
+  background: linear-gradient(180deg,#f4f9fd,#dcecf8) !important;
+}
+
+/* محتوى الصفحة لا يدخل تحت القائمة */
+.main-content,
+.content,
+.dashboard-container,
+.app-content{
+  margin-right: 280px !important;
+  width: calc(100% - 280px) !important;
+}
+
+/* الهيدر داخل sidebar */
+.sidebar-header{
+  flex-shrink: 0 !important;
+  display:flex !important;
+  flex-direction:column !important;
+  align-items:center !important;
+  padding:15px 10px !important;
+}
+
+/* القائمة */
+.sidebar-nav{
+  display:flex !important;
+  flex-direction:column !important;
+  gap:8px !important;
+  padding:10px !important;
+}
+
+/* زر تسجيل الخروج يبقى أسفل */
+.logout-btn,
+.sidebar-footer{
+  margin-top:auto !important;
+  padding:14px !important;
+}
