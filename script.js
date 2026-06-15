@@ -1038,8 +1038,15 @@ function buildProgramCard(p) {
   const status = calcProgramStatus(p);
   const pct    = parseInt(p.progress) || 0;
   const inds   = p.indicators || indicatorsCache[p.id] || [];
-  const clr    = pct >= 90 ? '#27ae60' : pct >= 60 ? '#2e86c1' : pct >= 30 ? '#f39c12' : '#e74c3c';
-  const total  = inds.length;
+
+  /* ألوان الهوية الجديدة بدل الأخضر */
+  const clr =
+    pct >= 90 ? '#2F5F8F' :   // أزرق رئيسي
+    pct >= 60 ? '#7C83FD' :   // موف
+    pct >= 30 ? '#F3A6C8' :   // وردي
+                '#C9D9EA';    // أزرق فاتح
+
+  const total = inds.length;
 
   const done = inds.filter(ind => {
     const completed = ind.is_completed === true || ind.is_completed === 'true';
