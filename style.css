@@ -890,3 +890,63 @@ body,
 #toast.error {
   background: linear-gradient(90deg,#C36A50,#F3A6C8) !important;
 }
+/* =========================
+   إصلاح شريط الإنجاز
+========================= */
+.progress-bar,
+.progress {
+  background: #EEF2F7 !important;
+  overflow: hidden !important;
+  border-radius: 999px !important;
+  height: 10px !important;
+}
+
+/* اللون يظهر فقط حسب النسبة */
+.progress-fill,
+.bar-fill {
+  background: linear-gradient(90deg,#2F5F8F,#7C83FD,#F3A6C8) !important;
+  height: 100% !important;
+  border-radius: 999px !important;
+  transition: width .4s ease !important;
+}
+
+/* =========================
+   تحسين شكل كروت البرامج
+========================= */
+.program-card {
+  background: #ffffff !important;
+  border: 1px solid rgba(124,131,253,0.18) !important;
+  border-radius: 24px !important;
+  padding: 18px !important;
+  box-shadow: 
+    0 8px 24px rgba(47,95,143,0.08),
+    0 2px 8px rgba(124,131,253,0.06) !important;
+  transition: all .3s ease !important;
+}
+
+/* تأثير عند المرور */
+.program-card:hover {
+  transform: translateY(-4px) !important;
+  box-shadow: 
+    0 14px 32px rgba(47,95,143,0.12),
+    0 4px 12px rgba(243,166,200,0.10) !important;
+  border-color: rgba(243,166,200,0.35) !important;
+}
+
+/* شريط علوي متدرج للكرت */
+.program-card::before {
+  content: "";
+  display: block;
+  height: 4px;
+  width: 100%;
+  border-radius: 20px;
+  margin-bottom: 14px;
+  background: linear-gradient(90deg,#2F5F8F,#7C83FD,#F3A6C8);
+}
+
+/* تحسين الأزرار داخل الكرت */
+.program-card .btn,
+.program-card button {
+  border-radius: 16px !important;
+  font-weight: 700 !important;
+}
