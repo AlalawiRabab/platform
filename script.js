@@ -1033,10 +1033,25 @@ function renderPrograms() {
   }
   grid.innerHTML = filtered.map(p => buildProgramCard(p)).join('');
 }
+function calcProgramProgress(programId) {
+  const inds = (indicatorsCache[programId] || []).filter(i => i.status !== 'deleted');
 
+  if (!inds.length) return 0;
+
+  const done = inds.filter(ind =>
+    ind.is_completed === true &&
+    evidencesCache.some(ev =>
+      ev.program_id === programId &&
+      ev.indicator_id === ind.id &&
+      ev.status !== 'deleted'
+    )
+  ).length;
+
+  return Math.round((done / inds.length) * 100);
+}
 function buildProgramCard(p) {
   const status = calcProgramStatus(p);
-  const pct    = parseInt(p.progress) || 0;
+ const pct = calcProgramProgress(p.id);
   const inds   = p.indicators || indicatorsCache[p.id] || [];
 
   /* ألوان الهوية الجديدة بدل الأخضر */
@@ -2171,7 +2186,11 @@ function renderDashboard() {
   const visTeachers = teachersCache.filter(t => t.name && !t.name.toLowerCase().includes('admin'));
   const total  = programsCache.length;
   const done   = programsCache.filter(p => calcProgramStatus(p)==='done').length;
-  const avg    = total ? Math.round(programsCache.reduce((s,p)=>s+(p.progress||0),0)/total) : 0;
+ const avg = total
+  ? Math.round(
+      programsCache.reduce((s,p)=>s+calcProgramProgress(p.id),0)/total
+    )
+  : 0;
   const lateT  = tasksCache.filter(t=>t.status!=='done'&&t.due&&new Date(t.due)<new Date()).length;
   const totalEv= evidencesCache.length;
 
