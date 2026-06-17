@@ -438,15 +438,25 @@ function closeSidebar() {
 /* ─────────────────────────────────────────────────────────────
    §12  STATUS HELPERS
    ───────────────────────────────────────────────────────────── */
-function calcProgramStatus(p) {
-  const today = new Date(); today.setHours(0,0,0,0);
-  const s = p.start ? new Date(p.start) : null;
-  const e = p.end   ? new Date(p.end)   : null;
- const pct = calcProgramProgress(p.id);
-  if (pct >= 100)          return 'done';
-  if (!s || today < s)     return 'planning';
-  if (e && today > e)      return 'late';
-  return 'active';
+function calcProgramProgress(programId) {
+  const indsSource = Array.isArray(indicatorsCache)
+    ? indicatorsCache.filter(i => String(i.program_id) === String(programId))
+    : (indicatorsCache[programId] || []);
+
+  const inds = indsSource.filter(i => i.status !== 'deleted');
+
+  if (!inds.length) return 0;
+
+  const done = inds.filter(ind =>
+    (ind.is_completed === true || ind.is_completed === 'true' || ind.is_completed === 1) &&
+    evidencesCache.some(ev =>
+      String(ev.program_id) === String(programId) &&
+      String(ev.indicator_id) === String(ind.id) &&
+      ev.status !== 'deleted'
+    )
+  ).length;
+
+  return Math.round((done / inds.length) * 100);
 }
 const SL = {planning:'قيد التخطيط',active:'جارٍ التنفيذ',done:'منتهٍ',late:'متأخر'};
 const SB = {planning:'badge-secondary',active:'badge-info',done:'badge-success',late:'badge-danger'};
@@ -1358,24 +1368,51 @@ async function handleAddInd(progId) {
 }
 
 async function handleToggle(progId, indId) {
-  if (currentUser.role === 'teacher') {
-    const prog = programsCache.find(p => p.id === progId);
-    if (prog?.resp && !prog.resp.includes(currentUser.name)) {
-      showToast('يمكنك تحديث مؤشرات برامجك فقط', 'error');
+  if (currentUser?.role === 'teacher') {
+    const prog = programsCache.find(p => String(p.id) === String(progId));
+
+    if (prog?.resp && prog.resp !== currentUser.name) {
+      showToast('لا يمكنك تعديل مؤشرات برنامج ليس مرتبطًا بك', 'error');
       return;
     }
   }
 
   try {
-    await sbToggleIndicator(progId, indId);
-    await syncProgress(progId);
+    const ind = (indicatorsCache[progId] || []).find(
+      i => String(i.id) === String(indId)
+    );
+
+    if (!ind) {
+      showToast('لم يتم العثور على المؤشر', 'error');
+      return;
+    }
+
+    const newValue = !(ind.is_completed === true || ind.is_completed === 'true' || ind.is_completed === 1);
+
+    const { error } = await sb
+      .from('program_indicators')
+      .update({ is_completed: newValue })
+      .eq('id', indId);
+
+    if (error) throw error;
+
+    await fetchIndicators();
+    await fetchEvidences();
+
+    if (typeof syncProgress === 'function') {
+      await syncProgress(progId);
+    }
+
     renderPrograms();
+    renderDashboard();
+
+    showToast(newValue ? 'تم إنجاز المؤشر ✅' : 'تم إلغاء إنجاز المؤشر', 'success');
+
   } catch (err) {
     console.error('[handleToggle]', err.message);
     showToast('خطأ: ' + err.message, 'error');
   }
 }
-
 function repaintCard(progId) {
   const p = programsCache.find(x => x.id === progId); if (!p) return;
   const inds = indicatorsCache[progId]||[]; p.indicators = inds;
