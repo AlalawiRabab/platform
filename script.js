@@ -442,7 +442,7 @@ function calcProgramStatus(p) {
   const today = new Date(); today.setHours(0,0,0,0);
   const s = p.start ? new Date(p.start) : null;
   const e = p.end   ? new Date(p.end)   : null;
-  const pct = parseInt(p.progress) || 0;
+ const pct = calcProgramProgress(p.id);
   if (pct >= 100)          return 'done';
   if (!s || today < s)     return 'planning';
   if (e && today > e)      return 'late';
