@@ -1628,10 +1628,22 @@ if (!indicatorId) {
   if (btn) { btn.disabled=true; btn.textContent='جارٍ الحفظ…'; }
   try {
     const saved = await sbInsertEvidence(ev);
-     if (indicatorId) {
-  const ind = indicatorsCache.find(i => String(i.id) === String(indicatorId));
+    if (indicatorId) {
+  const list = indicatorsCache[progId] || [];
+  const ind = list.find(i => String(i.id) === String(indicatorId));
   if (ind) ind.is_completed = true;
+}
 
+await fetchIndicators();
+await fetchEvidences();
+
+programsCache.forEach(p => {
+  p.progress = calcProgramProgress(p.id);
+});
+
+renderPrograms();
+renderDashboard();
+drawDashPie();
   if (sb) {
     await sb
       .from('program_indicators')
@@ -1642,9 +1654,23 @@ if (!indicatorId) {
     evidencesCache.unshift(saved);
     syncEvidencesToPrograms();
    if (ev.program_id) await syncProgress(ev.program_id);
-     await loadAllData(false);
+if (indicatorId) {
+  const list = indicatorsCache[progId] || [];
+  const ind = list.find(i => String(i.id) === String(indicatorId));
+  if (ind) ind.is_completed = true;
+}
+
+await fetchIndicators();
+await fetchEvidences();
+
+programsCache.forEach(p => {
+  p.progress = calcProgramProgress(p.id);
+});
+
 renderPrograms();
-renderReports();
+renderDashboard();
+drawDashPie();
+   renderReports();
     closeModal('evidence-modal');
     showToast('تم حفظ الشاهد ✅','success');
   } catch (err) { console.error('[saveEvidence]',err.message); showToast('خطأ: '+err.message,'error'); }
