@@ -1185,7 +1185,21 @@ function openProgramModal(id) {
   }
   openModal('program-modal');
 }
+function calcProgramStatus(p) {
+  const today = new Date();
+  today.setHours(0,0,0,0);
 
+  const s = p.start ? new Date(p.start) : null;
+  const e = p.end ? new Date(p.end) : null;
+  const pct = p.id ? calcProgramProgress(p.id) : (parseInt(p.progress) || 0);
+
+  if (pct >= 100) return 'done';
+  if (!s || today < s) return 'planning';
+  if (e && today > e) return 'late';
+
+  return 'active';
+}
+window.calcProgramStatus = calcProgramStatus;
 async function saveProgram() {
   const editId = document.getElementById('prog-edit-id')?.value;
   if (editId  && !can('editProgram')) { showToast('ليس لديك صلاحية تعديل البرامج','error'); return; }
