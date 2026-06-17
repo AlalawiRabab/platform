@@ -1678,20 +1678,36 @@ drawDashPie();
 }
 
 async function handleDelEv(evId) {
-  if (!can('deleteEvidence')) { showToast('ليس لديك صلاحية حذف الشواهد','error'); return; }
+  if (!can('deleteEvidence')) {
+    showToast('ليس لديك صلاحية حذف الشواهد', 'error');
+    return;
+  }
+
   if (!confirm('حذف هذا الشاهد؟')) return;
+
   const target = evidencesCache.find(e => e.id === evId);
   const affectedProg = target?.program_id || null;
+
   try {
     await sbDeleteEvidence(evId);
     syncEvidencesToPrograms();
-    if (affectedProg) await syncProgress(affectedProg);
-    renderPrograms(); renderReports();
-    showToast('تم حذف الشاهد 🗑️','warning');
-  } catch (err) { console.error('[handleDelEv]',err.message); showToast('خطأ: '+err.message,'error'); }
-}
-function deleteEvidence(id) { handleDelEv(id); }
 
+    if (affectedProg) await syncProgress(affectedProg);
+
+    renderPrograms();
+    renderReports();
+
+    showToast('تم حذف الشاهد 🗑️', 'warning');
+
+  } catch (err) {
+    console.error('[handleDelEv]', err.message);
+    showToast('خطأ: ' + err.message, 'error');
+  }
+}
+
+function deleteEvidence(id) {
+  handleDelEv(id);
+}
 /* ─────────────────────────────────────────────────────────────
    §26  INITIATIVES SECTION
    ───────────────────────────────────────────────────────────── */
