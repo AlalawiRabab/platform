@@ -1018,7 +1018,10 @@ function renderPrograms() {
   const fs = document.getElementById('prog-filter-status')?.value||'all';
   const sq = (document.getElementById('prog-search')?.value||'').toLowerCase();
   const cnt = {planning:0,active:0,done:0,late:0};
-  programsCache.forEach(p => { const s=calcProgramStatus(p); cnt[s]=(cnt[s]||0)+1; });
+    programsCache.forEach(p => {
+  p.progress = calcProgramProgress(p.id);
+}); 
+   programsCache.forEach(p => { const s=calcProgramStatus(p); cnt[s]=(cnt[s]||0)+1; });
   const avg = programsCache.length ? Math.round(programsCache.reduce((s,p)=>s+(p.progress||0),0)/programsCache.length) : 0;
   const stEl = document.getElementById('programs-stats');
   if (stEl) stEl.innerHTML = `
