@@ -1044,24 +1044,28 @@ function renderPrograms() {
   grid.innerHTML = filtered.map(p => buildProgramCard(p)).join('');
 }
 function calcProgramProgress(programId) {
-  const inds = (indicatorsCache[programId] || []).filter(i => i.status !== 'deleted');
-
+  const inds = indicatorsCache[programId] || [];
   if (!inds.length) return 0;
 
-  const done = inds.filter(ind =>
-    ind.is_completed === true &&
-    evidencesCache.some(ev =>
+  let done = 0;
+
+  inds.forEach(ind => {
+    const hasEvidence = evidencesCache.some(ev =>
       ev.program_id === programId &&
-      ev.indicator_id === ind.id &&
-      ev.status !== 'deleted'
-    )
-  ).length;
+      String(ev.indicator_id) === String(ind.id)
+    );
+
+    if (ind.is_completed && hasEvidence) {
+      done++;
+    }
+  });
 
   return Math.round((done / inds.length) * 100);
 }
 function buildProgramCard(p) {
   const status = calcProgramStatus(p);
  const pct = calcProgramProgress(p.id);
+   p.progress = pct;
   const inds   = p.indicators || indicatorsCache[p.id] || [];
 
   /* ألوان الهوية الجديدة بدل الأخضر */
