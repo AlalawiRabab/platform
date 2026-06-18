@@ -497,18 +497,18 @@ async function fetchPrograms() {
       if (!indicatorsCache[ind.program_id]) indicatorsCache[ind.program_id] = [];
       indicatorsCache[ind.program_id].push(ind);
     });
-    programsCache = (pr.data||[]).map(row => ({
-      id       : row.id,
-      name     : row.name||'',
-      desc     : row.description||'',
-      start    : row.start_date||'',
-      end      : row.end_date||'',
-      progress : row.progress||0,
-      resp     : row.resp||'',
-      target   : row.target_group||'',
-      evidence : [],
-      indicators: indicatorsCache[row.id]||[],
-    }));
+  programsCache = (pr.data || []).map(row => ({
+  id: row.id,
+  name: row.name || '',
+  desc: row.description || '',
+  start: row.start_date || '',
+  end: row.end_date || '',
+  progress: calcProgramProgress(row.id),
+  resp: row.resp || '',
+  target: row.target_group || '',
+  evidence: [],
+  indicators: indicatorsCache[row.id] || []
+}));
     lsSave('programs_local', programsCache);
   } catch (err) {
     console.error('[fetchPrograms]', err.message);
