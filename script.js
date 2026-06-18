@@ -1650,7 +1650,6 @@ drawDashPie();
       .update({ is_completed: true })
       .eq('id', indicatorId);
   }
-}
     evidencesCache.unshift(saved);
     syncEvidencesToPrograms();
    if (ev.program_id) await syncProgress(ev.program_id);
