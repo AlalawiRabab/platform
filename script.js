@@ -439,22 +439,18 @@ function closeSidebar() {
    §12  STATUS HELPERS
    ───────────────────────────────────────────────────────────── */
 function calcProgramProgress(programId) {
-  const indsSource = Array.isArray(indicatorsCache)
-    ? indicatorsCache.filter(i => String(i.program_id) === String(programId))
-    : (indicatorsCache[programId] || []);
-
-  const inds = indsSource.filter(i => i.status !== 'deleted');
+  const inds = indicatorsCache[programId] || [];
 
   if (!inds.length) return 0;
 
-  const done = inds.filter(ind =>
-    (ind.is_completed === true || ind.is_completed === 'true' || ind.is_completed === 1) &&
-    evidencesCache.some(ev =>
+  const done = inds.filter(ind => {
+    const hasEvidence = evidencesCache.some(ev =>
       String(ev.program_id) === String(programId) &&
-      String(ev.indicator_id) === String(ind.id) &&
-      ev.status !== 'deleted'
-    )
-  ).length;
+      String(ev.indicator_id) === String(ind.id)
+    );
+
+    return ind.is_completed === true && hasEvidence;
+  }).length;
 
   return Math.round((done / inds.length) * 100);
 }
