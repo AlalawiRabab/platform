@@ -1725,13 +1725,18 @@ async function handleDelEv(evId) {
   const affectedProg = target?.program_id || null;
 
   try {
-    await sbDeleteEvidence(evId);
-    syncEvidencesToPrograms();
+   await sbDeleteEvidence(evId);
 
-    if (affectedProg) await syncProgress(affectedProg);
+await fetchEvidences();
+await fetchIndicators();
 
-    renderPrograms();
-    renderReports();
+if (affectedProg) {
+  await updateProgramProgress(affectedProg);
+}
+
+renderPrograms();
+renderDashboard();
+renderReports();
 
     showToast('تم حذف الشاهد 🗑️', 'warning');
 
