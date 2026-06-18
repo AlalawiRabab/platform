@@ -1061,10 +1061,29 @@ function calcProgramProgress(programId) {
 
   return Math.round((done / inds.length) * 100);
 }
+async function updateProgramProgress(programId) {
+  if (!programId) return;
+
+  const pct = calcProgramProgress(programId);
+
+  const { error } = await supabase
+    .from('programs')
+    .update({ progress: pct })
+    .eq('id', programId);
+
+  if (error) {
+    console.error('update progress error:', error.message);
+    return;
+  }
+
+  const prog = programsCache.find(p => p.id === programId);
+  if (prog) prog.progress = pct;
+
+  return pct;
+}
 function buildProgramCard(p) {
   const status = calcProgramStatus(p);
  const pct = calcProgramProgress(p.id);
-   p.progress = pct;
   const inds   = p.indicators || indicatorsCache[p.id] || [];
 
   /* ألوان الهوية الجديدة بدل الأخضر */
@@ -1647,13 +1666,15 @@ drawDashPie();
       .eq('id', indicatorId);
   }
     evidencesCache.unshift(saved);
-    syncEvidencesToPrograms();
-   if (ev.program_id) await syncProgress(ev.program_id);
-if (indicatorId) {
-  const list = indicatorsCache[progId] || [];
-  const ind = list.find(i => String(i.id) === String(indicatorId));
-  if (ind) ind.is_completed = true;
-}
+
+await fetchEvidences();
+await fetchIndicators();
+
+await updateProgramProgress(saved.program_id);
+
+renderPrograms();
+renderDashboard();
+
 async function fetchIndicators() {
   if (!sb) return;
 
