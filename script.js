@@ -1654,7 +1654,27 @@ if (indicatorId) {
   const ind = list.find(i => String(i.id) === String(indicatorId));
   if (ind) ind.is_completed = true;
 }
+async function fetchIndicators() {
+  if (!sb) return;
 
+  const { data, error } = await sb
+    .from('program_indicators')
+    .select('*');
+
+  if (error) {
+    console.error(error.message);
+    return;
+  }
+
+  indicatorsCache = {};
+
+  data.forEach(ind => {
+    if (!indicatorsCache[ind.program_id]) {
+      indicatorsCache[ind.program_id] = [];
+    }
+    indicatorsCache[ind.program_id].push(ind);
+  });
+}
 await fetchIndicators();
 await fetchEvidences();
 
