@@ -974,3 +974,149 @@ body,
   display: block !important;
   width: 100% !important;
 }
+/* تحسين نسخة الجوال */
+@media (max-width: 768px) {
+
+  html, body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  body {
+    padding: 0;
+    margin: 0;
+  }
+
+  .app-container,
+  .main-content,
+  .content,
+  #main-content {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 12px !important;
+    box-sizing: border-box;
+  }
+
+  /* الهيدر */
+  .topbar,
+  .header,
+  .school-header {
+    width: 100%;
+    justify-content: center;
+    text-align: center;
+    flex-wrap: wrap;
+    padding: 12px;
+  }
+
+  .school-header h1,
+  .school-title {
+    font-size: 22px !important;
+    line-height: 1.5;
+  }
+
+  .school-header p,
+  .school-info {
+    font-size: 14px !important;
+    line-height: 1.7;
+  }
+
+  /* أزرار أعلى الصفحة */
+  .floating-buttons,
+  .top-buttons {
+    position: sticky;
+    top: 8px;
+    z-index: 999;
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    background: white;
+    padding: 8px;
+    border-radius: 0 0 16px 16px;
+  }
+
+  /* القائمة الجانبية */
+  .sidebar,
+  .side-menu {
+    width: 82vw !important;
+    max-width: 330px;
+    right: 0;
+    left: auto;
+    padding: 18px;
+    box-sizing: border-box;
+    overflow-y: auto;
+  }
+
+  .sidebar a,
+  .side-menu a,
+  .nav-item {
+    width: 100%;
+    min-height: 56px;
+    font-size: 17px;
+    border-radius: 18px;
+    margin-bottom: 12px;
+  }
+
+  /* لوحة التحكم */
+  #dashboard-stats,
+  .dashboard-stats,
+  .stats-grid {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 12px !important;
+    width: 100%;
+  }
+
+  .stat-card,
+  .dashboard-card {
+    width: auto !important;
+    min-width: 0 !important;
+    padding: 14px 8px !important;
+    border-radius: 18px;
+    text-align: center;
+  }
+
+  .stat-card .number,
+  .dashboard-card .number {
+    font-size: 26px !important;
+  }
+
+  .stat-card .label,
+  .dashboard-card .label {
+    font-size: 14px !important;
+    line-height: 1.5;
+  }
+
+  /* كروت البرامج */
+  .programs-grid,
+  #programs-list,
+  .cards-grid {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 14px !important;
+    width: 100%;
+  }
+
+  .program-card,
+  .card {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box;
+  }
+
+  /* الأزرار داخل الكروت */
+  .card-actions,
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .card-actions button,
+  .actions button {
+    flex: 1 1 45%;
+    min-height: 42px;
+    font-size: 14px;
+  }
+}
