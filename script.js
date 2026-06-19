@@ -359,21 +359,24 @@ if (nm) {
 async function loadAllData(renderAfter = true) {
   showLoadingOverlay(true);
   try {
-    await Promise.all([
-      fetchPrograms(),
-       fetchIndicators(),
-      fetchInitiatives(),
-      fetchTasks(),
-      fetchEvidences(),
-      fetchTeachers(),
-      fetchKPI(),
-      loadSettings(),
-    ]);
+    await fetchPrograms();
+    await fetchIndicators();
+    await fetchEvidences();
+    await fetchTasks();
+    await fetchInitiatives();
+    await fetchTeachers();
+    await fetchKPI();
+    await loadSettings();
+
+    programsCache.forEach(p => {
+      p.progress = calcProgramProgress(p.id);
+    });
 
     if (renderAfter) renderSection(_activeSection);
 
   } catch (e) {
-    console.error('[loadAllData]', e.message);
+    console.error('[loadAllData]', e);
+    showToast('خطأ في تحميل البيانات: ' + e.message, 'error');
   } finally {
     showLoadingOverlay(false);
   }
