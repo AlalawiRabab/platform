@@ -1959,35 +1959,83 @@ function drawKPIBars() {
   const data = calcSchoolKPI();
 
   canvas.width = canvas.offsetWidth || 900;
-  canvas.height = 300;
+  canvas.height = 360;
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const padding = 40;
-  const barWidth = 45;
-  const gap = 45;
+  const padding = 70;
+  const barWidth = 55;
+  const gap = 55;
   const maxHeight = 180;
-  const baseY = 230;
+  const baseY = 240;
 
   data.forEach((k, i) => {
     const x = padding + i * (barWidth + gap);
     const h = Math.round((k.pct / 100) * maxHeight);
     const y = baseY - h;
 
-    ctx.fillStyle = '#7c6cff';
+    // ظل خلفي
+    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+    ctx.fillRect(x + 8, y + 8, barWidth, h);
+
+    // وجه العمود
+    const grad = ctx.createLinearGradient(x, y, x, baseY);
+    grad.addColorStop(0, '#4f46e5');
+    grad.addColorStop(1, '#d946ef');
+    ctx.fillStyle = grad;
     ctx.fillRect(x, y, barWidth, h);
 
+    // جانب ثلاثي الأبعاد
+    ctx.fillStyle = '#4338ca';
+    ctx.beginPath();
+    ctx.moveTo(x + barWidth, y);
+    ctx.lineTo(x + barWidth + 14, y - 10);
+    ctx.lineTo(x + barWidth + 14, baseY - 10);
+    ctx.lineTo(x + barWidth, baseY);
+    ctx.closePath();
+    ctx.fill();
+
+    // أعلى العمود
+    ctx.fillStyle = '#8b5cf6';
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + 14, y - 10);
+    ctx.lineTo(x + barWidth + 14, y - 10);
+    ctx.lineTo(x + barWidth, y);
+    ctx.closePath();
+    ctx.fill();
+
+    // النسبة
+    ctx.fillStyle = '#222';
+    ctx.font = 'bold 13px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(k.pct + '%', x + barWidth / 2, y - 18);
+
+    // الاسم تحت العمود مرتب
     ctx.fillStyle = '#333';
     ctx.font = '12px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText(k.pct + '%', x + barWidth / 2, y - 8);
-
-    ctx.save();
-    ctx.translate(x + barWidth / 2, baseY + 10);
-    ctx.rotate(-0.5);
-    ctx.fillText(k.name, 0, 0);
-    ctx.restore();
+    wrapText(ctx, k.name, x + barWidth / 2, baseY + 28, 95, 16);
   });
+}
+
+function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+  const words = text.split(' ');
+  let line = '';
+
+  words.forEach((word, i) => {
+    const testLine = line + word + ' ';
+    const width = ctx.measureText(testLine).width;
+
+    if (width > maxWidth && i > 0) {
+      ctx.fillText(line, x, y);
+      line = word + ' ';
+      y += lineHeight;
+    } else {
+      line = testLine;
+    }
+  });
+
+  ctx.fillText(line, x, y);
 }
 /* ─────────────────────────────────────────────────────────────
    §28  TASKS SECTION
