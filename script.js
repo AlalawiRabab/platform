@@ -1620,7 +1620,27 @@ function getFileIcon(name) {
   const ext = name.split('.').pop().toLowerCase();
   return ext==='pdf'?'📄':ext==='doc'||ext==='docx'?'📝':ext==='xls'||ext==='xlsx'?'📊':'📎';
 }
+async function fetchIndicators() {
+  if (!sb) return;
 
+  const { data, error } = await sb
+    .from('program_indicators')
+    .select('*');
+
+  if (error) {
+    console.error(error.message);
+    return;
+  }
+
+  indicatorsCache = {};
+
+  data.forEach(ind => {
+    if (!indicatorsCache[ind.program_id]) {
+      indicatorsCache[ind.program_id] = [];
+    }
+    indicatorsCache[ind.program_id].push(ind);
+  });
+}
 async function saveEvidence() {
   if (!can('addEvidence')) { showToast('ليس لديك صلاحية رفع الشواهد','error'); return; }
   const g = id => (document.getElementById(id)?.value||'');
@@ -1679,27 +1699,7 @@ await updateProgramProgress(saved.program_id);
 renderPrograms();
 renderDashboard();
 
-async function fetchIndicators() {
-  if (!sb) return;
 
-  const { data, error } = await sb
-    .from('program_indicators')
-    .select('*');
-
-  if (error) {
-    console.error(error.message);
-    return;
-  }
-
-  indicatorsCache = {};
-
-  data.forEach(ind => {
-    if (!indicatorsCache[ind.program_id]) {
-      indicatorsCache[ind.program_id] = [];
-    }
-    indicatorsCache[ind.program_id].push(ind);
-  });
-}
    renderReports();
     closeModal('evidence-modal');
     showToast('تم حفظ الشاهد ✅','success');
