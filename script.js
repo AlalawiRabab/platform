@@ -1926,6 +1926,7 @@ function renderKPI() {
       </tr>
     `;
   }).join('');
+   setTimeout(() => drawKPIBars(), 100);
 }
 function openKpiModal(id) {
   const ti=document.getElementById('kpi-modal-title'); if(ti) ti.textContent=id?'تعديل المؤشر':'إضافة مؤشر أداء';
@@ -1951,80 +1952,43 @@ function deleteKPI(id) {
 }
 
 function drawKPIBars() {
-  const c = document.getElementById('kpi-chart');
-  if (!c || !kpiCache.length) return;
+  const canvas = document.getElementById('kpi-chart');
+  if (!canvas) return;
 
-  const W = c.parentElement?.offsetWidth || 700;
-  c.width = W;
-  c.height = 300;
+  const ctx = canvas.getContext('2d');
+  const data = calcSchoolKPI();
 
-  const ctx = c.getContext('2d');
-  ctx.clearRect(0, 0, W, 300);
+  canvas.width = canvas.offsetWidth || 900;
+  canvas.height = 300;
 
-  const pL = 20, pR = 20, pT = 20, pB = 80;
-  const cW = W - pL - pR;
-  const cH = 300 - pT - pB;
-  const n = kpiCache.length;
-  const gap = cW / n;
-  const bW = Math.min(38, gap / 2.5);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  /* خطوط الخلفية */
-  for (let i = 0; i <= 5; i++) {
-    const y = pT + cH - (cH * i / 5);
+  const padding = 40;
+  const barWidth = 45;
+  const gap = 45;
+  const maxHeight = 180;
+  const baseY = 230;
 
-    ctx.strokeStyle = '#E3EAF4';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(pL, y);
-    ctx.lineTo(W - pR, y);
-    ctx.stroke();
+  data.forEach((k, i) => {
+    const x = padding + i * (barWidth + gap);
+    const h = Math.round((k.pct / 100) * maxHeight);
+    const y = baseY - h;
 
-    ctx.fillStyle = '#7A8CA5';
-    ctx.font = '11px Tajawal';
-    ctx.textAlign = 'left';
-    ctx.fillText((i * 20) + '%', pL, y - 3);
-  }
+    ctx.fillStyle = '#7c6cff';
+    ctx.fillRect(x, y, barWidth, h);
 
-  kpiCache.forEach((k, i) => {
-    const pct = k.target > 0
-      ? Math.min(100, (k.achieved / k.target) * 100)
-      : 0;
-
-    const x = pL + i * gap + gap / 2;
-    const bH = (pct / 100) * cH;
-
-    /* خلفية العمود */
-    ctx.fillStyle = '#EDF3FA';
-    ctx.fillRect(x - bW * .6, pT, bW * 1.2, cH);
-
-    /* تدرج العمود */
-    const grad = ctx.createLinearGradient(0, pT, 0, pT + cH);
-    grad.addColorStop(0, '#2F5F8F');   // أزرق الشعار
-    grad.addColorStop(0.5, '#7C83FD'); // موف هادئ
-    grad.addColorStop(1, '#F3A6C8');   // وردي ناعم
-
-    ctx.fillStyle = grad;
-    ctx.fillRect(x - bW / 2, pT + cH - bH, bW, bH);
-
-    /* نسبة الإنجاز */
-    ctx.fillStyle = '#2F3E52';
-    ctx.font = 'bold 11px Tajawal';
+    ctx.fillStyle = '#333';
+    ctx.font = '12px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText(Math.round(pct) + '%', x, pT + cH - bH - 5);
+    ctx.fillText(k.pct + '%', x + barWidth / 2, y - 8);
 
-    /* اسم المؤشر */
-    const w = k.name.split(' ');
-    ctx.fillStyle = '#5C6E82';
-    ctx.font = '11px Tajawal';
-
-    ctx.fillText(w.slice(0, 2).join(' '), x, 300 - pB + 16);
-
-    if (w.length > 2) {
-      ctx.fillText(w.slice(2).join(' '), x, 300 - pB + 30);
-    }
+    ctx.save();
+    ctx.translate(x + barWidth / 2, baseY + 10);
+    ctx.rotate(-0.5);
+    ctx.fillText(k.name, 0, 0);
+    ctx.restore();
   });
 }
-
 /* ─────────────────────────────────────────────────────────────
    §28  TASKS SECTION
    ───────────────────────────────────────────────────────────── */
