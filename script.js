@@ -1839,31 +1839,94 @@ async function deleteInitiative(id) {
 /* ─────────────────────────────────────────────────────────────
    §27  KPI SECTION
    ───────────────────────────────────────────────────────────── */
-function renderKPI() {
-  const kc = document.getElementById('kpi-cards');
-  if (kc) kc.innerHTML = kpiCache.map(k => {
-    const pct=k.target>0?Math.min(100,Math.round((k.achieved/k.target)*100)):0;
-    const clr=pct>=90?'#27ae60':pct>=70?'#f39c12':'#e74c3c';
-    const deg=Math.round(pct*3.6);
-    return `<div class="kpi-card"><div class="kpi-card-name">${k.name}</div>
-      <div class="kpi-circle" style="background:conic-gradient(${clr} ${deg}deg,#eaecee ${deg}deg)">
-        <div class="kpi-circle-inner">${pct}%</div>
-      </div>
-      <div class="kpi-values">المستهدف: <strong>${k.target} ${k.unit}</strong> · المتحقق: <strong>${k.achieved} ${k.unit}</strong></div></div>`;
-  }).join('');
-  const kt = document.getElementById('kpi-tbody');
-  if (kt) kt.innerHTML = kpiCache.map(k => {
-    const pct=k.target>0?Math.min(100,Math.round((k.achieved/k.target)*100)):0;
-    const bc=pct>=90?'badge-success':pct>=70?'badge-warning':'badge-danger';
-    const bl=pct>=90?'ممتاز':pct>=70?'جيد':'يحتاج تحسين';
-    return `<tr><td style="font-weight:600">${k.name}</td><td>${k.target} ${k.unit}</td><td>${k.achieved} ${k.unit}</td>
-      <td><div class="progress-wrap"><div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div><span class="progress-text">${pct}%</span></div></td>
-      <td><span class="badge ${bc}">${bl}</span></td>
-      <td><div style="display:flex;gap:4px"><button class="btn-sm btn-edit" onclick="openKpiModal('${k.id}')">✏️</button><button class="btn-sm btn-delete" onclick="deleteKPI('${k.id}')">🗑️</button></div></td></tr>`;
-  }).join('');
-  setTimeout(() => drawKPIBars(), 50);
+function getAllIndicators() {
+  if (Array.isArray(indicatorsCache)) return indicatorsCache;
+  return Object.values(indicatorsCache || {}).flat();
 }
 
+function calcSchoolKPI() {
+  const programs = programsCache || [];
+  const indicators = getAllIndicators();
+  const evidences = evidencesCache || [];
+  const tasks = tasksCache || [];
+  const initiatives = initiativesCache || [];
+
+  const avgProgress = programs.length
+    ? Math.round(programs.reduce((s, p) => s + (Number(p.progress) || 0), 0) / programs.length)
+    : 0;
+
+  const completedPrograms = programs.filter(p => (Number(p.progress) || 0) >= 100).length;
+  const programsRate = programs.length ? Math.round((completedPrograms / programs.length) * 100) : 0;
+
+  const completedIndicators = indicators.filter(i => i.is_completed === true).length;
+  const indicatorsRate = indicators.length ? Math.round((completedIndicators / indicators.length) * 100) : 0;
+
+  const indicatorsWithEvidence = indicators.filter(ind =>
+    evidences.some(ev =>
+      String(ev.program_id) === String(ind.program_id) &&
+      String(ev.indicator_id) === String(ind.id)
+    )
+  ).length;
+
+  const evidenceRate = indicators.length ? Math.round((indicatorsWithEvidence / indicators.length) * 100) : 0;
+
+  const doneTasks = tasks.filter(t => t.status === 'done' || t.status === 'completed').length;
+  const tasksRate = tasks.length ? Math.round((doneTasks / tasks.length) * 100) : 0;
+
+  const doneInitiatives = initiatives.filter(i => i.status === 'done' || i.status === 'completed').length;
+  const initiativesRate = initiatives.length ? Math.round((doneInitiatives / initiatives.length) * 100) : 0;
+
+  return [
+    { name: 'متوسط إنجاز برامج المدرسة', pct: avgProgress, details: `${programs.length} برنامج` },
+    { name: 'البرامج المكتملة', pct: programsRate, details: `${completedPrograms} من ${programs.length}` },
+    { name: 'تحقق مؤشرات البرامج', pct: indicatorsRate, details: `${completedIndicators} من ${indicators.length}` },
+    { name: 'المؤشرات المدعومة بشواهد', pct: evidenceRate, details: `${indicatorsWithEvidence} من ${indicators.length}` },
+    { name: 'إنجاز المهام المدرسية', pct: tasksRate, details: `${doneTasks} من ${tasks.length}` },
+    { name: 'تنفيذ المبادرات', pct: initiativesRate, details: `${doneInitiatives} من ${initiatives.length}` },
+  ];
+}
+
+function renderKPI() {
+  const data = calcSchoolKPI();
+
+  const kc = document.getElementById('kpi-cards');
+  if (kc) kc.innerHTML = data.map(k => {
+    const clr = k.pct >= 90 ? '#27ae60' : k.pct >= 70 ? '#f39c12' : '#e74c3c';
+    const deg = Math.round(k.pct * 3.6);
+
+    return `
+      <div class="kpi-card">
+        <div class="kpi-card-name">${k.name}</div>
+        <div class="kpi-circle" style="background: conic-gradient(${clr} ${deg}deg,#eaecee 0deg)">
+          <div class="kpi-circle-inner">${k.pct}%</div>
+        </div>
+        <div class="kpi-values">${k.details}</div>
+      </div>
+    `;
+  }).join('');
+
+  const kt = document.getElementById('kpi-tbody');
+  if (kt) kt.innerHTML = data.map(k => {
+    const bc = k.pct >= 90 ? 'badge-success' : k.pct >= 70 ? 'badge-warning' : 'badge-danger';
+    const bl = k.pct >= 90 ? 'ممتاز' : k.pct >= 70 ? 'يحتاج تحسين' : 'منخفض';
+
+    return `
+      <tr>
+        <td style="font-weight:600">${k.name}</td>
+        <td>${k.details}</td>
+        <td>
+          <div class="progress-wrap">
+            <div class="progress-bar">
+              <div class="progress-fill" style="width:${k.pct}%"></div>
+            </div>
+          </div>
+        </td>
+        <td><span class="badge ${bc}">${bl}</span></td>
+        <td>مرتبط تلقائيًا بالبرامج</td>
+      </tr>
+    `;
+  }).join('');
+}
 function openKpiModal(id) {
   const ti=document.getElementById('kpi-modal-title'); if(ti) ti.textContent=id?'تعديل المؤشر':'إضافة مؤشر أداء';
   ['kpi-edit-id','kpi-name','kpi-target','kpi-achieved','kpi-unit'].forEach(fid=>{ const e=document.getElementById(fid); if(e) e.value=''; });
