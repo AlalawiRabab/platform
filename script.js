@@ -361,6 +361,7 @@ async function loadAllData(renderAfter = true) {
   try {
     await Promise.all([
       fetchPrograms(),
+       fetchIndicators(),
       fetchInitiatives(),
       fetchTasks(),
       fetchEvidences(),
@@ -1696,16 +1697,6 @@ async function fetchIndicators() {
     indicatorsCache[ind.program_id].push(ind);
   });
 }
-await fetchIndicators();
-await fetchEvidences();
-
-programsCache.forEach(p => {
-  p.progress = calcProgramProgress(p.id);
-});
-
-renderPrograms();
-renderDashboard();
-drawDashPie();
    renderReports();
     closeModal('evidence-modal');
     showToast('تم حفظ الشاهد ✅','success');
