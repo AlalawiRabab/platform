@@ -1952,67 +1952,96 @@ function deleteKPI(id) {
 }
 
 function drawKPIBars() {
-  const canvas = document.getElementById('kpi-chart');
+  const canvas = document.getElementById('kpiChart');
   if (!canvas) return;
 
   const ctx = canvas.getContext('2d');
-  const data = calcSchoolKPI();
+  const W = canvas.width = canvas.parentElement.clientWidth;
+  const H = canvas.height = 360;
 
-  canvas.width = canvas.offsetWidth || 900;
-  canvas.height = 380;
+  ctx.clearRect(0, 0, W, H);
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const kpis = buildKPIs(); // مهم: تجيب البيانات الحقيقية
+  if (!kpis || kpis.length === 0) {
+    ctx.font = '16px Tajawal';
+    ctx.fillText('لا توجد بيانات للمؤشرات بعد', W / 2 - 80, H / 2);
+    return;
+  }
 
-  const barWidth = 58;
-  const gap = 38;
-  const depth = 12;
-  const maxHeight = 190;
-  const baseY = 250;
+  const padding = 60;
+  const gap = 35;
+  const barW = Math.min(70, (W - padding * 2 - gap * (kpis.length - 1)) / kpis.length);
+  const maxBarH = 190;
+  const baseY = 260;
 
-  const totalWidth = data.length * barWidth + (data.length - 1) * gap;
-  const startX = Math.max(30, (canvas.width - totalWidth) / 2);
+  kpis.forEach((item, i) => {
+    const percent = Number(item.percent || 0);
+    const x = padding + i * (barW + gap);
+    const barH = (percent / 100) * maxBarH;
+    const y = baseY - barH;
 
-  data.forEach((k, i) => {
-    const x = startX + i * (barWidth + gap);
-    const h = Math.round((k.pct / 100) * maxHeight);
-    const y = baseY - h;
+    // ظل ثلاثي الأبعاد
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.fillRect(x + 12, y + 12, barW, barH);
 
-    ctx.fillStyle = 'rgba(0,0,0,0.12)';
-    ctx.fillRect(x + depth, y + depth, barWidth, h);
-
+    // تدرج العمود
     const grad = ctx.createLinearGradient(x, y, x, baseY);
-    grad.addColorStop(0, '#4f46e5');
-    grad.addColorStop(1, '#d946ef');
-    ctx.fillStyle = grad;
-    ctx.fillRect(x, y, barWidth, h);
+    grad.addColorStop(0, '#2e86de');
+    grad.addColorStop(0.5, '#8e44ad');
+    grad.addColorStop(1, '#d980fa');
 
-    ctx.fillStyle = '#4338ca';
+    ctx.fillStyle = grad;
+    ctx.fillRect(x, y, barW, barH);
+
+    // جانب 3D
+    ctx.fillStyle = '#3446b5';
     ctx.beginPath();
-    ctx.moveTo(x + barWidth, y);
-    ctx.lineTo(x + barWidth + depth, y - depth);
-    ctx.lineTo(x + barWidth + depth, baseY - depth);
-    ctx.lineTo(x + barWidth, baseY);
+    ctx.moveTo(x + barW, y);
+    ctx.lineTo(x + barW + 14, y - 10);
+    ctx.lineTo(x + barW + 14, baseY - 10);
+    ctx.lineTo(x + barW, baseY);
     ctx.closePath();
     ctx.fill();
 
-    ctx.fillStyle = '#8b5cf6';
+    // أعلى 3D
+    ctx.fillStyle = '#5f8df7';
     ctx.beginPath();
     ctx.moveTo(x, y);
-    ctx.lineTo(x + depth, y - depth);
-    ctx.lineTo(x + barWidth + depth, y - depth);
-    ctx.lineTo(x + barWidth, y);
+    ctx.lineTo(x + 14, y - 10);
+    ctx.lineTo(x + barW + 14, y - 10);
+    ctx.lineTo(x + barW, y);
     ctx.closePath();
     ctx.fill();
 
-    ctx.fillStyle = '#222';
-    ctx.font = 'bold 13px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText(k.pct + '%', x + barWidth / 2, y - 18);
-
+    // النسبة
     ctx.fillStyle = '#333';
-    ctx.font = '12px Arial';
-    wrapText(ctx, k.name, x + barWidth / 2, baseY + 28, 90, 16);
+    ctx.font = 'bold 14px Tajawal';
+    ctx.textAlign = 'center';
+    ctx.fillText(percent + '%', x + barW / 2, y - 18);
+
+    // اسم المؤشر تحت العمود
+    ctx.font = '12px Tajawal';
+    wrapText(ctx, item.title || item.name || 'مؤشر', x + barW / 2, baseY + 25, 100, 16);
   });
+}
+function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+  const words = String(text).split(' ');
+  let line = '';
+
+  for (let n = 0; n < words.length; n++) {
+    const testLine = line + words[n] + ' ';
+    const metrics = ctx.measureText(testLine);
+
+    if (metrics.width > maxWidth && n > 0) {
+      ctx.fillText(line, x, y);
+      line = words[n] + ' ';
+      y += lineHeight;
+    } else {
+      line = testLine;
+    }
+  }
+
+  ctx.fillText(line, x, y);
 }
 /* ─────────────────────────────────────────────────────────────
    §28  TASKS SECTION
