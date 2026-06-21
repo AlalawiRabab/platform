@@ -1935,7 +1935,7 @@ function openKpiModal(id) {
   openModal('kpi-modal');
 }
 
-function saveKPI() {
+async function saveKPI() {
   const g=id=>(document.getElementById(id)?.value||'');
   const editId=g('kpi-edit-id');
   const name=g('kpi-name').trim(); if(!name){showToast('يرجى إدخال اسم المؤشر','error');return;}
