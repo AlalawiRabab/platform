@@ -1926,7 +1926,7 @@ function renderKPI() {
       </tr>
     `;
   }).join('');
-   setTimeout(() => drawKPIBars(), 100);
+  
 }
 function openKpiModal(id) {
   const ti=document.getElementById('kpi-modal-title'); if(ti) ti.textContent=id?'تعديل المؤشر':'إضافة مؤشر أداء';
@@ -1941,7 +1941,7 @@ function saveKPI() {
   const name=g('kpi-name').trim(); if(!name){showToast('يرجى إدخال اسم المؤشر','error');return;}
   const item={id:editId||'k'+Date.now(),name,target:parseFloat(g('kpi-target'))||0,achieved:parseFloat(g('kpi-achieved'))||0,unit:g('kpi-unit').trim()||'%'};
   if(editId){const i=kpiCache.findIndex(x=>x.id===editId);if(i!==-1)kpiCache[i]=item;} else kpiCache.push(item);
-  lsSave('kpi',kpiCache); closeModal('kpi-modal'); renderKPI();
+  lsSave('kpi',kpiCache); closeModal('kpi-modal'); await refreshAll();
   showToast(editId?'تم التعديل ✅':'تمت الإضافة ✅','success');
 }
 
@@ -1951,79 +1951,6 @@ function deleteKPI(id) {
   renderKPI(); showToast('تم الحذف 🗑️','warning');
 }
 
-function drawKPIBars() {
-  const canvas = document.getElementById('kpiChart');
-  if (!canvas) return;
-
-  const ctx = canvas.getContext('2d');
-  const W = canvas.width = canvas.parentElement.clientWidth;
-  const H = canvas.height = 360;
-
-  ctx.clearRect(0, 0, W, H);
-
-  const kpis = buildKPIs(); // مهم: تجيب البيانات الحقيقية
-  if (!kpis || kpis.length === 0) {
-    ctx.font = '16px Tajawal';
-    ctx.fillText('لا توجد بيانات للمؤشرات بعد', W / 2 - 80, H / 2);
-    return;
-  }
-
-  const padding = 60;
-  const gap = 35;
-  const barW = Math.min(70, (W - padding * 2 - gap * (kpis.length - 1)) / kpis.length);
-  const maxBarH = 190;
-  const baseY = 260;
-
-  kpis.forEach((item, i) => {
-    const percent = Number(item.percent || 0);
-    const x = padding + i * (barW + gap);
-    const barH = (percent / 100) * maxBarH;
-    const y = baseY - barH;
-
-    // ظل ثلاثي الأبعاد
-    ctx.fillStyle = 'rgba(0,0,0,0.18)';
-    ctx.fillRect(x + 12, y + 12, barW, barH);
-
-    // تدرج العمود
-    const grad = ctx.createLinearGradient(x, y, x, baseY);
-    grad.addColorStop(0, '#2e86de');
-    grad.addColorStop(0.5, '#8e44ad');
-    grad.addColorStop(1, '#d980fa');
-
-    ctx.fillStyle = grad;
-    ctx.fillRect(x, y, barW, barH);
-
-    // جانب 3D
-    ctx.fillStyle = '#3446b5';
-    ctx.beginPath();
-    ctx.moveTo(x + barW, y);
-    ctx.lineTo(x + barW + 14, y - 10);
-    ctx.lineTo(x + barW + 14, baseY - 10);
-    ctx.lineTo(x + barW, baseY);
-    ctx.closePath();
-    ctx.fill();
-
-    // أعلى 3D
-    ctx.fillStyle = '#5f8df7';
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(x + 14, y - 10);
-    ctx.lineTo(x + barW + 14, y - 10);
-    ctx.lineTo(x + barW, y);
-    ctx.closePath();
-    ctx.fill();
-
-    // النسبة
-    ctx.fillStyle = '#333';
-    ctx.font = 'bold 14px Tajawal';
-    ctx.textAlign = 'center';
-    ctx.fillText(percent + '%', x + barW / 2, y - 18);
-
-    // اسم المؤشر تحت العمود
-    ctx.font = '12px Tajawal';
-    wrapText(ctx, item.title || item.name || 'مؤشر', x + barW / 2, baseY + 25, 100, 16);
-  });
-}
 function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
   const words = String(text).split(' ');
   let line = '';
