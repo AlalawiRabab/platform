@@ -1317,7 +1317,7 @@ if (ti) ti.textContent = p.name;
             ${ev.notes?`<div class="ev-det-meta" style="font-style:italic">${ev.notes}</div>`:''}
           </div>
           <div class="ev-det-actions">
-            ${ev.link?`<a href="${ev.link}" target="_blank" class="btn-sm btn-view">🔗 فتح الرابط</a>`:''}
+           ${ev.link ? `<a href="${ev.link.startsWith('http') ? ev.link : 'https://' + ev.link}" target="_blank" rel="noopener noreferrer" class="btn-sm btn-view">🔗 فتح الرابط</a>` : ''}
             ${delBtn}
           </div>
         </div>`;
