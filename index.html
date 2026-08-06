@@ -2,6 +2,9 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8"/>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+  <meta http-equiv="Pragma" content="no-cache"/>
+  <meta http-equiv="Expires" content="0"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
   <meta name="mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
@@ -9,7 +12,7 @@
   <meta http-equiv="X-Content-Type-Options" content="nosniff"/>
   <meta name="referrer" content="strict-origin-when-cross-origin"/>
   <title>منصة الخطة التشغيلية المدرسية</title>
- <link rel="stylesheet" href="style.css?v=8007">
+ <link rel="stylesheet" href="style.css?v=8008">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&family=Cairo:wght@300;400;600;700&display=swap" rel="stylesheet">
   
@@ -32,8 +35,8 @@
     <div class="login-card">
       <h2>تسجيل الدخول</h2>
       <div class="login-field-group">
-        <label for="login-email">البريد الإلكتروني</label>
-        <input type="email" id="login-email" placeholder="email@school.sa" autocomplete="email"/>
+        <label for="login-email">اسم المستخدم</label>
+        <input type="text" id="login-email" placeholder="اسم المستخدم" autocomplete="username"/>
       </div>
       <div class="login-field-group">
         <label for="login-password">كلمة المرور</label>
@@ -384,55 +387,54 @@
     <div class="modal-body">
       <input type="hidden" id="ev-program-id"/><input type="hidden" id="ev-edit-id"/>
       <div class="form-group">
-  <label>البرنامج المرتبط</label>
-<select id="ev-program-select" onchange="document.getElementById('ev-program-id').value=this.value; fillEvidenceIndicators(this.value)">
-    <option value="">اختر البرنامج</option>
-  </select>
-</div>
+        <label>البرنامج المرتبط</label>
+        <select id="ev-program-select" onchange="document.getElementById('ev-program-id').value=this.value; fillEvidenceIndicators(this.value)">
+          <option value="">اختر البرنامج</option>
+        </select>
+      </div>
       <div class="form-group">
-  <label>المؤشر المرتبط بالشاهد</label>
-  <select id="ev-indicator-id">
-    <option value="">اختر المؤشر</option>
-  </select>
-</div>
-      <div class="form-row">
-        <div class="form-group"><label>عنوان الشاهد <span class="req">*</span></label><input type="text" id="ev-title" placeholder="عنوان الشاهد"/></div>
-        <div class="form-group"><label>نوع الشاهد</label>
-          <select id="ev-type" onchange="toggleEvidenceInput()">
-            <option value="link">🔗 رابط خارجي</option>
-            <option value="file">📎 ملف</option>
-            <option value="image">🖼️ صورة</option>
-          </select>
+        <label>المؤشر المرتبط بالشاهد</label>
+        <select id="ev-indicator-id">
+          <option value="">اختر المؤشر</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>عنوان الشاهد <span class="req">*</span></label>
+        <input type="text" id="ev-title" placeholder="عنوان الشاهد"/>
+      </div>
+
+      <div class="form-group">
+        <label>طريقة إضافة الشاهد <span class="req">*</span></label>
+        <div class="evidence-source-toggle" role="group" aria-label="طريقة إضافة الشاهد">
+          <label class="evidence-source-option">
+            <input type="radio" name="ev-source" value="file" checked onchange="toggleEvidenceSource('ev')"/>
+            <span>رفع ملف من الجهاز</span>
+          </label>
+          <label class="evidence-source-option">
+            <input type="radio" name="ev-source" value="drive" onchange="toggleEvidenceSource('ev')"/>
+            <span>إضافة رابط Google Drive</span>
+          </label>
         </div>
       </div>
-      <div id="ev-link-group" class="form-group">
-        <label>الرابط الخارجي</label>
-        <input type="url" id="ev-link" placeholder="https://drive.google.com/..."/>
-        <small style="color:var(--text-muted)">Google Drive · YouTube · رابط تقرير</small>
-      </div>
-      <div id="ev-file-group" class="form-group hidden">
-        <label>رفع ملف (PDF / Word / Excel)</label>
-        <div class="file-upload-area" onclick="document.getElementById('ev-file-input').click()">
-          <div class="file-upload-icon">📎</div><div class="file-upload-text">انقري للاختيار</div>
-          <div class="file-upload-sub">PDF · DOCX · XLSX (الحجم الأقصى: 5 MB)</div>
-        </div>
-        <input type="file" id="ev-file-input" accept=".pdf,.doc,.docx,.xls,.xlsx" style="display:none" onchange="handleFileSelect(this)"/>
+
+      <div id="ev-file-group" class="form-group">
+        <label>اختر ملفاً من الجهاز <span class="req">*</span></label>
+        <input type="file" id="ev-file-input" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,application/pdf,image/jpeg,image/png" onchange="handleEvidenceFileSelect(this, 'ev')"/>
+        <small class="field-hint">الأنواع المسموحة: PDF, JPG, JPEG, PNG, DOC, DOCX, XLS, XLSX — الحد الأقصى 10MB</small>
         <div id="ev-file-preview" class="file-preview hidden"></div>
       </div>
-      <div id="ev-image-group" class="form-group hidden">
-        <label>رفع صورة</label>
-        <div class="file-upload-area" onclick="document.getElementById('ev-image-input').click()">
-          <div class="file-upload-icon">🖼️</div><div class="file-upload-text">انقري للاختيار</div>
-          <div class="file-upload-sub">JPG · PNG · GIF · WebP (الحجم الأقصى: 5 MB)</div>
-        </div>
-        <input type="file" id="ev-image-input" accept=".jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp" style="display:none" onchange="handleImageSelect(this)"/>
-        <div id="ev-image-preview" class="image-preview hidden"></div>
+
+      <div id="ev-link-group" class="form-group hidden">
+        <label>رابط Google Drive <span class="req">*</span></label>
+        <input type="url" id="ev-link" placeholder="https://drive.google.com/..."/>
+        <small class="field-hint">الصق رابط ملف أو مجلد من Google Drive</small>
       </div>
+
       <div class="form-group"><label>المسؤولة / الرافعة</label><input type="text" id="ev-person" placeholder="اسم المعلمة"/></div>
       <div class="form-group"><label>ملاحظات</label><textarea id="ev-notes" placeholder="ملاحظات إضافية..."></textarea></div>
     </div>
     <div class="modal-footer">
-      <button class="btn-primary" onclick="saveEvidence()">📎 حفظ الشاهد</button>
+      <button class="btn-primary" id="ev-save-btn" onclick="saveEvidence()">📎 حفظ الشاهد</button>
       <button class="btn-secondary" onclick="closeModal('evidence-modal')">إلغاء</button>
     </div>
   </div>
@@ -526,28 +528,56 @@
     </div>
     <div class="modal-body">
       <input type="hidden" id="rep-edit-id"/>
+      <div class="form-group">
+        <label>عنوان الشاهد <span class="req">*</span></label>
+        <input type="text" id="rep-title" placeholder="عنوان الشاهد أو التقرير"/>
+      </div>
       <div class="form-row">
-        <div class="form-group"><label>عنوان الشاهد <span class="req">*</span></label><input type="text" id="rep-title" placeholder="عنوان الشاهد أو التقرير"/></div>
-        <div class="form-group"><label>نوع الشاهد</label>
-          <select id="rep-type">
-            <option value="صورة">📷 صورة</option><option value="PDF">📄 ملف PDF</option>
-            <option value="Word">📝 ملف Word</option><option value="Excel">📊 ملف Excel</option>
-            <option value="Google Drive">☁️ Google Drive</option><option value="YouTube">🎥 YouTube</option>
-            <option value="رابط خارجي">🔗 رابط خارجي</option>
+        <div class="form-group">
+          <label>البرنامج المرتبط</label>
+          <select id="rep-program-id" onchange="fillReportIndicators(this.value)">
+            <option value="">— اختر البرنامج —</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>المؤشر المرتبط بالشاهد</label>
+          <select id="rep-indicator-id">
+            <option value="">اختر المؤشر</option>
           </select>
         </div>
       </div>
-      <div class="form-row">
-        <div class="form-group"><label>البرنامج المرتبط</label><select id="rep-program-id"><option value="">— اختر البرنامج —</option></select>
-          <div class="form-group">
-  <label>المؤشر المرتبط بالشاهد</label>
-  <select id="rep-indicator-id">
-    <option value="">اختر المؤشر</option>
-  </select>
-</div> </div>
-        <div class="form-group"><label>المسؤولة</label><input type="text" id="rep-person" placeholder="اسم المعلمة أو المسؤولة"/></div>
+      <div class="form-group">
+        <label>المسؤولة</label>
+        <input type="text" id="rep-person" placeholder="اسم المعلمة أو المسؤولة"/>
       </div>
-      <div class="form-group"><label>رابط الشاهد</label><input type="url" id="rep-link" placeholder="https://drive.google.com/..."/></div>
+
+      <div class="form-group">
+        <label>طريقة إضافة الشاهد <span class="req">*</span></label>
+        <div class="evidence-source-toggle" role="group" aria-label="طريقة إضافة الشاهد">
+          <label class="evidence-source-option">
+            <input type="radio" name="rep-source" value="file" checked onchange="toggleEvidenceSource('rep')"/>
+            <span>رفع ملف من الجهاز</span>
+          </label>
+          <label class="evidence-source-option">
+            <input type="radio" name="rep-source" value="drive" onchange="toggleEvidenceSource('rep')"/>
+            <span>إضافة رابط Google Drive</span>
+          </label>
+        </div>
+      </div>
+
+      <div id="rep-file-group" class="form-group">
+        <label>اختر ملفاً من الجهاز <span class="req">*</span></label>
+        <input type="file" id="rep-file-input" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,application/pdf,image/jpeg,image/png" onchange="handleEvidenceFileSelect(this, 'rep')"/>
+        <small class="field-hint">الأنواع المسموحة: PDF, JPG, JPEG, PNG, DOC, DOCX, XLS, XLSX — الحد الأقصى 10MB</small>
+        <div id="rep-file-preview" class="file-preview hidden"></div>
+      </div>
+
+      <div id="rep-link-group" class="form-group hidden">
+        <label>رابط Google Drive <span class="req">*</span></label>
+        <input type="url" id="rep-link" placeholder="https://drive.google.com/..."/>
+        <small class="field-hint">الصق رابط ملف أو مجلد من Google Drive</small>
+      </div>
+
       <div class="form-group"><label>ملاحظات</label><textarea id="rep-notes" placeholder="ملاحظات إضافية..."></textarea></div>
     </div>
     <div class="modal-footer">
@@ -612,7 +642,7 @@
   
  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1"></script>
 <script src="config.js"></script>
-<script src="./script.js?v=49"></script>
+<script src="./script.js?v=20260807c"></script>
   
 </body>
 </html>

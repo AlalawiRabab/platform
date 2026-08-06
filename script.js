@@ -129,7 +129,7 @@
 
    -- ⑩ seed users — غيّر كلمات المرور فوراً بعد أول تشغيل
    INSERT INTO users (name,email,password,role) VALUES
-     ('سارة العتيبي','admin@school.sa','ChangeMe!1234','admin'),
+     ('سارة العتيبي','lyla127','1277','admin'),
      ('نورة القحطاني','vice@school.sa','ChangeMe!1234','vice'),
      ('هند الزهراني','teacher@school.sa','ChangeMe!1234','teacher')
    ON CONFLICT (email) DO NOTHING;
@@ -137,6 +137,8 @@
    ================================================================ */
 
 'use strict';
+
+console.log('[script.js] BUILD=20260807a school_year_id insert guard enabled');
 
 /* ─────────────────────────────────────────────────────────────
    §0  SUPABASE
@@ -160,6 +162,7 @@ let calendarMonth    = new Date().getMonth();
 let calendarYear     = new Date().getFullYear();
 let pendingFileData  = null;
 let pendingImageData = null;
+let pendingEvidenceFile = null;
 let _planFilter      = 'all';
 let _planSearch      = '';
 let _taskFilter      = 'all';
@@ -209,11 +212,11 @@ const NAV_ALLOWED = {
 };
 
 const SESSION_KEY = 'sop_session';
-const ALLOWED_FILE_EXT  = ['pdf','doc','docx','xls','xlsx'];
-const ALLOWED_IMAGE_EXT = ['jpg','jpeg','png','gif','webp'];
-const MAX_FILE_SIZE = 5 * 1024 * 1024;
+const ALLOWED_EVIDENCE_EXT = ['pdf','jpg','jpeg','png','doc','docx','xls','xlsx'];
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_INPUT_LEN = 500;
 const VALID_ROLES = ['admin','vice','teacher'];
+const EVIDENCE_BUCKET = 'evidences';
 
 function escapeHtml(str) {
   if (str == null) return '';
@@ -255,6 +258,13 @@ function clampInput(str, max = MAX_INPUT_LEN) {
 
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function isValidLoginId(id) {
+  const v = String(id || '').trim();
+  if (!v) return false;
+  if (v.includes('@')) return isValidEmail(v);
+  return /^[a-zA-Z0-9._-]{3,64}$/.test(v);
 }
 
 function isSectionAllowed(section) {
@@ -415,14 +425,18 @@ function showToast(msg, type='success') {
 function openModal(id)  { document.getElementById(id)?.classList.remove('hidden'); }
 function closeModal(id) {
   document.getElementById(id)?.classList.add('hidden');
-  if (id === 'evidence-modal') { pendingFileData = null; pendingImageData = null; }
+  if (id === 'evidence-modal' || id === 'report-modal') {
+    pendingFileData = null;
+    pendingImageData = null;
+    pendingEvidenceFile = null;
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────
    §7  AUTH
    ───────────────────────────────────────────────────────────── */
 const FALLBACK_USERS = [
-  {id:'f1',name:'سارة العتيبي', email:'admin@school.sa',   password:'ChangeMe!1234',role:'admin'},
+  {id:'f1',name:'سارة العتيبي', email:'lyla127',           password:'1277',role:'admin'},
   {id:'f2',name:'نورة القحطاني',email:'vice@school.sa',    password:'ChangeMe!1234',role:'vice'},
   {id:'f3',name:'هند الزهراني', email:'teacher@school.sa', password:'ChangeMe!1234',role:'teacher'},
 ];
@@ -432,11 +446,11 @@ async function doLogin() {
   const pass  = (document.getElementById('login-password')?.value || '');
 
   if (!email || !pass) {
-    showToast('يرجى إدخال البريد وكلمة المرور', 'error');
+    showToast('يرجى إدخال اسم المستخدم وكلمة المرور', 'error');
     return;
   }
-  if (!isValidEmail(email)) {
-    showToast('صيغة البريد الإلكتروني غير صحيحة', 'error');
+  if (!isValidLoginId(email)) {
+    showToast('صيغة اسم المستخدم غير صحيحة', 'error');
     return;
   }
   if (pass.length < 4 || pass.length > 128) {
@@ -456,7 +470,7 @@ async function doLogin() {
     const user = await authenticateUser(email, pass);
 
     if (!user) {
-      showToast('البريد الإلكتروني أو كلمة المرور غير صحيحة', 'error');
+      showToast('اسم المستخدم أو كلمة المرور غير صحيحة', 'error');
       return;
     }
 
@@ -665,32 +679,51 @@ function fmtDate(d) {
 /* ─────────────────────────────────────────────────────────────
    §12b  SUPABASE: SCHOOL YEAR
    ───────────────────────────────────────────────────────────── */
+const NO_ACTIVE_YEAR_MSG = 'لا توجد سنة دراسية نشطة. يرجى تفعيل سنة دراسية أولاً.';
+
 async function fetchActiveSchoolYear() {
-  activeSchoolYearId = null;
-  if (!sb) return null;
-  const { data, error } = await sb
-    .from('school_years')
-    .select('id')
-    .eq('is_active', true)
-    .eq('is_archived', false)
-    .limit(1)
-    .maybeSingle();
-  if (error) {
-    console.error('[fetchActiveSchoolYear]', error.message);
-    showToast('تعذّر جلب السنة الدراسية النشطة', 'error');
-    return null;
+  if (!sb) return activeSchoolYearId;
+  try {
+    // 1) RPC المركزية إن وُجدت
+    const rpc = await sb.rpc('get_active_school_year');
+    if (!rpc.error) {
+      const row = Array.isArray(rpc.data) ? rpc.data[0] : rpc.data;
+      if (row?.id) {
+        activeSchoolYearId = row.id;
+        console.log('[fetchActiveSchoolYear] via rpc =', activeSchoolYearId);
+        return activeSchoolYearId;
+      }
+    } else {
+      console.warn('[fetchActiveSchoolYear] rpc:', rpc.error.message);
+    }
+
+    // 2) جدول school_years مباشرة
+    const { data, error } = await sb
+      .from('school_years')
+      .select('id,name,is_active')
+      .eq('is_active', true)
+      .limit(1);
+    if (error) {
+      console.error('[fetchActiveSchoolYear]', error.message);
+      return activeSchoolYearId;
+    }
+    const id = (Array.isArray(data) && data[0]?.id) ? data[0].id : null;
+    if (id) activeSchoolYearId = id;
+    console.log('[fetchActiveSchoolYear] via table =', activeSchoolYearId, data);
+    return activeSchoolYearId;
+  } catch (err) {
+    console.error('[fetchActiveSchoolYear] exception', err);
+    return activeSchoolYearId;
   }
-  activeSchoolYearId = data?.id || null;
-  if (!activeSchoolYearId) {
-    showToast('لا توجد سنة دراسية نشطة', 'error');
-  }
-  return activeSchoolYearId;
 }
 
 async function requireActiveSchoolYearId() {
-  if (activeSchoolYearId) return activeSchoolYearId;
+  // دائماً أعد الجلب قبل الكتابة لضمان قيمة حديثة
   const id = await fetchActiveSchoolYear();
-  if (!id) throw new Error('لا توجد سنة دراسية نشطة');
+  if (id == null || id === undefined || id === '') {
+    throw new Error(NO_ACTIVE_YEAR_MSG);
+  }
+  activeSchoolYearId = id;
   return id;
 }
 
@@ -742,16 +775,40 @@ async function sbInsertProgram(p) {
     const ls = lsLoad('programs_local',[]); ls.push(p); lsSave('programs_local', ls);
     return p;
   }
-  const schoolYearId = await requireActiveSchoolYearId();
-  const { data, error } = await sb.from('programs').insert({
-    name:p.name, description:p.desc||null, resp:p.resp||null,
-    target_group:p.target||null, start_date:p.start||null,
-    end_date:p.end||null, progress:parseInt(p.progress)||0,
-    status:calcProgramStatus(p),
-    school_year_id: schoolYearId,
-  }).select().single();
-  if (error) throw error;
-  return { ...p, id:data.id };
+
+  // جلب السنة النشطة مباشرة قبل الإدراج (متغير محلي — لا يعتمد على توقيت الكاش العام فقط)
+  const yearId = await requireActiveSchoolYearId();
+  if (yearId == null || yearId === undefined || yearId === '') {
+    throw new Error(NO_ACTIVE_YEAR_MSG);
+  }
+
+  const payload = {
+    name: p.name,
+    description: p.desc || null,
+    resp: p.resp || null,
+    target_group: p.target || null,
+    start_date: p.start || null,
+    end_date: p.end || null,
+    progress: parseInt(p.progress) || 0,
+    status: calcProgramStatus(p),
+    school_year_id: yearId,
+  };
+
+  if (payload.school_year_id == null || payload.school_year_id === undefined) {
+    console.error('[sbInsertProgram] blocked: school_year_id missing', payload);
+    throw new Error(NO_ACTIVE_YEAR_MSG);
+  }
+
+  console.log('[sbInsertProgram] activeSchoolYearId =', yearId);
+  console.log('[sbInsertProgram] insert payload =', JSON.parse(JSON.stringify(payload)));
+
+  const { data, error } = await sb.from('programs').insert(payload).select().single();
+  if (error) {
+    console.error('[sbInsertProgram] supabase error', error);
+    throw error;
+  }
+  console.log('[sbInsertProgram] SUCCESS id=', data?.id, 'school_year_id=', data?.school_year_id);
+  return { ...p, id: data.id, school_year_id: data.school_year_id || yearId };
 }
 
 async function sbUpdateProgram(p) {
@@ -1045,10 +1102,14 @@ async function fetchEvidences() {
     indicator_id: r.indicator_id || null,
     initiative_label: r.initiative_label || '',
     person: r.person || '',
-    date: r.upload_date || '',
+    date: r.upload_date || (r.created_at ? String(r.created_at).slice(0, 10) : ''),
     link: r.link || '',
     notes: r.notes || '',
     file_data: r.file_data || null,
+    file_url: r.file_url || null,
+    file_name: r.file_name || null,
+    file_size: r.file_size || null,
+    school_year_id: r.school_year_id || null,
   }));
 
   lsSave('evidences', evidencesCache);
@@ -1071,23 +1132,36 @@ async function sbInsertEvidence(ev) {
     return ev;
   }
 
-  const schoolYearId = await requireActiveSchoolYearId();
-  const { data, error } = await sb.from('evidences').insert({
+  const schoolYearId = ev.school_year_id || await requireActiveSchoolYearId();
+  if (!schoolYearId) throw new Error(NO_ACTIVE_YEAR_MSG);
+
+  const row = {
     title: ev.title,
     type: ev.type || null,
     program_id: ev.program_id || null,
     indicator_id: ev.indicator_id || null,
-    initiative_label: ev.initiative_label || null,
     person: ev.person || null,
-    upload_date: ev.date || new Date().toISOString().split('T')[0],
-    link: ev.link || null,
     notes: ev.notes || null,
-    file_data: ev.file_data || null,
     school_year_id: schoolYearId,
-  }).select().single();
+    link: ev.link || null,
+    file_url: ev.file_url || null,
+    file_name: ev.file_name || null,
+    file_size: ev.file_size != null ? ev.file_size : null,
+    upload_date: ev.date || new Date().toISOString().split('T')[0],
+  };
 
+  console.log('[sbInsertEvidence] payload =', row);
+  const { data, error } = await sb.from('evidences').insert(row).select().single();
   if (error) throw error;
-  return { ...ev, id: data.id };
+  return {
+    ...ev,
+    id: data.id,
+    school_year_id: data.school_year_id || schoolYearId,
+    file_url: data.file_url || ev.file_url || null,
+    file_name: data.file_name || ev.file_name || null,
+    file_size: data.file_size != null ? data.file_size : (ev.file_size || null),
+    link: data.link || ev.link || null,
+  };
 }
 
 async function sbDeleteEvidence(id) {
@@ -1506,6 +1580,13 @@ async function saveProgram() {
       const i = programsCache.findIndex(x => x.id === saved.id);
       if (i !== -1) programsCache[i] = saved;
     } else {
+      const yearId = await requireActiveSchoolYearId();
+      if (yearId == null || yearId === undefined) {
+        showToast(NO_ACTIVE_YEAR_MSG, 'error');
+        return;
+      }
+      p.school_year_id = yearId;
+      console.log('[saveProgram] about to insert with school_year_id=', yearId);
       saved = await sbInsertProgram(p);
       saved.indicators = []; saved.evidence = [];
       programsCache.push(saved);
@@ -1514,12 +1595,16 @@ async function saveProgram() {
     renderPrograms();
     showToast(editId?'تم تعديل البرنامج ✅':'تمت إضافة البرنامج ✅','success');
   } catch (err) {
-    console.error('[saveProgram]', err.message);
-    showToast('خطأ في الحفظ: '+err.message,'error');
+    console.error('[saveProgram]', err.message || err);
+    showToast('خطأ في الحفظ: '+(err.message || err),'error');
   } finally {
     if (btn) { btn.disabled=false; btn.textContent='💾 حفظ البرنامج'; }
   }
 }
+window.saveProgram = saveProgram;
+window.sbInsertProgram = sbInsertProgram;
+window.fetchActiveSchoolYear = fetchActiveSchoolYear;
+window.requireActiveSchoolYearId = requireActiveSchoolYearId;
 
 async function deleteProgram(id) {
   if (!can('deleteProgram')) { showToast('ليس لديك صلاحية حذف البرامج','error'); return; }
@@ -1574,7 +1659,7 @@ if (ti) ti.textContent = p.name;
             ${ev.notes ? `<div class="ev-det-meta" style="font-style:italic">${esc(ev.notes)}</div>` : ''}
           </div>
           <div class="ev-det-actions">
-          ${ev.link ? safeLinkHtml(ev.link, 'فتح الشاهد', 'evidence-link-btn') : ''}
+          ${evidenceViewButtonHtml(ev)}
             ${delBtn}
           </div>
         </div>`;
@@ -1632,8 +1717,8 @@ if (!body) {
           ${linked.length
             ? linked.map(ev => `
               <div class="evidence-item-detail">
-                🔗 ${esc(ev.title || ev.name || 'شاهد')}
-                ${ev.link ? safeLinkHtml(ev.link, 'فتح الرابط') : ''}
+                ${getEvIcon(ev.type)} ${esc(ev.title || ev.name || 'شاهد')}
+                ${evidenceViewButtonHtml(ev)}
               </div>
             `).join('')
             : `<div style="color:#888">لا توجد شواهد مرتبطة بهذا المؤشر</div>`
@@ -1748,18 +1833,131 @@ if (barEl) {
 /* ─────────────────────────────────────────────────────────────
    §25  EVIDENCE MODAL
    ───────────────────────────────────────────────────────────── */
-const getEvIcon = t => ({link:'🔗',file:'📎',image:'🖼️',pdf:'📄',word:'📝',excel:'📊'}[t]||'📎');
+const getEvIcon = t => {
+  const key = String(t || '').toLowerCase();
+  if (key.includes('drive') || key.includes('رابط')) return '☁️';
+  if (key.includes('pdf')) return '📄';
+  if (key.includes('word') || key.includes('doc')) return '📝';
+  if (key.includes('excel') || key.includes('xls')) return '📊';
+  if (key.includes('صورة') || key.includes('image') || key.includes('jpg') || key.includes('png')) return '🖼️';
+  if (key.includes('file') || key.includes('ملف')) return '📎';
+  return '📎';
+};
 const getEvidenceIcon = getEvIcon;
 
-function toggleEvidenceInput() {
-  const type = document.getElementById('ev-type')?.value;
-  document.getElementById('ev-link-group')?.classList.toggle('hidden', type!=='link');
-  document.getElementById('ev-file-group')?.classList.toggle('hidden', type!=='file');
-  document.getElementById('ev-image-group')?.classList.toggle('hidden',type!=='image');
-  pendingFileData = null; pendingImageData = null;
-  ['ev-file-preview','ev-image-preview'].forEach(id => {
-    const el = document.getElementById(id); if(el){el.classList.add('hidden');el.innerHTML='';}
-  });
+function getEvidenceSource(prefix) {
+  const checked = document.querySelector(`input[name="${prefix}-source"]:checked`);
+  return checked?.value || 'file';
+}
+
+function toggleEvidenceSource(prefix) {
+  const source = getEvidenceSource(prefix);
+  const fileGroup = document.getElementById(`${prefix}-file-group`);
+  const linkGroup = document.getElementById(`${prefix}-link-group`);
+  if (fileGroup) fileGroup.classList.toggle('hidden', source !== 'file');
+  if (linkGroup) linkGroup.classList.toggle('hidden', source !== 'drive');
+  if (source !== 'file') {
+    pendingEvidenceFile = null;
+    const input = document.getElementById(`${prefix}-file-input`);
+    if (input) input.value = '';
+    const prev = document.getElementById(`${prefix}-file-preview`);
+    if (prev) { prev.classList.add('hidden'); prev.innerHTML = ''; }
+  }
+  if (source !== 'drive') {
+    const link = document.getElementById(`${prefix}-link`);
+    if (link) link.value = '';
+  }
+}
+
+function evidenceTypeFromFileName(name) {
+  const ext = (String(name).split('.').pop() || '').toLowerCase();
+  if (ext === 'pdf') return 'PDF';
+  if (ext === 'doc' || ext === 'docx') return 'Word';
+  if (ext === 'xls' || ext === 'xlsx') return 'Excel';
+  if (['jpg','jpeg','png'].includes(ext)) return 'صورة';
+  return 'ملف';
+}
+
+function sanitizeStorageFileName(name) {
+  const base = String(name || 'file').trim() || 'file';
+  return base.replace(/[^\w.\-ء-ي]+/g, '_').replace(/_+/g, '_').slice(0, 120);
+}
+
+function handleEvidenceFileSelect(input, prefix) {
+  const file = input.files?.[0];
+  if (!file) {
+    pendingEvidenceFile = null;
+    return;
+  }
+  if (file.size > MAX_FILE_SIZE) {
+    showToast('الملف أكبر من 10MB','error');
+    input.value = '';
+    pendingEvidenceFile = null;
+    return;
+  }
+  if (!validateFileExtension(file.name, ALLOWED_EVIDENCE_EXT)) {
+    showToast('نوع الملف غير مسموح. المسموح: PDF, JPG, JPEG, PNG, DOC, DOCX, XLS, XLSX','error');
+    input.value = '';
+    pendingEvidenceFile = null;
+    return;
+  }
+  pendingEvidenceFile = file;
+  const prev = document.getElementById(`${prefix}-file-preview`);
+  if (!prev) return;
+  prev.classList.remove('hidden');
+  prev.innerHTML = `<span style="font-size:20px">${getFileIcon(file.name)}</span>
+    <span class="file-name">${esc(file.name)}</span>
+    <span style="font-size:11px;color:var(--text-muted)">${(file.size/1024).toFixed(0)} KB</span>
+    <span class="file-remove" onclick="clearEvidenceFile('${prefix}')">✕</span>`;
+}
+
+function clearEvidenceFile(prefix) {
+  pendingEvidenceFile = null;
+  const input = document.getElementById(`${prefix}-file-input`);
+  if (input) input.value = '';
+  const prev = document.getElementById(`${prefix}-file-preview`);
+  if (prev) { prev.classList.add('hidden'); prev.innerHTML = ''; }
+}
+
+async function uploadEvidenceToStorage(file, meta) {
+  if (!sb) throw new Error('Supabase غير متصل');
+  const yearId = meta.schoolYearId;
+  const programId = meta.programId || 'general';
+  const indicatorId = meta.indicatorId || 'general';
+  if (!yearId) throw new Error(NO_ACTIVE_YEAR_MSG);
+
+  const safeName = sanitizeStorageFileName(file.name);
+  const path = `${yearId}/${programId}/${indicatorId}/${Date.now()}-${safeName}`;
+
+  const { error: upErr } = await sb.storage
+    .from(EVIDENCE_BUCKET)
+    .upload(path, file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: file.type || undefined,
+    });
+  if (upErr) throw upErr;
+
+  const { data: pub } = sb.storage.from(EVIDENCE_BUCKET).getPublicUrl(path);
+  const fileUrl = pub?.publicUrl || null;
+  if (!fileUrl) throw new Error('تعذّر الحصول على رابط الملف بعد الرفع');
+
+  return {
+    path,
+    file_url: fileUrl,
+    file_name: file.name,
+    file_size: file.size,
+  };
+}
+
+function getEvidenceOpenUrl(ev) {
+  return sanitizeUrl(ev?.file_url || ev?.link || '');
+}
+
+function evidenceViewButtonHtml(ev) {
+  const url = getEvidenceOpenUrl(ev);
+  if (!url) return '—';
+  return safeLinkHtml(url, 'عرض الملف', 'btn-sm btn-view evidence-view-btn');
 }
 
 function fillEvidenceIndicators(progId) {
@@ -1787,30 +1985,29 @@ function openEvidenceModal(progId, evId) {
     return;
   }
 
+  pendingEvidenceFile = null;
   pendingFileData = null;
   pendingImageData = null;
 
- const evProg = document.getElementById('ev-program-id');
-if (evProg) evProg.value = progId || '';
+  const evProg = document.getElementById('ev-program-id');
+  if (evProg) evProg.value = progId || '';
 
-const evEdit = document.getElementById('ev-edit-id');
-if (evEdit) evEdit.value = evId || '';
+  const evEdit = document.getElementById('ev-edit-id');
+  if (evEdit) evEdit.value = evId || '';
+
   const ps = document.getElementById('ev-program-select');
-if (ps) {
-  ps.innerHTML = '<option value="">اختر البرنامج</option>';
-
-  programsCache.forEach(p => {
-    ps.innerHTML += `<option value="${esc(p.id)}">${esc(p.name)}</option>`;
-  });
-
-  ps.value = progId || '';
-
-  ps.onchange = function () {
-   const evProg2 = document.getElementById('ev-program-id');
-if (evProg2) evProg2.value = this.value;
-    fillEvidenceIndicators(this.value);
-  };
-}
+  if (ps) {
+    ps.innerHTML = '<option value="">اختر البرنامج</option>';
+    programsCache.forEach(p => {
+      ps.innerHTML += `<option value="${esc(p.id)}">${esc(p.name)}</option>`;
+    });
+    ps.value = progId || '';
+    ps.onchange = function () {
+      const evProg2 = document.getElementById('ev-program-id');
+      if (evProg2) evProg2.value = this.value;
+      fillEvidenceIndicators(this.value);
+    };
+  }
 
   fillEvidenceIndicators(progId);
 
@@ -1821,79 +2018,113 @@ if (evProg2) evProg2.value = this.value;
     const e = document.getElementById(f);
     if (e) e.value = '';
   });
+  clearEvidenceFile('ev');
 
-  const te = document.getElementById('ev-type');
-  if (te) te.value = 'link';
-
-  toggleEvidenceInput();
+  const fileRadio = document.querySelector('input[name="ev-source"][value="file"]');
+  if (fileRadio) fileRadio.checked = true;
+  toggleEvidenceSource('ev');
   openModal('evidence-modal');
-}
-function handleFileSelect(input) {
-  const file = input.files[0]; 
-  if (!file) return;
-
-  if (file.size > MAX_FILE_SIZE) { 
-    showToast('الملف أكبر من 5 MB','error'); 
-    input.value = ''; 
-    return; 
-  }
-  if (!validateFileExtension(file.name, ALLOWED_FILE_EXT)) {
-    showToast('نوع الملف غير مسموح. المسموح: PDF, DOC, DOCX, XLS, XLSX','error');
-    input.value = '';
-    return;
-  }
-
-  const reader = new FileReader();
-
-  reader.onload = e => {
-    pendingFileData = {
-      name: file.name,
-      mimeType: file.type,
-      base64: e.target.result
-    };
-
-    const prev = document.getElementById('ev-file-preview'); 
-    if (!prev) return;
-
-    prev.classList.remove('hidden');
-
-    prev.innerHTML = `<span style="font-size:20px">${getFileIcon(file.name)}</span>
-      <span class="file-name">${esc(file.name)}</span>
-      <span style="font-size:11px;color:var(--text-muted)">${(file.size/1024).toFixed(0)} KB</span>
-      <span class="file-remove" onclick="pendingFileData=null;const f=document.getElementById('ev-file-input');if(f)f.value='';this.parentElement.classList.add('hidden')">✕</span>`;
-  };
-
-  reader.readAsDataURL(file);
-}
-
-function handleImageSelect(input) {
-  const file = input.files[0]; if (!file) return;
-  if (file.size > MAX_FILE_SIZE) { showToast('الصورة أكبر من 5 MB','error'); input.value=''; return; }
-  if (!validateFileExtension(file.name, ALLOWED_IMAGE_EXT)) {
-    showToast('نوع الصورة غير مسموح. المسموح: JPG, PNG, GIF, WebP','error');
-    input.value = '';
-    return;
-  }
-  const reader = new FileReader();
-  reader.onload = e => {
-    const dataUrl = e.target.result;
-    if (!/^data:image\/(jpeg|jpg|png|gif|webp);base64,/i.test(dataUrl)) {
-      showToast('ملف الصورة غير صالح','error');
-      input.value = '';
-      return;
-    }
-    pendingImageData = {name:file.name,base64:dataUrl};
-    const prev = document.getElementById('ev-image-preview'); if(!prev) return;
-    prev.classList.remove('hidden');
-    prev.innerHTML = `<img src="${dataUrl}" alt="${esc(file.name)}"/>`;
-  };
-  reader.readAsDataURL(file);
 }
 
 function getFileIcon(name) {
   const ext = name.split('.').pop().toLowerCase();
-  return ext==='pdf'?'📄':ext==='doc'||ext==='docx'?'📝':ext==='xls'||ext==='xlsx'?'📊':'📎';
+  return ext==='pdf'?'📄':ext==='doc'||ext==='docx'?'📝':ext==='xls'||ext==='xlsx'?'📊':['jpg','jpeg','png'].includes(ext)?'🖼️':'📎';
 }
+
+async function saveEvidence() {
+  if (!can('addEvidence')) { showToast('ليس لديك صلاحية رفع الشواهد','error'); return; }
+  const g = id => (document.getElementById(id)?.value||'');
+  const progId = g('ev-program-id') || g('ev-program-select');
+  const indicatorId = g('ev-indicator-id');
+  if (!indicatorId) {
+    showToast('يرجى اختيار المؤشر المرتبط بالشاهد','error');
+    return;
+  }
+  const title = clampInput(g('ev-title'));
+  if (!title) { showToast('يرجى إدخال عنوان الشاهد','error'); return; }
+
+  const source = getEvidenceSource('ev');
+  let link = null;
+  let fileMeta = null;
+  let type = 'ملف';
+
+  if (source === 'drive') {
+    const rawLink = g('ev-link').trim();
+    const safeLink = rawLink ? sanitizeUrl(rawLink) : '';
+    if (!safeLink) {
+      showToast('يرجى إدخال رابط Google Drive صالح','error');
+      return;
+    }
+    link = safeLink;
+    type = 'Google Drive';
+  } else {
+    if (!pendingEvidenceFile) {
+      showToast('يرجى اختيار ملف واحد على الأقل من الجهاز','error');
+      return;
+    }
+    type = evidenceTypeFromFileName(pendingEvidenceFile.name);
+  }
+
+  const btn = document.getElementById('ev-save-btn') || document.querySelector('#evidence-modal .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = source === 'file' ? 'جاري رفع الملف...' : 'جارٍ الحفظ…'; }
+
+  try {
+    const schoolYearId = await requireActiveSchoolYearId();
+    if (source === 'file') {
+      showToast('جاري رفع الملف...','info');
+      fileMeta = await uploadEvidenceToStorage(pendingEvidenceFile, {
+        schoolYearId,
+        programId: progId || 'general',
+        indicatorId: indicatorId || 'general',
+      });
+    }
+
+    const ev = {
+      id: null,
+      title,
+      type,
+      program_id: progId || null,
+      indicator_id: indicatorId,
+      person: clampInput(g('ev-person')),
+      date: new Date().toISOString().split('T')[0],
+      link,
+      notes: clampInput(g('ev-notes'), 1000),
+      school_year_id: schoolYearId,
+      file_url: fileMeta?.file_url || null,
+      file_name: fileMeta?.file_name || null,
+      file_size: fileMeta?.file_size ?? null,
+    };
+
+    const saved = await sbInsertEvidence(ev);
+    if (indicatorId) {
+      const list = indicatorsCache[progId] || [];
+      const ind = list.find(i => String(i.id) === String(indicatorId));
+      if (ind) ind.is_completed = true;
+      if (sb && ind) {
+        await sb.from('program_indicators').update({ is_completed: true }).eq('id', indicatorId);
+      }
+    }
+    evidencesCache.unshift(saved);
+    syncEvidencesToPrograms();
+    if (saved.program_id) await syncProgress(saved.program_id);
+    pendingEvidenceFile = null;
+    closeModal('evidence-modal');
+    renderPrograms();
+    renderReports();
+    showToast('تم رفع الشاهد وحفظه بنجاح.','success');
+  } catch (err) {
+    console.error('[saveEvidence]', err.message || err);
+    showToast('خطأ: ' + (err.message || err), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📎 حفظ الشاهد'; }
+  }
+}
+window.toggleEvidenceSource = toggleEvidenceSource;
+window.handleEvidenceFileSelect = handleEvidenceFileSelect;
+window.clearEvidenceFile = clearEvidenceFile;
+window.saveEvidence = saveEvidence;
+window.openEvidenceModal = openEvidenceModal;
+
 async function fetchIndicators() {
   if (!sb) return;
 
@@ -1914,77 +2145,6 @@ async function fetchIndicators() {
     }
     indicatorsCache[ind.program_id].push(ind);
   });
-}
-async function saveEvidence() {
-  if (!can('addEvidence')) { showToast('ليس لديك صلاحية رفع الشواهد','error'); return; }
-  const g = id => (document.getElementById(id)?.value||'');
-  const progId = g('ev-program-id');
-   const indicatorId = g('ev-indicator-id');
-if (!indicatorId) {
-  showToast('يرجى اختيار المؤشر المرتبط بالشاهد','error');
-  return;
-}
-  const title  = clampInput(g('ev-title')); if (!title) { showToast('يرجى إدخال عنوان الشاهد','error'); return; }
-  const type   = g('ev-type');
-  const rawLink = type === 'link' ? g('ev-link').trim() : '';
-  const safeLink = rawLink ? sanitizeUrl(rawLink) : '';
-  if (type === 'link' && rawLink && !safeLink) {
-    showToast('الرابط غير صالح. استخدم http أو https فقط','error');
-    return;
-  }
-  const ev = {
-    id:null, title, type,
-    program_id     : progId||null,
-    indicator_id : indicatorId,
-    initiative_label: '',
-    person : clampInput(g('ev-person')),
-    date   : new Date().toISOString().split('T')[0],
-    link   : safeLink,
-    notes  : clampInput(g('ev-notes'), 1000),
-    file_data: type==='file'?(pendingFileData?.base64||null):type==='image'?(pendingImageData?.base64||null):null,
-  };
-  const btn = document.querySelector('#evidence-modal .btn-primary');
-  if (btn) { btn.disabled=true; btn.textContent='جارٍ الحفظ…'; }
-  try {
-    const saved = await sbInsertEvidence(ev);
-    if (indicatorId) {
-  const list = indicatorsCache[progId] || [];
-  const ind = list.find(i => String(i.id) === String(indicatorId));
-  if (ind) ind.is_completed = true;
-}
-
-await fetchIndicators();
-await fetchEvidences();
-
-programsCache.forEach(p => {
-  p.progress = calcProgramProgress(p.id);
-});
-
-renderPrograms();
-renderDashboard();
-drawDashPie();
-  if (sb) {
-    await sb
-      .from('program_indicators')
-      .update({ is_completed: true })
-      .eq('id', indicatorId);
-  }
-    evidencesCache.unshift(saved);
-
-await fetchEvidences();
-await fetchIndicators();
-
-await updateProgramProgress(saved.program_id);
-
-renderPrograms();
-renderDashboard();
-
-
-   renderReports();
-    closeModal('evidence-modal');
-    showToast('تم حفظ الشاهد ✅','success');
-  } catch (err) { console.error('[saveEvidence]',err.message); showToast('خطأ: '+err.message,'error'); }
-  finally { if (btn) { btn.disabled=false; btn.textContent='📎 حفظ الشاهد'; } }
 }
 
 async function handleDelEv(evId) {
@@ -2393,6 +2553,7 @@ async function deleteTask(id) {
    ───────────────────────────────────────────────────────────── */
 function openReportModal() {
   if (!requireAuth('addEvidence')) return;
+  pendingEvidenceFile = null;
   const sel = document.getElementById('rep-program-id');
 
   if (sel) {
@@ -2413,12 +2574,14 @@ function openReportModal() {
     const e = document.getElementById(f);
     if (e) e.value = '';
   });
+  clearEvidenceFile('rep');
 
   const pe = document.getElementById('rep-person');
   if (pe) pe.value = currentUser?.name || '';
 
-  const rt = document.getElementById('rep-type');
-  if (rt) rt.value = 'صورة';
+  const fileRadio = document.querySelector('input[name="rep-source"][value="file"]');
+  if (fileRadio) fileRadio.checked = true;
+  toggleEvidenceSource('rep');
 
   openModal('report-modal');
 }
@@ -2439,15 +2602,15 @@ function fillReportIndicators(progId) {
   });
 }
 function renderReports() {
-  const TI={'صورة':'📷','PDF':'📄','Word':'📝','Excel':'📊','Google Drive':'☁️','YouTube':'🎥','رابط خارجي':'🔗'};
+  const TI={'صورة':'📷','PDF':'📄','Word':'📝','Excel':'📊','Google Drive':'☁️','ملف':'📎','YouTube':'🎥','رابط خارجي':'🔗'};
   const tbody=document.getElementById('reports-tbody'); if(!tbody)return;
   tbody.innerHTML=evidencesCache.length
     ? evidencesCache.map((r,i)=>{
-        const pName=r.program_id?programsCache.find(p=>p.id===r.program_id)?.name||'—':'—';
+        const pName=r.program_id?programsCache.find(p=>String(p.id)===String(r.program_id))?.name||'—':'—';
         return`<tr><td>${i+1}</td><td style="font-weight:600">${esc(r.title)}</td>
-          <td><span class="badge badge-info">${TI[r.type]||'📎'} ${esc(r.type||'—')}</span></td>
+          <td><span class="badge badge-info">${TI[r.type]||getEvIcon(r.type)} ${esc(r.type||'—')}</span></td>
           <td>${esc(pName)}</td><td>${esc(r.person||'—')}</td><td>${esc(fmtDate(r.date))}</td>
-          <td>${r.link ? safeLinkHtml(r.link, '🔗 فتح', 'btn-sm btn-view') : '—'}</td>
+          <td>${evidenceViewButtonHtml(r)}</td>
           <td>${can('deleteEvidence')?`<button class="btn-sm btn-delete" onclick="handleDelEv('${r.id}')">🗑️</button>`:''}</td></tr>`;
       }).join('')
     : '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-muted)">لا توجد شواهد</td></tr>';
@@ -2455,32 +2618,87 @@ function renderReports() {
 
 async function saveReport() {
   if (!requireAuth('addEvidence')) return;
-  const g=id=>(document.getElementById(id)?.value||'');
-  const title=clampInput(g('rep-title')); if(!title){showToast('يرجى إدخال عنوان الشاهد','error');return;}
-  const progId=g('rep-program-id');
+  const g = id => (document.getElementById(id)?.value || '');
+  const title = clampInput(g('rep-title'));
+  if (!title) { showToast('يرجى إدخال عنوان الشاهد','error'); return; }
+
+  const progId = g('rep-program-id');
   const indicatorId = g('rep-indicator-id');
   const person = clampInput(g('rep-person')) || currentUser?.name || '';
-  const rawLink = g('rep-link').trim();
-  const safeLink = rawLink ? sanitizeUrl(rawLink) : '';
-  if (rawLink && !safeLink) { showToast('رابط الشاهد غير صالح','error'); return; }
-  const ev={
-     id:null,
-     title,
-     type:g('rep-type'),
-     program_id:progId||null,
-     indicator_id: indicatorId || null, 
-     initiative_label:'',person,date:new Date().toISOString().split('T')[0],link:safeLink,notes:clampInput(g('rep-notes'), 1000),file_data:null};
-  const btn=document.getElementById('rep-save-btn');
-  if(btn){btn.disabled=true;btn.textContent='جارٍ الرفع…';}
-  try{
-    const saved=await sbInsertEvidence(ev); evidencesCache.unshift(saved);
+  const source = getEvidenceSource('rep');
+
+  let link = null;
+  let fileMeta = null;
+  let type = 'ملف';
+
+  if (source === 'drive') {
+    const rawLink = g('rep-link').trim();
+    const safeLink = rawLink ? sanitizeUrl(rawLink) : '';
+    if (!safeLink) {
+      showToast('يرجى إدخال رابط Google Drive صالح','error');
+      return;
+    }
+    link = safeLink;
+    type = 'Google Drive';
+  } else {
+    if (!pendingEvidenceFile) {
+      showToast('يرجى اختيار ملف واحد على الأقل من الجهاز','error');
+      return;
+    }
+    type = evidenceTypeFromFileName(pendingEvidenceFile.name);
+  }
+
+  const btn = document.getElementById('rep-save-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = source === 'file' ? 'جاري رفع الملف...' : 'جارٍ الحفظ…';
+  }
+
+  try {
+    const schoolYearId = await requireActiveSchoolYearId();
+    if (source === 'file') {
+      showToast('جاري رفع الملف...','info');
+      fileMeta = await uploadEvidenceToStorage(pendingEvidenceFile, {
+        schoolYearId,
+        programId: progId || 'general',
+        indicatorId: indicatorId || 'general',
+      });
+    }
+
+    const ev = {
+      id: null,
+      title,
+      type,
+      program_id: progId || null,
+      indicator_id: indicatorId || null,
+      person,
+      date: new Date().toISOString().split('T')[0],
+      link,
+      notes: clampInput(g('rep-notes'), 1000),
+      school_year_id: schoolYearId,
+      file_url: fileMeta?.file_url || null,
+      file_name: fileMeta?.file_name || null,
+      file_size: fileMeta?.file_size ?? null,
+    };
+
+    const saved = await sbInsertEvidence(ev);
+    evidencesCache.unshift(saved);
     syncEvidencesToPrograms();
     if (saved.program_id) await syncProgress(saved.program_id);
-    closeModal('report-modal'); renderReports(); renderPrograms();
-    showToast('تم رفع الشاهد ✅','success');
-  }catch(err){console.error('[saveReport]',err.message);showToast('خطأ: '+err.message,'error');}
-  finally{if(btn){btn.disabled=false;btn.textContent='📤 رفع الشاهد';}}
+    pendingEvidenceFile = null;
+    closeModal('report-modal');
+    renderReports();
+    renderPrograms();
+    showToast('تم رفع الشاهد وحفظه بنجاح.','success');
+  } catch (err) {
+    console.error('[saveReport]', err.message || err);
+    showToast('خطأ: ' + (err.message || err), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📤 رفع الشاهد'; }
+  }
 }
+window.openReportModal = openReportModal;
+window.saveReport = saveReport;
 
 /* ─────────────────────────────────────────────────────────────
    §30  TEACHERS SECTION
