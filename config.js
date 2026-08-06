@@ -12,9 +12,17 @@
    ================================================================ */
 
 window.SUPABASE_URL = 'https://qeabgktifyyyjrzphtpw.supabase.co';
+// anon / publishable key فقط — لا تضع service_role هنا أبداً
 window.SUPABASE_ANON = 'sb_publishable_G3EvrlPIwhYfrnauHQDveA_bW4YpVwl';
 window.supabaseClient = supabase.createClient(
   window.SUPABASE_URL,
-  window.SUPABASE_ANON
+  window.SUPABASE_ANON,
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  }
 );
  

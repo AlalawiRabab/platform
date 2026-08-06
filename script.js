@@ -113,23 +113,25 @@
    );
    INSERT INTO settings (id) VALUES (1) ON CONFLICT DO NOTHING;
 
-   -- ⑨ RLS — anon key يكفي
-   DO $$ DECLARE t text;
-   BEGIN
-     FOREACH t IN ARRAY ARRAY['users','programs','program_indicators',
-       'initiatives','tasks','evidences','teacher_followups','settings']
-     LOOP
-       EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
-       EXECUTE format('DROP POLICY IF EXISTS allow_all ON %I', t);
-       EXECUTE format('CREATE POLICY allow_all ON %I FOR ALL USING (true) WITH CHECK (true)', t);
-     END LOOP;
-   END $$;
+   -- ⑨ RLS — مهم: لا تستخدم allow_all في الإنتاج
+   -- نفّذ ملف supabase-security.sql بعد إنشاء الجداول لتفعيل سياسات آمنة.
+   -- السياسة التالية للتجربة فقط (تسمح للجميع بكل شيء):
+   -- DO $$ DECLARE t text;
+   -- BEGIN
+   --   FOREACH t IN ARRAY ARRAY['users','programs','program_indicators',
+   --     'initiatives','tasks','evidences','teacher_followups','settings']
+   --   LOOP
+   --     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+   --     EXECUTE format('DROP POLICY IF EXISTS allow_all ON %I', t);
+   --     EXECUTE format('CREATE POLICY allow_all ON %I FOR ALL USING (true) WITH CHECK (true)', t);
+   --   END LOOP;
+   -- END $$;
 
-   -- ⑩ seed users
+   -- ⑩ seed users — غيّر كلمات المرور فوراً بعد أول تشغيل
    INSERT INTO users (name,email,password,role) VALUES
-     ('سارة العتيبي','admin@school.sa','1234','admin'),
-     ('نورة القحطاني','vice@school.sa','1234','vice'),
-     ('هند الزهراني','teacher@school.sa','1234','teacher')
+     ('سارة العتيبي','admin@school.sa','ChangeMe!1234','admin'),
+     ('نورة القحطاني','vice@school.sa','ChangeMe!1234','vice'),
+     ('هند الزهراني','teacher@school.sa','ChangeMe!1234','teacher')
    ON CONFLICT (email) DO NOTHING;
 
    ================================================================ */
@@ -199,6 +201,180 @@ const PERMS = {
 };
 const can = a => currentUser ? (PERMS[currentUser.role]?.[a] === true) : false;
 
+const NAV_ALLOWED = {
+  admin  : ['dashboard','programs','plan','kpi','tasks','reports','teachers','calendar','stats','settings','users'],
+  vice   : ['dashboard','programs','plan','kpi','tasks','reports','teachers','calendar','stats'],
+  teacher: ['dashboard','programs','reports','teachers'],
+};
+
+const SESSION_KEY = 'sop_session';
+const ALLOWED_FILE_EXT  = ['pdf','doc','docx','xls','xlsx'];
+const ALLOWED_IMAGE_EXT = ['jpg','jpeg','png','gif','webp'];
+const MAX_FILE_SIZE = 5 * 1024 * 1024;
+const MAX_INPUT_LEN = 500;
+const VALID_ROLES = ['admin','vice','teacher'];
+
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+const esc = escapeHtml;
+
+function sanitizeUrl(url) {
+  if (!url) return '';
+  const raw = String(url).trim();
+  if (/^(javascript|data|vbscript|file):/i.test(raw)) return '';
+  try {
+    const parsed = new URL(raw.startsWith('http') ? raw : 'https://' + raw);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return '';
+    return parsed.href;
+  } catch { return ''; }
+}
+
+function safeLinkHtml(url, label, className) {
+  const safe = sanitizeUrl(url);
+  if (!safe) return '—';
+  const cls = className ? ` class="${esc(className)}"` : '';
+  return `<a href="${esc(safe)}" target="_blank" rel="noopener noreferrer"${cls}>${esc(label || 'فتح الرابط')}</a>`;
+}
+
+function validateFileExtension(name, allowed) {
+  const ext = (String(name).split('.').pop() || '').toLowerCase();
+  return allowed.includes(ext);
+}
+
+function clampInput(str, max = MAX_INPUT_LEN) {
+  return String(str || '').trim().slice(0, max);
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function isSectionAllowed(section) {
+  if (!currentUser) return false;
+  return (NAV_ALLOWED[currentUser.role] || []).includes(section);
+}
+
+function saveSession(user) {
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+      id: user.id,
+      email: user.email,
+      ts: Date.now(),
+    }));
+  } catch {}
+  try { localStorage.removeItem('currentUser'); } catch {}
+}
+
+function clearSession() {
+  try { sessionStorage.removeItem(SESSION_KEY); } catch {}
+  try { localStorage.removeItem('currentUser'); } catch {}
+}
+
+function showAppShell() {
+  document.getElementById('login-page')?.classList.add('hidden');
+  document.getElementById('app')?.classList.remove('hidden');
+}
+
+function showLoginShell() {
+  document.getElementById('app')?.classList.add('hidden');
+  document.getElementById('login-page')?.classList.remove('hidden');
+}
+
+async function authenticateUser(email, pass) {
+  if (!sb) {
+    const u = FALLBACK_USERS.find(x => x.email === email && x.password === pass);
+    return u ? { id: u.id, name: u.name, email: u.email, role: u.role } : null;
+  }
+  try {
+    const { data, error } = await sb.rpc('authenticate_user', { p_email: email, p_password: pass });
+    if (error) throw error;
+    const user = Array.isArray(data) ? data[0] : data;
+    if (user && VALID_ROLES.includes(user.role)) return user;
+  } catch (err) {
+    console.warn('[Auth] RPC unavailable, using legacy query:', err.message);
+  }
+  const { data, error } = await sb
+    .from('users')
+    .select('id,name,email,role')
+    .eq('email', email)
+    .eq('password', pass)
+    .maybeSingle();
+  if (error) throw error;
+  return data && VALID_ROLES.includes(data.role) ? data : null;
+}
+
+async function fetchUserSession(id, email) {
+  if (!sb) {
+    const u = FALLBACK_USERS.find(x => x.id === id && x.email === email);
+    return u ? { id: u.id, name: u.name, email: u.email, role: u.role } : null;
+  }
+  try {
+    const { data, error } = await sb.rpc('get_user_by_id', { p_id: id, p_email: email });
+    if (error) throw error;
+    const user = Array.isArray(data) ? data[0] : data;
+    if (user && VALID_ROLES.includes(user.role)) return user;
+  } catch (err) {
+    console.warn('[Session] RPC unavailable:', err.message);
+  }
+  const { data, error } = await sb
+    .from('users')
+    .select('id,name,email,role')
+    .eq('id', id)
+    .eq('email', email)
+    .maybeSingle();
+  if (error) throw error;
+  return data && VALID_ROLES.includes(data.role) ? data : null;
+}
+
+async function restoreSession() {
+  let raw = null;
+  try { raw = sessionStorage.getItem(SESSION_KEY); } catch {}
+  if (!raw) {
+    try {
+      const legacy = localStorage.getItem('currentUser');
+      if (legacy) {
+        const parsed = JSON.parse(legacy);
+        if (parsed?.id && parsed?.email) {
+          raw = JSON.stringify({ id: parsed.id, email: parsed.email, ts: Date.now() });
+          localStorage.removeItem('currentUser');
+        }
+      }
+    } catch {}
+  }
+  if (!raw) return false;
+  try {
+    const { id, email } = JSON.parse(raw);
+    if (!id || !email) { clearSession(); return false; }
+    const user = await fetchUserSession(id, email);
+    if (!user) { clearSession(); return false; }
+    currentUser = user;
+    saveSession(user);
+    return true;
+  } catch {
+    clearSession();
+    return false;
+  }
+}
+
+function requireAuth(action) {
+  if (!currentUser) {
+    showToast('يجب تسجيل الدخول أولاً', 'error');
+    return false;
+  }
+  if (action && !can(action)) {
+    showToast('ليس لديك صلاحية لهذا الإجراء', 'error');
+    return false;
+  }
+  return true;
+}
+
 /* ─────────────────────────────────────────────────────────────
    §3  LS HELPERS
    ───────────────────────────────────────────────────────────── */
@@ -245,17 +421,25 @@ function closeModal(id) {
    §7  AUTH
    ───────────────────────────────────────────────────────────── */
 const FALLBACK_USERS = [
-  {id:'f1',name:'سارة العتيبي', email:'admin@school.sa',   password:'1234',role:'admin'},
-  {id:'f2',name:'نورة القحطاني',email:'vice@school.sa',    password:'1234',role:'vice'},
-  {id:'f3',name:'هند الزهراني', email:'teacher@school.sa', password:'1234',role:'teacher'},
+  {id:'f1',name:'سارة العتيبي', email:'admin@school.sa',   password:'ChangeMe!1234',role:'admin'},
+  {id:'f2',name:'نورة القحطاني',email:'vice@school.sa',    password:'ChangeMe!1234',role:'vice'},
+  {id:'f3',name:'هند الزهراني', email:'teacher@school.sa', password:'ChangeMe!1234',role:'teacher'},
 ];
 
 async function doLogin() {
   const email = (document.getElementById('login-email')?.value || '').trim().toLowerCase();
-  const pass = (document.getElementById('login-password')?.value || '').trim();
+  const pass  = (document.getElementById('login-password')?.value || '');
 
   if (!email || !pass) {
     showToast('يرجى إدخال البريد وكلمة المرور', 'error');
+    return;
+  }
+  if (!isValidEmail(email)) {
+    showToast('صيغة البريد الإلكتروني غير صحيحة', 'error');
+    return;
+  }
+  if (pass.length < 4 || pass.length > 128) {
+    showToast('كلمة المرور يجب أن تكون بين 4 و 128 حرفاً', 'error');
     return;
   }
 
@@ -268,31 +452,16 @@ async function doLogin() {
   try {
     showLoadingOverlay?.(true);
 
-    const { data, error } = await sb
-      .from('users')
-      .select('id,name,email,role')
-      .eq('email', email)
-      .eq('password', pass)
-      .maybeSingle();
+    const user = await authenticateUser(email, pass);
 
-    showLoadingOverlay?.(false);
-
-    if (error) {
-      console.error('[Auth]', error.message);
-      showToast('خطأ في الاتصال بقاعدة البيانات', 'error');
-      return;
-    }
-
-    if (!data) {
+    if (!user) {
       showToast('البريد الإلكتروني أو كلمة المرور غير صحيحة', 'error');
       return;
     }
 
-    currentUser = data;
-    localStorage.setItem('currentUser', JSON.stringify(currentUser));
-
-   document.getElementById('login-page')?.classList.add('hidden');
-document.getElementById('app')?.classList.remove('hidden');
+    currentUser = user;
+    saveSession(user);
+    showAppShell();
 
     await loadAllData?.();
     applyRoleUI?.();
@@ -300,23 +469,24 @@ document.getElementById('app')?.classList.remove('hidden');
     showToast('تم تسجيل الدخول بنجاح', 'success');
 
   } catch (err) {
-    showLoadingOverlay?.(false);
     console.error('[doLogin]', err);
     showToast('حدث خطأ أثناء تسجيل الدخول', 'error');
   } finally {
+    showLoadingOverlay?.(false);
     if (btn) {
       btn.disabled = false;
-      btn.textContent = 'دخول';
+      btn.textContent = 'دخول إلى المنصة';
     }
   }
 }
 window.doLogin = doLogin;
 function doLogout() {
   currentUser = null;
+  clearSession();
   [programsCache, initiativesCache, tasksCache, evidencesCache, teachersCache, kpiCache] = [[], [], [], [], [], []];
   indicatorsCache = {};
-  document.getElementById('app').classList.add('hidden');
-  document.getElementById('login-page').classList.remove('hidden');
+  settingsCache = {};
+  showLoginShell();
   const e = document.getElementById('login-email'); if (e) e.value = '';
   const p = document.getElementById('login-password'); if (p) p.value = '';
 }
@@ -337,11 +507,7 @@ if (nm) {
 }
   const av = document.getElementById('header-avatar'); if (av) av.textContent = currentUser.name.charAt(0);
 
-  const navAllowed = {
-    admin  : ['dashboard','programs','plan','kpi','tasks','reports','teachers','calendar','stats','settings','users'],
-    vice   : ['dashboard','programs','plan','kpi','tasks','reports','teachers','calendar','stats'],
-    teacher: ['dashboard','programs','reports','teachers'],
-  }[r] || [];
+  const navAllowed = NAV_ALLOWED[r] || [];
 
   document.querySelectorAll('.nav-item').forEach(el => {
     el.style.display = navAllowed.includes(el.dataset.section) ? 'flex' : 'none';
@@ -351,12 +517,18 @@ if (nm) {
   const abp = document.getElementById('btn-add-program'); if (abp) abp.style.display = can('addProgram') ? '' : 'none';
   const abi = document.getElementById('btn-add-initiative'); if (abi) abi.style.display = can('addInitiative') ? '' : 'none';
   const abt = document.getElementById('btn-add-teacher'); if (abt) abt.style.display = can('addTeacher') ? '' : 'none';
+  const abk = document.getElementById('btn-add-kpi'); if (abk) abk.style.display = isSectionAllowed('kpi') ? '' : 'none';
+  document.querySelectorAll('#section-tasks .btn-primary, #section-reports .btn-primary').forEach(btn => {
+    if (btn.getAttribute('onclick')?.includes('openTaskModal')) btn.style.display = can('addTask') ? '' : 'none';
+    if (btn.getAttribute('onclick')?.includes('openReportModal')) btn.style.display = can('addEvidence') ? '' : 'none';
+  });
 }
 
 /* ─────────────────────────────────────────────────────────────
    §9  LOAD ALL DATA
    ───────────────────────────────────────────────────────────── */
 async function loadAllData(renderAfter = true) {
+  if (!currentUser) return;
   showLoadingOverlay(true);
   try {
     await fetchPrograms();
@@ -387,6 +559,14 @@ async function loadAllData(renderAfter = true) {
 let _activeSection = 'dashboard';
 
 function navTo(name, el) {
+  if (!currentUser) {
+    showToast('يجب تسجيل الدخول أولاً', 'error');
+    return;
+  }
+  if (!isSectionAllowed(name)) {
+    showToast('ليس لديك صلاحية الوصول لهذه الصفحة', 'error');
+    return;
+  }
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   const sec = document.getElementById('section-' + name);
@@ -622,6 +802,7 @@ async function sbAddIndicator(progId, text) {
 }
 
 async function sbToggleIndicator(progId, indId) {
+  if (!requireAuth('toggleIndicator')) return;
   const pid = String(progId);
   const iid = String(indId);
 
@@ -631,6 +812,14 @@ async function sbToggleIndicator(progId, indId) {
   if (!ind) {
     console.error('Indicator not found', progId, indId, indicatorsCache);
     return;
+  }
+
+  if (currentUser?.role === 'teacher') {
+    const prog = programsCache.find(p => String(p.id) === String(progId));
+    if (prog?.resp && prog.resp !== currentUser.name) {
+      showToast('لا يمكنك تعديل مؤشرات برنامج ليس مرتبطًا بك', 'error');
+      return;
+    }
   }
 
   const nv = !(ind.is_completed === true || ind.is_completed === 'true');
@@ -653,6 +842,28 @@ async function sbToggleIndicator(progId, indId) {
   renderPrograms();
   viewProgramDetail(progId);
 }
+
+async function handleDelInd(progId, indId) {
+  if (!requireAuth('deleteIndicator')) return;
+  if (!confirm('حذف هذا المؤشر؟')) return;
+  try {
+    if (sb) {
+      const { error } = await sb.from('program_indicators').delete().eq('id', indId);
+      if (error) throw error;
+    }
+    if (indicatorsCache[progId]) {
+      indicatorsCache[progId] = indicatorsCache[progId].filter(i => String(i.id) !== String(indId));
+    }
+    await syncProgress(progId);
+    renderPrograms();
+    showToast('تم حذف المؤشر 🗑️', 'warning');
+  } catch (err) {
+    console.error('[handleDelInd]', err.message);
+    showToast('خطأ: ' + err.message, 'error');
+  }
+}
+window.handleDelInd = handleDelInd;
+window.sbToggleIndicator = sbToggleIndicator;
 
 /* ─────────────────────────────────────────────────────────────
    §15  SUPABASE: INITIATIVES
@@ -997,6 +1208,7 @@ function applySettingsToUI(s) {
 }
 
 async function resetToDemo() {
+  if (!currentUser) { showToast('يجب تسجيل الدخول أولاً', 'error'); return; }
   if (!confirm('إعادة تحميل البيانات؟')) return;
 await loadAllData(false);
 renderSection(_activeSection);
@@ -1070,7 +1282,9 @@ async function updateProgramProgress(programId) {
 
   const pct = calcProgramProgress(programId);
 
-  const { error } = await supabase
+  if (!sb) return pct;
+
+  const { error } = await sb
     .from('programs')
     .update({ progress: pct })
     .eq('id', programId);
@@ -1118,7 +1332,7 @@ function buildProgramCard(p) {
               title="${d ? 'إلغاء الإنجاز' : 'وضع علامة مكتمل'}">${d ? '✅' : '⬜'}</button>
 
             <span class="ind-text" style="${d ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">
-              ${ind.indicator_text}
+              ${esc(ind.indicator_text)}
             </span>
 
             ${can('deleteIndicator') ? `<button class="ind-delete" onclick="handleDelInd('${p.id}','${ind.id}')">×</button>` : ''}
@@ -1144,18 +1358,18 @@ function buildProgramCard(p) {
   : '';
 
   return `
-  <div class="program-card status-${status}" id="pcard-${p.id}">
+  <div class="program-card status-${esc(status)}" id="pcard-${esc(p.id)}">
     <div class="program-card-header">
-      <div class="program-card-title">${p.name}</div>
+      <div class="program-card-title">${esc(p.name)}</div>
       <span class="badge ${SB[status]}">${SI[status]} ${SL[status]}</span>
     </div>
 
     <div class="program-card-body">
-      ${p.desc ? `<div class="program-card-desc">${p.desc}</div>` : ''}
+      ${p.desc ? `<div class="program-card-desc">${esc(p.desc)}</div>` : ''}
 
       <div class="program-meta-grid">
-        <div class="program-meta-item">👩‍🏫 <strong>${p.resp || '—'}</strong></div>
-        <div class="program-meta-item">🎯 <strong>${p.target || '—'}</strong></div>
+        <div class="program-meta-item">👩‍🏫 <strong>${esc(p.resp || '—')}</strong></div>
+        <div class="program-meta-item">🎯 <strong>${esc(p.target || '—')}</strong></div>
         <div class="program-meta-item">📅 <strong>${fmtDate(p.start)}</strong></div>
         <div class="program-meta-item">🏁 <strong>${fmtDate(p.end)}</strong></div>
       </div>
@@ -1231,12 +1445,12 @@ async function saveProgram() {
   if (editId  && !can('editProgram')) { showToast('ليس لديك صلاحية تعديل البرامج','error'); return; }
   if (!editId && !can('addProgram'))  { showToast('ليس لديك صلاحية إضافة برامج','error');   return; }
   const g = id => (document.getElementById(id)?.value||'');
-  const name = g('prog-name').trim(); if (!name) { showToast('يرجى إدخال اسم البرنامج','error'); return; }
+  const name = clampInput(g('prog-name')); if (!name) { showToast('يرجى إدخال اسم البرنامج','error'); return; }
   const p = {
-    id:editId||null, name, resp:g('prog-resp').trim(),
-    desc:g('prog-desc').trim(), target:g('prog-target').trim(),
+    id:editId||null, name, resp:clampInput(g('prog-resp')),
+    desc:clampInput(g('prog-desc'), 1000), target:clampInput(g('prog-target')),
     start:g('prog-start'), end:g('prog-end'),
-    progress:parseInt(g('prog-progress'))||0, evidence:[], indicators:[],
+    progress:Math.min(100, Math.max(0, parseInt(g('prog-progress'))||0)), evidence:[], indicators:[],
   };
   const btn = document.getElementById('prog-save-btn');
   if (btn) { btn.disabled=true; btn.textContent='جارٍ الحفظ…'; }
@@ -1296,10 +1510,10 @@ function viewProgramDetail(id) {
 if (ti) ti.textContent = p.name;
   const indsHtml = inds.length
    ? inds.map(ind => `
-  <div onclick="sbToggleIndicator('${p.id}','${ind.id}'); setTimeout(()=>viewProgramDetail('${p.id}'),300);"
+  <div onclick="sbToggleIndicator('${esc(p.id)}','${esc(ind.id)}'); setTimeout(()=>viewProgramDetail('${esc(p.id)}'),300);"
        style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-light)">
     <span style="font-size:18px">${ind.is_completed ? '✅' : '⬜'}</span>
-    <span style="font-size:13px;${ind.is_completed ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">${ind.indicator_text}</span>
+    <span style="font-size:13px;${ind.is_completed ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">${esc(ind.indicator_text)}</span>
   </div>`).join('')
     : '<p style="color:var(--text-muted);font-size:13px;padding:8px 0">لا توجد مؤشرات</p>';
 
@@ -1312,19 +1526,12 @@ if (ti) ti.textContent = p.name;
         return `<div class="evidence-detail-item">
           <div class="ev-det-icon">${icon}</div>
           <div class="ev-det-info">
-            <div class="ev-det-title">${ev.title}</div>
-            <div class="ev-det-meta">${ev.person?('👩‍🏫 أضافتها: '+ev.person):'—'}${ev.date?(' · '+fmtDate(ev.date)):''}${ev.type?(' · '+ev.type):''}</div>
-            ${ev.notes?`<div class="ev-det-meta" style="font-style:italic">${ev.notes}</div>`:''}
+            <div class="ev-det-title">${esc(ev.title)}</div>
+            <div class="ev-det-meta">${ev.person ? ('👩‍🏫 أضافتها: ' + esc(ev.person)) : '—'}${ev.date ? (' · ' + esc(fmtDate(ev.date))) : ''}${ev.type ? (' · ' + esc(ev.type)) : ''}</div>
+            ${ev.notes ? `<div class="ev-det-meta" style="font-style:italic">${esc(ev.notes)}</div>` : ''}
           </div>
           <div class="ev-det-actions">
-          ${ev.link ? `
-<a href="${ev.link.startsWith('http') ? ev.link : 'https://' + ev.link}"
-   target="_blank"
-   rel="noopener noreferrer"
-   class="evidence-link-btn">
-   فتح الشاهد
-</a>
-` : ''}
+          ${ev.link ? safeLinkHtml(ev.link, 'فتح الشاهد', 'evidence-link-btn') : ''}
             ${delBtn}
           </div>
         </div>`;
@@ -1356,12 +1563,12 @@ if (!body) {
     <div class="detail-section">
       <h4>📋 بيانات البرنامج</h4>
       <div class="detail-grid">
-        <div class="detail-item"><div class="detail-item-label">المسؤول</div><div class="detail-item-value">${p.resp||'—'}</div></div>
-        <div class="detail-item"><div class="detail-item-label">الفئة المستهدفة</div><div class="detail-item-value">${p.target||'—'}</div></div>
-        <div class="detail-item"><div class="detail-item-label">تاريخ البدء</div><div class="detail-item-value">${fmtDate(p.start)}</div></div>
-        <div class="detail-item"><div class="detail-item-label">تاريخ الانتهاء</div><div class="detail-item-value">${fmtDate(p.end)}</div></div>
+        <div class="detail-item"><div class="detail-item-label">المسؤول</div><div class="detail-item-value">${esc(p.resp || '—')}</div></div>
+        <div class="detail-item"><div class="detail-item-label">الفئة المستهدفة</div><div class="detail-item-value">${esc(p.target || '—')}</div></div>
+        <div class="detail-item"><div class="detail-item-label">تاريخ البدء</div><div class="detail-item-value">${esc(fmtDate(p.start))}</div></div>
+        <div class="detail-item"><div class="detail-item-label">تاريخ الانتهاء</div><div class="detail-item-value">${esc(fmtDate(p.end))}</div></div>
       </div>
-      ${p.desc?`<div style="margin-top:12px;padding:12px 14px;background:var(--bg);border-radius:8px;font-size:13px;line-height:1.7">${p.desc}</div>`:''}
+      ${p.desc ? `<div style="margin-top:12px;padding:12px 14px;background:var(--bg);border-radius:8px;font-size:13px;line-height:1.7">${esc(p.desc)}</div>` : ''}
     </div>
     <div class="detail-section">
   <h4>📌 المؤشرات مع الشواهد المرتبطة</h4>
@@ -1374,7 +1581,7 @@ if (!body) {
     return `
       <div class="indicator-detail-box">
         <div>
-          ${ind.indicator_text || ind.text || ind.name || ind.id}
+          ${esc(ind.indicator_text || ind.text || ind.name || ind.id)}
           ${ind.is_completed === true || ind.is_completed === 'true' ? '✅' : '◻️'}
         </div>
 
@@ -1382,8 +1589,8 @@ if (!body) {
           ${linked.length
             ? linked.map(ev => `
               <div class="evidence-item-detail">
-                🔗 ${ev.title || ev.name || 'شاهد'}
-                ${ev.link ? `<a href="${ev.link}" target="_blank">فتح الرابط</a>` : ''}
+                🔗 ${esc(ev.title || ev.name || 'شاهد')}
+                ${ev.link ? safeLinkHtml(ev.link, 'فتح الرابط') : ''}
               </div>
             `).join('')
             : `<div style="color:#888">لا توجد شواهد مرتبطة بهذا المؤشر</div>`
@@ -1403,7 +1610,7 @@ if (!body) {
 async function handleAddInd(progId) {
   if (!can('addIndicator')) { showToast('ليس لديك صلاحية إضافة مؤشرات','error'); return; }
   const inp = document.getElementById('iinput-'+progId); if (!inp) return;
-  const txt = inp.value.trim(); if (!txt) { showToast('أدخل نص المؤشر أولاً','error'); return; }
+  const txt = clampInput(inp.value); if (!txt) { showToast('أدخل نص المؤشر أولاً','error'); return; }
   inp.disabled = true;
   try {
     await sbAddIndicator(progId, txt);
@@ -1415,6 +1622,7 @@ async function handleAddInd(progId) {
 }
 
 async function handleToggle(progId, indId) {
+  if (!requireAuth('toggleIndicator')) return;
   if (currentUser?.role === 'teacher') {
     const prog = programsCache.find(p => String(p.id) === String(progId));
 
@@ -1489,7 +1697,7 @@ if (barEl) {
   if (!inds.length) { listEl.innerHTML='<div style="font-size:12px;color:var(--text-muted);padding:4px 0">لا توجد مؤشرات بعد</div>'; return; }
  listEl.innerHTML = inds.map(ind =>
   '<div class="indicator-row">' +
-  '<span>' + (ind.indicator_text || ind.text || '') + '</span>' +
+  '<span>' + esc(ind.indicator_text || ind.text || '') + '</span>' +
   '</div>'
 ).join('');
 }
@@ -1526,7 +1734,7 @@ function fillEvidenceIndicators(progId) {
   );
 
   relatedIndicators.forEach(ind => {
-    sel.innerHTML += '<option value="' + ind.id + '">' + (ind.indicator_text || ind.text || ind.id) + '</option>';
+    sel.innerHTML += '<option value="' + esc(ind.id) + '">' + esc(ind.indicator_text || ind.text || ind.id) + '</option>';
   });
 }
 
@@ -1549,7 +1757,7 @@ if (ps) {
   ps.innerHTML = '<option value="">اختر البرنامج</option>';
 
   programsCache.forEach(p => {
-    ps.innerHTML += `<option value="${p.id}">${p.name}</option>`;
+    ps.innerHTML += `<option value="${esc(p.id)}">${esc(p.name)}</option>`;
   });
 
   ps.value = progId || '';
@@ -1581,10 +1789,15 @@ function handleFileSelect(input) {
   const file = input.files[0]; 
   if (!file) return;
 
-  if (file.size > 5 * 1024 * 1024) { 
+  if (file.size > MAX_FILE_SIZE) { 
     showToast('الملف أكبر من 5 MB','error'); 
     input.value = ''; 
     return; 
+  }
+  if (!validateFileExtension(file.name, ALLOWED_FILE_EXT)) {
+    showToast('نوع الملف غير مسموح. المسموح: PDF, DOC, DOCX, XLS, XLSX','error');
+    input.value = '';
+    return;
   }
 
   const reader = new FileReader();
@@ -1602,7 +1815,7 @@ function handleFileSelect(input) {
     prev.classList.remove('hidden');
 
     prev.innerHTML = `<span style="font-size:20px">${getFileIcon(file.name)}</span>
-      <span class="file-name">${file.name}</span>
+      <span class="file-name">${esc(file.name)}</span>
       <span style="font-size:11px;color:var(--text-muted)">${(file.size/1024).toFixed(0)} KB</span>
       <span class="file-remove" onclick="pendingFileData=null;const f=document.getElementById('ev-file-input');if(f)f.value='';this.parentElement.classList.add('hidden')">✕</span>`;
   };
@@ -1612,13 +1825,24 @@ function handleFileSelect(input) {
 
 function handleImageSelect(input) {
   const file = input.files[0]; if (!file) return;
-  if (file.size>5*1024*1024) { showToast('الصورة أكبر من 5 MB','error'); input.value=''; return; }
+  if (file.size > MAX_FILE_SIZE) { showToast('الصورة أكبر من 5 MB','error'); input.value=''; return; }
+  if (!validateFileExtension(file.name, ALLOWED_IMAGE_EXT)) {
+    showToast('نوع الصورة غير مسموح. المسموح: JPG, PNG, GIF, WebP','error');
+    input.value = '';
+    return;
+  }
   const reader = new FileReader();
   reader.onload = e => {
-    pendingImageData = {name:file.name,base64:e.target.result};
+    const dataUrl = e.target.result;
+    if (!/^data:image\/(jpeg|jpg|png|gif|webp);base64,/i.test(dataUrl)) {
+      showToast('ملف الصورة غير صالح','error');
+      input.value = '';
+      return;
+    }
+    pendingImageData = {name:file.name,base64:dataUrl};
     const prev = document.getElementById('ev-image-preview'); if(!prev) return;
     prev.classList.remove('hidden');
-    prev.innerHTML = `<img src="${e.target.result}" alt="${file.name}"/>`;
+    prev.innerHTML = `<img src="${dataUrl}" alt="${esc(file.name)}"/>`;
   };
   reader.readAsDataURL(file);
 }
@@ -1657,17 +1881,23 @@ if (!indicatorId) {
   showToast('يرجى اختيار المؤشر المرتبط بالشاهد','error');
   return;
 }
-  const title  = g('ev-title').trim(); if (!title) { showToast('يرجى إدخال عنوان الشاهد','error'); return; }
+  const title  = clampInput(g('ev-title')); if (!title) { showToast('يرجى إدخال عنوان الشاهد','error'); return; }
   const type   = g('ev-type');
+  const rawLink = type === 'link' ? g('ev-link').trim() : '';
+  const safeLink = rawLink ? sanitizeUrl(rawLink) : '';
+  if (type === 'link' && rawLink && !safeLink) {
+    showToast('الرابط غير صالح. استخدم http أو https فقط','error');
+    return;
+  }
   const ev = {
     id:null, title, type,
     program_id     : progId||null,
     indicator_id : indicatorId,
     initiative_label: '',
-    person : g('ev-person').trim(),
+    person : clampInput(g('ev-person')),
     date   : new Date().toISOString().split('T')[0],
-    link   : type==='link' ? g('ev-link').trim() : '',
-    notes  : g('ev-notes').trim(),
+    link   : safeLink,
+    notes  : clampInput(g('ev-notes'), 1000),
     file_data: type==='file'?(pendingFileData?.base64||null):type==='image'?(pendingImageData?.base64||null):null,
   };
   const btn = document.querySelector('#evidence-modal .btn-primary');
@@ -1768,14 +1998,14 @@ function renderPlan() {
   tbody.innerHTML = data.length
     ? data.map((ini,idx) => `
         <tr><td>${idx+1}</td>
-          <td><span class="badge ${GOAL_BADGE[ini.goal]||'badge-secondary'}">${ini.goal||'—'}</span></td>
-          <td style="font-weight:600">${ini.name}</td>
-          <td>${ini.resp||'—'}</td>
-          <td>${fmtDate(ini.start)}</td>
-          <td>${fmtDate(ini.end)}</td>
-          <td><span class="badge ${INI_STATUS_BADGE[ini.status]||'badge-secondary'}">${ini.status}</span></td>
+          <td><span class="badge ${GOAL_BADGE[ini.goal]||'badge-secondary'}">${esc(ini.goal||'—')}</span></td>
+          <td style="font-weight:600">${esc(ini.name)}</td>
+          <td>${esc(ini.resp||'—')}</td>
+          <td>${esc(fmtDate(ini.start))}</td>
+          <td>${esc(fmtDate(ini.end))}</td>
+          <td><span class="badge ${INI_STATUS_BADGE[ini.status]||'badge-secondary'}">${esc(ini.status)}</span></td>
           <td><div class="progress-wrap"><div class="progress-bar" style="min-width:70px"><div class="progress-fill" style="width:${ini.progress||0}%"></div></div><span class="progress-text">${ini.progress||0}%</span></div></td>
-          <td>${ini.link?`<a href="${ini.link}" target="_blank" class="btn-sm btn-view">📎 عرض</a>`:'—'}</td>
+          <td>${ini.link ? safeLinkHtml(ini.link, '📎 عرض', 'btn-sm btn-view') : '—'}</td>
           <td><div style="display:flex;gap:4px;flex-wrap:nowrap">
             ${can('editInitiative')?`<button class="btn-sm btn-edit" onclick="openInitiativeModal('${ini.id}')">✏️</button>`:''}
             ${can('deleteInitiative')?`<button class="btn-sm btn-delete" onclick="deleteInitiative('${ini.id}')">🗑️</button>`:''}
@@ -1810,11 +2040,14 @@ async function saveInitiative() {
   if (editId  && !can('editInitiative'))  { showToast('ليس لديك صلاحية تعديل المبادرات','error'); return; }
   if (!editId && !can('addInitiative'))   { showToast('ليس لديك صلاحية إضافة مبادرات','error');   return; }
   const g = id => (document.getElementById(id)?.value||'');
-  const name = g('ini-name').trim(); if (!name) { showToast('يرجى إدخال اسم المبادرة','error'); return; }
+  const name = clampInput(g('ini-name')); if (!name) { showToast('يرجى إدخال اسم المبادرة','error'); return; }
+  const iniLink = clampInput(g('ini-link'));
+  const safeIniLink = iniLink ? sanitizeUrl(iniLink) : '';
+  if (iniLink && !safeIniLink) { showToast('رابط الدليل غير صالح','error'); return; }
   const ini = {
-    id:editId||null, goal:g('ini-goal'), name, desc:g('ini-desc').trim(),
-    resp:g('ini-resp').trim(), start:g('ini-start'), end:g('ini-end'),
-    status:g('ini-status'), progress:parseInt(g('ini-progress'))||0, link:g('ini-link').trim(),
+    id:editId||null, goal:g('ini-goal'), name, desc:clampInput(g('ini-desc'), 1000),
+    resp:clampInput(g('ini-resp')), start:g('ini-start'), end:g('ini-end'),
+    status:g('ini-status'), progress:Math.min(100, Math.max(0, parseInt(g('ini-progress'))||0)), link:safeIniLink,
   };
   const btn = document.getElementById('ini-save-btn');
   if (btn) { btn.disabled=true; btn.textContent='جارٍ الحفظ…'; }
@@ -1936,6 +2169,8 @@ function renderKPI() {
   
 }
 function openKpiModal(id) {
+  if (!requireAuth()) return;
+  if (!isSectionAllowed('kpi')) { showToast('ليس لديك صلاحية الوصول لمؤشرات الأداء', 'error'); return; }
   const ti=document.getElementById('kpi-modal-title'); if(ti) ti.textContent=id?'تعديل المؤشر':'إضافة مؤشر أداء';
   ['kpi-edit-id','kpi-name','kpi-target','kpi-achieved','kpi-unit'].forEach(fid=>{ const e=document.getElementById(fid); if(e) e.value=''; });
   if(id){ const k=kpiCache.find(x=>x.id===id); if(!k)return; const sv=(fid,v)=>{const e=document.getElementById(fid);if(e)e.value=v??'';}; sv('kpi-edit-id',k.id);sv('kpi-name',k.name);sv('kpi-target',k.target);sv('kpi-achieved',k.achieved);sv('kpi-unit',k.unit); }
@@ -1943,9 +2178,11 @@ function openKpiModal(id) {
 }
 
 async function saveKPI() {
+  if (!requireAuth()) return;
+  if (!isSectionAllowed('kpi')) { showToast('ليس لديك صلاحية تعديل مؤشرات الأداء', 'error'); return; }
   const g=id=>(document.getElementById(id)?.value||'');
   const editId=g('kpi-edit-id');
-  const name=g('kpi-name').trim(); if(!name){showToast('يرجى إدخال اسم المؤشر','error');return;}
+  const name=clampInput(g('kpi-name')); if(!name){showToast('يرجى إدخال اسم المؤشر','error');return;}
   const item={id:editId||'k'+Date.now(),name,target:parseFloat(g('kpi-target'))||0,achieved:parseFloat(g('kpi-achieved'))||0,unit:g('kpi-unit').trim()||'%'};
   if(editId){const i=kpiCache.findIndex(x=>x.id===editId);if(i!==-1)kpiCache[i]=item;} else kpiCache.push(item);
   lsSave('kpi',kpiCache); closeModal('kpi-modal'); await refreshAll();
@@ -1953,6 +2190,8 @@ async function saveKPI() {
 }
 
 function deleteKPI(id) {
+  if (!requireAuth()) return;
+  if (!isSectionAllowed('kpi')) { showToast('ليس لديك صلاحية حذف مؤشرات الأداء', 'error'); return; }
   if(!confirm('حذف هذا المؤشر؟'))return;
   kpiCache=kpiCache.filter(k=>k.id!==id); lsSave('kpi',kpiCache);
   renderKPI(); showToast('تم الحذف 🗑️','warning');
@@ -2018,27 +2257,27 @@ function renderTasks() {
     return `
       <div class="task-card priority-${t.priority}">
         <div class="task-card-header">
-          <div class="task-title">${t.name}</div>
+          <div class="task-title">${esc(t.name)}</div>
           <span class="badge ${late ? 'badge-danger' : SBM[t.status]}">
             ${late ? '⚠️ متأخرة' : SL2[t.status]}
           </span>
         </div>
 
         <div class="task-meta">
-          <span>👩‍🏫 ${t.resp || '—'}</span>
-          <span>📅 ${fmtDate(t.due)}</span>
-          <span>🔴 ${PL[t.priority] || t.priority}</span>
-          ${t.notes ? `<span>📝 ${t.notes}</span>` : ''}
+          <span>👩‍🏫 ${esc(t.resp || '—')}</span>
+          <span>📅 ${esc(fmtDate(t.due))}</span>
+          <span>🔴 ${esc(PL[t.priority] || t.priority)}</span>
+          ${t.notes ? `<span>📝 ${esc(t.notes)}</span>` : ''}
         </div>
 
         <div class="task-actions">
-          <select class="task-status-select" onchange="chgTaskStatus('${t.id}', this.value)">
+          ${can('editTask') ? `<select class="task-status-select" onchange="chgTaskStatus('${esc(t.id)}', this.value)">
             <option value="pending" ${t.status === 'pending' ? 'selected' : ''}>معلقة</option>
             <option value="inprogress" ${t.status === 'inprogress' ? 'selected' : ''}>قيد التنفيذ</option>
             <option value="done" ${t.status === 'done' ? 'selected' : ''}>منجزة</option>
-          </select>
-          ${can('editTask') ? `<button class="btn-sm btn-edit" onclick="openTaskModal('${t.id}')">✏️</button>` : ''}
-          ${can('deleteTask') ? `<button class="btn-sm btn-delete" onclick="deleteTask('${t.id}')">🗑️</button>` : ''}
+          </select>` : `<span class="badge ${SBM[t.status]}">${SL2[t.status]}</span>`}
+          ${can('editTask') ? `<button class="btn-sm btn-edit" onclick="openTaskModal('${esc(t.id)}')">✏️</button>` : ''}
+          ${can('deleteTask') ? `<button class="btn-sm btn-delete" onclick="deleteTask('${esc(t.id)}')">🗑️</button>` : ''}
         </div>
       </div>
     `;
@@ -2046,6 +2285,11 @@ function renderTasks() {
 }
 
 async function chgTaskStatus(id, status) {
+  if (!requireAuth('editTask')) return;
+  if (!['pending','inprogress','done'].includes(status)) {
+    showToast('حالة غير صالحة','error');
+    return;
+  }
   await sbUpdateTaskStatus(id, status);
   renderTasks(); renderDashboard();
   showToast('تم تحديث الحالة ✅','success');
@@ -2072,8 +2316,17 @@ async function saveTask() {
   if (editId && !can('editTask')) { showToast('ليس لديك صلاحية تعديل المهام','error'); return; }
   if (!editId && !can('addTask')){ showToast('ليس لديك صلاحية إضافة مهام','error');   return; }
   const g=id=>(document.getElementById(id)?.value||'');
-  const name=g('task-name').trim(); if(!name){showToast('يرجى إدخال اسم المهمة','error');return;}
-  const t={id:editId||null,name,resp:g('task-resp').trim(),due:g('task-due'),priority:g('task-priority'),status:g('task-status'),notes:g('task-notes').trim()};
+  const name=clampInput(g('task-name')); if(!name){showToast('يرجى إدخال اسم المهمة','error');return;}
+  const pri=g('task-priority'); const st=g('task-status');
+  const t={
+    id:editId||null,
+    name,
+    resp:clampInput(g('task-resp')),
+    due:g('task-due'),
+    priority:['high','medium','low'].includes(pri)?pri:'medium',
+    status:['pending','inprogress','done'].includes(st)?st:'pending',
+    notes:clampInput(g('task-notes'),1000)
+  };
   const btn=document.getElementById('task-save-btn');
   if(btn){btn.disabled=true;btn.textContent='جارٍ الحفظ…';}
   try {
@@ -2096,11 +2349,12 @@ async function deleteTask(id) {
    §29  REPORTS SECTION
    ───────────────────────────────────────────────────────────── */
 function openReportModal() {
+  if (!requireAuth('addEvidence')) return;
   const sel = document.getElementById('rep-program-id');
 
   if (sel) {
     sel.innerHTML = '<option value="">— اختر البرنامج —</option>' +
-      programsCache.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+      programsCache.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
 
     sel.onchange = function () {
       fillReportIndicators(this.value);
@@ -2138,7 +2392,7 @@ function fillReportIndicators(progId) {
   );
 
   list.forEach(ind => {
-    sel.innerHTML += `<option value="${ind.id}">${ind.indicator_text}</option>`;
+    sel.innerHTML += `<option value="${esc(ind.id)}">${esc(ind.indicator_text)}</option>`;
   });
 }
 function renderReports() {
@@ -2147,28 +2401,32 @@ function renderReports() {
   tbody.innerHTML=evidencesCache.length
     ? evidencesCache.map((r,i)=>{
         const pName=r.program_id?programsCache.find(p=>p.id===r.program_id)?.name||'—':'—';
-        return`<tr><td>${i+1}</td><td style="font-weight:600">${r.title}</td>
-          <td><span class="badge badge-info">${TI[r.type]||'📎'} ${r.type||'—'}</span></td>
-          <td>${pName}</td><td>${r.person||'—'}</td><td>${fmtDate(r.date)}</td>
-          <td>${r.link?`<a href="${r.link}" target="_blank" class="btn-sm btn-view">🔗 فتح</a>`:'—'}</td>
+        return`<tr><td>${i+1}</td><td style="font-weight:600">${esc(r.title)}</td>
+          <td><span class="badge badge-info">${TI[r.type]||'📎'} ${esc(r.type||'—')}</span></td>
+          <td>${esc(pName)}</td><td>${esc(r.person||'—')}</td><td>${esc(fmtDate(r.date))}</td>
+          <td>${r.link ? safeLinkHtml(r.link, '🔗 فتح', 'btn-sm btn-view') : '—'}</td>
           <td>${can('deleteEvidence')?`<button class="btn-sm btn-delete" onclick="handleDelEv('${r.id}')">🗑️</button>`:''}</td></tr>`;
       }).join('')
     : '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-muted)">لا توجد شواهد</td></tr>';
 }
 
 async function saveReport() {
+  if (!requireAuth('addEvidence')) return;
   const g=id=>(document.getElementById(id)?.value||'');
-  const title=g('rep-title').trim(); if(!title){showToast('يرجى إدخال عنوان الشاهد','error');return;}
+  const title=clampInput(g('rep-title')); if(!title){showToast('يرجى إدخال عنوان الشاهد','error');return;}
   const progId=g('rep-program-id');
-   const indicatorId = g('rep-indicator-id');
-  const person = g('rep-person').trim() || currentUser?.name || '';
+  const indicatorId = g('rep-indicator-id');
+  const person = clampInput(g('rep-person')) || currentUser?.name || '';
+  const rawLink = g('rep-link').trim();
+  const safeLink = rawLink ? sanitizeUrl(rawLink) : '';
+  if (rawLink && !safeLink) { showToast('رابط الشاهد غير صالح','error'); return; }
   const ev={
      id:null,
      title,
      type:g('rep-type'),
      program_id:progId||null,
      indicator_id: indicatorId || null, 
-     initiative_label:'',person,date:new Date().toISOString().split('T')[0],link:g('rep-link').trim(),notes:g('rep-notes').trim(),file_data:null};
+     initiative_label:'',person,date:new Date().toISOString().split('T')[0],link:safeLink,notes:clampInput(g('rep-notes'), 1000),file_data:null};
   const btn=document.getElementById('rep-save-btn');
   if(btn){btn.disabled=true;btn.textContent='جارٍ الرفع…';}
   try{
@@ -2200,7 +2458,7 @@ function renderTeachers() {
           </p>
           <div class="form-group">
             <label>اسمك</label>
-            <input type="text" id="tlink-name" value="${currentUser?.name||''}" readonly style="background:#f8f9fa"/>
+            <input type="text" id="tlink-name" value="${esc(currentUser?.name||'')}" readonly style="background:#f8f9fa"/>
           </div>
           <div class="form-group">
             <label>عنوان مختصر <span class="req">*</span></label>
@@ -2237,15 +2495,15 @@ function renderTeachers() {
   tbody.innerHTML = visible.length ? visible.map(t => {
     const pct = t.assigned>0 ? Math.round((t.done/t.assigned)*100) : 0;
     const linkCell = t.driveLink
-      ? `<a href="${t.driveLink}" target="_blank" class="btn-sm btn-view">🔗 فتح</a>${t.createdBy?`<div style="font-size:10px;color:var(--text-muted);margin-top:3px">${t.createdBy}</div>`:''}`
+      ? `${safeLinkHtml(t.driveLink, '🔗 فتح', 'btn-sm btn-view')}${t.createdBy ? `<div style="font-size:10px;color:var(--text-muted);margin-top:3px">${esc(t.createdBy)}</div>` : ''}`
       : '<span style="color:#ccc">—</span>';
-    return `<tr><td style="font-weight:700">${t.name}</td>
+    return `<tr><td style="font-weight:700">${esc(t.name)}</td>
       <td style="text-align:center">${t.assigned}</td>
       <td style="text-align:center">${t.done}</td>
       <td><div class="progress-wrap"><div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div><span class="progress-text">${pct}%</span></div></td>
       <td>${linkCell}</td>
-      <td>${fmtDate(t.lastReport)}</td>
-      <td style="font-size:13px">${t.notes||'<span style="color:#ccc">—</span>'}</td>
+      <td>${esc(fmtDate(t.lastReport))}</td>
+      <td style="font-size:13px">${t.notes ? esc(t.notes) : '<span style="color:#ccc">—</span>'}</td>
       <td><div style="display:flex;gap:4px">
         ${can('editTeacher')?`<button class="btn-sm btn-edit" onclick="openTeacherModal('${t.id}')">✏️</button>`:''}
         ${can('deleteTeacher')?`<button class="btn-sm btn-delete" onclick="deleteTeacher('${t.id}')">🗑️</button>`:''}
@@ -2255,17 +2513,19 @@ function renderTeachers() {
 
 // إرسال رابط Drive من حساب المعلمة (إضافة فقط)
 async function submitTeacherLink() {
-  if (!can('addTeacherLink')) { showToast('غير مسموح','error'); return; }
+  if (!requireAuth('addTeacherLink')) return;
   const g = id => (document.getElementById(id)?.value||'').trim();
-  const title = g('tlink-title'); const url = g('tlink-url');
+  const title = clampInput(g('tlink-title'));
+  const url = g('tlink-url');
+  const safeUrl = sanitizeUrl(url);
   if (!title) { showToast('يرجى إدخال عنوان مختصر','error'); return; }
-  if (!url)   { showToast('يرجى إدخال رابط Drive','error'); return; }
+  if (!url || !safeUrl) { showToast('يرجى إدخال رابط Drive صالح (https)','error'); return; }
   const btn = document.getElementById('tlink-btn');
   if (btn) { btn.disabled=true; btn.textContent='جارٍ الإرسال…'; }
   try {
     const tf = {
       id:null, name:currentUser.name, assigned:0, done:0, lastReport:'',
-      notes:title, driveLink:url, createdBy:currentUser.name,
+      notes:title, driveLink:safeUrl, createdBy:currentUser.name,
     };
     const saved = await sbInsertTeacher(tf);
     teachersCache.push(saved);
@@ -2293,14 +2553,19 @@ function openTeacherModal(id) {
 
 async function saveTeacher() {
   const editId=document.getElementById('tf-edit-id')?.value;
+  if (editId && !requireAuth('editTeacher')) return;
+  if (!editId && !requireAuth('addTeacher')) return;
   const g=id=>(document.getElementById(id)?.value||'');
-  const name=g('tf-name').trim(); if(!name){showToast('يرجى إدخال اسم المعلمة','error');return;}
+  const name=clampInput(g('tf-name')); if(!name){showToast('يرجى إدخال اسم المعلمة','error');return;}
   const existing = editId ? teachersCache.find(x=>x.id===editId) : null;
+  const tfLink = clampInput(g('tf-link'));
+  const safeTfLink = tfLink ? sanitizeUrl(tfLink) : '';
+  if (tfLink && !safeTfLink) { showToast('رابط Drive غير صالح','error'); return; }
   const tf={
     id:editId||null, name,
-    assigned:parseInt(g('tf-assigned'))||0, done:parseInt(g('tf-done'))||0,
-    lastReport:g('tf-last-report'), notes:g('tf-notes').trim(),
-    driveLink:g('tf-link').trim(), createdBy:existing?.createdBy||currentUser?.name||'',
+    assigned:Math.max(0, parseInt(g('tf-assigned'))||0), done:Math.max(0, parseInt(g('tf-done'))||0),
+    lastReport:g('tf-last-report'), notes:clampInput(g('tf-notes'), 1000),
+    driveLink:safeTfLink, createdBy:existing?.createdBy||currentUser?.name||'',
   };
   const btn=document.getElementById('tf-save-btn');
   if(btn){btn.disabled=true;btn.textContent='جارٍ الحفظ…';}
@@ -2364,14 +2629,14 @@ function renderDashboard() {
   if (upEl) upEl.innerHTML = upcoming.length
     ? '<div class="upcoming-list">'+upcoming.map(t=>{
         const late=t.due&&new Date(t.due)<new Date();
-        return`<div class="upcoming-item"><div class="upcoming-dot ${t.priority}"></div><div class="upcoming-info"><div class="upcoming-name">${t.name}</div><div class="upcoming-due">${late?'⚠️ متأخرة — ':''}${fmtDate(t.due)} · ${t.resp||'—'}</div></div></div>`;
+        return`<div class="upcoming-item"><div class="upcoming-dot ${esc(t.priority)}"></div><div class="upcoming-info"><div class="upcoming-name">${esc(t.name)}</div><div class="upcoming-due">${late?'⚠️ متأخرة — ':''}${esc(fmtDate(t.due))} · ${esc(t.resp||'—')}</div></div></div>`;
       }).join('')+'</div>'
     : '<p style="padding:16px;color:var(--text-muted);text-align:center">لا توجد مهام قادمة</p>';
 
   const ipEl = document.getElementById('initiatives-progress');
   if (ipEl) ipEl.innerHTML = '<div class="initiatives-progress-list">'+programsCache.map(p=>`
     <div class="ini-progress-item">
-      <span class="ini-progress-name">${p.name}</span>
+      <span class="ini-progress-name">${esc(p.name)}</span>
       <div class="ini-progress-bar"><div class="progress-bar"><div class="progress-fill" style="width:${p.progress||0}%"></div></div></div>
       <span class="progress-text">${p.progress||0}%</span>
     </div>`).join('')+'</div>';
@@ -2406,7 +2671,7 @@ function renderCalendar() {
   const DN=['أحد','اثنين','ثلاثاء','أربعاء','خميس','جمعة','سبت'];
   let html='<div class="calendar-grid"><div class="calendar-header-row">'+DN.map(d=>`<div class="calendar-day-name">${d}</div>`).join('')+'</div><div class="calendar-body">';
   let col=0; for(let i=0;i<fd;i++){html+='<div class="calendar-cell empty"></div>';col++;}
-  for(let day=1;day<=dm;day++){const isT=today.getFullYear()===calendarYear&&today.getMonth()===calendarMonth&&today.getDate()===day;const de=ev[day]||[];html+=`<div class="calendar-cell${isT?' today':''}"><div class="calendar-date${isT?' today-num':''}">${day}</div>${de.slice(0,3).map(e=>`<div class="calendar-event ${e.cls}" title="${e.text}">${e.text}</div>`).join('')}${de.length>3?`<div style="font-size:9px;color:var(--text-muted)">+${de.length-3}</div>`:''}</div>`;col++;}
+  for(let day=1;day<=dm;day++){const isT=today.getFullYear()===calendarYear&&today.getMonth()===calendarMonth&&today.getDate()===day;const de=ev[day]||[];html+=`<div class="calendar-cell${isT?' today':''}"><div class="calendar-date${isT?' today-num':''}">${day}</div>${de.slice(0,3).map(e=>`<div class="calendar-event ${esc(e.cls)}" title="${esc(e.text)}">${esc(e.text)}</div>`).join('')}${de.length>3?`<div style="font-size:9px;color:var(--text-muted)">+${de.length-3}</div>`:''}</div>`;col++;}
   const rem=(7-(col%7))%7; for(let i=0;i<rem;i++) html+='<div class="calendar-cell empty"></div>';
   html+='</div></div>';
   const ce=document.getElementById('calendar-container'); if(ce) ce.innerHTML=html;
@@ -2428,7 +2693,7 @@ function renderStats() {
     <div class="stat-card gold"><span class="stat-icon">🎯</span><span class="stat-number">${kpiCache.length}</span><span class="stat-label">مؤشرات الأداء</span></div>
     <div class="stat-card teal"><span class="stat-icon">📋</span><span class="stat-number">${programsCache.filter(p=>calcProgramStatus(p)==='done').length}</span><span class="stat-label">برامج منتهية</span></div>`;
   const te=document.getElementById('top-initiatives');
-  if(te) te.innerHTML=top.map((p,i)=>`<div class="top-initiative-item"><span>${['🥇','🥈','🥉'][i]} ${p.name}</span><span style="font-weight:700;color:var(--primary)">${p.progress}%</span></div>`).join('');
+  if(te) te.innerHTML=top.map((p,i)=>`<div class="top-initiative-item"><span>${['🥇','🥈','🥉'][i]} ${esc(p.name)}</span><span style="font-weight:700;color:var(--primary)">${p.progress}%</span></div>`).join('');
   setTimeout(()=>{drawStatsPie();drawCompare();},60);
 }
 
@@ -2459,10 +2724,20 @@ async function renderUsersSection() {
   const sec = document.getElementById('section-users'); if (!sec) return;
   let users = [];
   if (sb) {
-    const {data,error} = await sb.from('users').select('id,name,email,role,created_at').order('created_at');
-    if (error) { console.error('[fetchUsers]',error.message); }
-    else users = data||[];
-  } else { users = FALLBACK_USERS; }
+    try {
+      const { data, error } = await sb.rpc('admin_list_users', {
+        p_admin_id: currentUser.id,
+        p_admin_email: currentUser.email,
+      });
+      if (error) throw error;
+      users = data || [];
+    } catch (err) {
+      console.warn('[fetchUsers] RPC fallback:', err.message);
+      const { data, error } = await sb.from('users').select('id,name,email,role,created_at').order('created_at');
+      if (error) console.error('[fetchUsers]', error.message);
+      else users = data || [];
+    }
+  } else { users = FALLBACK_USERS.map(u => ({ id:u.id, name:u.name, email:u.email, role:u.role, created_at:null })); }
   const RL={admin:'مدير',vice:'وكيل',teacher:'معلم'};
   const RB={admin:'badge-danger',vice:'badge-info',teacher:'badge-success'};
   sec.innerHTML = `
@@ -2473,18 +2748,18 @@ async function renderUsersSection() {
     <div class="table-wrapper"><table class="data-table">
       <thead><tr><th>#</th><th>الاسم</th><th>البريد الإلكتروني</th><th>الدور</th><th>تاريخ الإضافة</th><th>إجراءات</th></tr></thead>
       <tbody>
-        ${users.map((u,i)=>`<tr><td>${i+1}</td><td style="font-weight:700">${u.name}</td>
-          <td style="direction:ltr;text-align:right">${u.email}</td>
-          <td><span class="badge ${RB[u.role]||'badge-secondary'}">${RL[u.role]||u.role}</span></td>
-          <td>${fmtDate(u.created_at)}</td>
+        ${users.map((u,i)=>`<tr><td>${i+1}</td><td style="font-weight:700">${esc(u.name)}</td>
+          <td style="direction:ltr;text-align:right">${esc(u.email)}</td>
+          <td><span class="badge ${RB[u.role]||'badge-secondary'}">${esc(RL[u.role]||u.role)}</span></td>
+          <td>${esc(fmtDate(u.created_at))}</td>
           <td><div style="display:flex;gap:6px;align-items:center">
-            <select class="task-status-select" onchange="handleChgRole('${u.id}',this.value)">
+            <select class="task-status-select" onchange="handleChgRole('${esc(u.id)}',this.value)">
               <option value="admin" ${u.role==='admin'?'selected':''}>مدير</option>
               <option value="vice" ${u.role==='vice'?'selected':''}>وكيل</option>
               <option value="teacher" ${u.role==='teacher'?'selected':''}>معلم</option>
             </select>
             ${u.id!==currentUser?.id
-              ?`<button class="btn-sm btn-delete" onclick="handleDelUser('${u.id}','${u.name}')">🗑️</button>`
+              ?`<button class="btn-sm btn-delete" onclick="handleDelUser('${esc(u.id)}')">🗑️</button>`
               :'<span style="font-size:12px;color:var(--text-muted)">أنت</span>'}
           </div></td></tr>`).join('')}
       </tbody>
@@ -2506,38 +2781,83 @@ async function renderUsersSection() {
     </div></div>`;
 }
 
-function openAddUserModal() { openModal('add-user-modal'); }
+function openAddUserModal() {
+  if (!requireAuth('manageUsers')) return;
+  openModal('add-user-modal');
+}
 
 async function handleAddUser() {
+  if (!requireAuth('manageUsers')) return;
   if (!sb) { showToast('Supabase غير متصل','error'); return; }
   const g = id => (document.getElementById(id)?.value||'').trim();
-  const name=g('nu-name'), email=g('nu-email'), pass=g('nu-pass'), role=g('nu-role');
+  const name=clampInput(g('nu-name'));
+  const email=g('nu-email').toLowerCase();
+  const pass=g('nu-pass');
+  const role=g('nu-role');
   if (!name||!email||!pass) { showToast('يرجى تعبئة جميع الحقول','error'); return; }
+  if (!isValidEmail(email)) { showToast('صيغة البريد غير صحيحة','error'); return; }
+  if (pass.length < 4 || pass.length > 128) { showToast('كلمة المرور يجب أن تكون بين 4 و 128 حرفاً','error'); return; }
+  if (!VALID_ROLES.includes(role)) { showToast('دور غير صالح','error'); return; }
   try {
-    const {error}=await sb.from('users').insert({name,email:email.toLowerCase(),password:pass,role});
-    if(error) throw error;
+    const { error } = await sb.rpc('admin_add_user', {
+      p_admin_id: currentUser.id,
+      p_admin_email: currentUser.email,
+      p_name: name,
+      p_email: email,
+      p_password: pass,
+      p_role: role,
+    });
+    if (error) {
+      // fallback إذا لم تُنفَّذ دوال الأمان بعد
+      const { error: e2 } = await sb.from('users').insert({ name, email, password: pass, role });
+      if (e2) throw e2;
+    }
     closeModal('add-user-modal');
     showToast('تمت إضافة المستخدم ✅','success');
     await renderUsersSection();
   } catch(err){ console.error('[handleAddUser]',err.message); showToast('خطأ: '+err.message,'error'); }
 }
 
-async function handleDelUser(id, name) {
-  if (!confirm(`حذف المستخدم "${name}"؟`)) return;
+async function handleDelUser(id) {
+  if (!requireAuth('manageUsers')) return;
+  if (id === currentUser?.id) { showToast('لا يمكنك حذف حسابك الحالي','error'); return; }
+  if (!confirm('حذف هذا المستخدم؟')) return;
   if (!sb) { showToast('Supabase غير متصل','error'); return; }
   try {
-    const {error}=await sb.from('users').delete().eq('id',id);
-    if(error) throw error;
+    const { error } = await sb.rpc('admin_delete_user', {
+      p_admin_id: currentUser.id,
+      p_admin_email: currentUser.email,
+      p_target_id: id,
+    });
+    if (error) {
+      const { error: e2 } = await sb.from('users').delete().eq('id', id);
+      if (e2) throw e2;
+    }
     showToast('تم الحذف 🗑️','warning');
     await renderUsersSection();
   } catch(err){ console.error('[handleDelUser]',err.message); showToast('خطأ: '+err.message,'error'); }
 }
 
 async function handleChgRole(id, role) {
+  if (!requireAuth('manageUsers')) return;
+  if (!VALID_ROLES.includes(role)) { showToast('دور غير صالح','error'); return; }
+  if (id === currentUser?.id && role !== currentUser.role) {
+    showToast('لا يمكنك تغيير دورك الحالي','error');
+    await renderUsersSection();
+    return;
+  }
   if (!sb) { showToast('Supabase غير متصل','error'); return; }
   try {
-    const {error}=await sb.from('users').update({role}).eq('id',id);
-    if(error) throw error;
+    const { error } = await sb.rpc('admin_change_role', {
+      p_admin_id: currentUser.id,
+      p_admin_email: currentUser.email,
+      p_target_id: id,
+      p_role: role,
+    });
+    if (error) {
+      const { error: e2 } = await sb.from('users').update({ role }).eq('id', id);
+      if (e2) throw e2;
+    }
     showToast('تم تعديل الدور ✅','success');
   } catch(err){ console.error('[handleChgRole]',err.message); showToast('خطأ: '+err.message,'error'); }
 }
@@ -2549,13 +2869,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   calendarMonth = new Date().getMonth();
   calendarYear = new Date().getFullYear();
 
-  await loadAllData(false);
+  await loadSettings();
 
-  renderSection(_activeSection || 'dashboard');
-  renderDashboard();
-  renderPrograms();
-  renderReports();
-  drawDashPie();
+  const hasSession = await restoreSession();
+  if (hasSession) {
+    showAppShell();
+    await loadAllData(false);
+    applyRoleUI();
+    renderSection(_activeSection || 'dashboard');
+    renderDashboard();
+    renderPrograms();
+    renderReports();
+    drawDashPie();
+  } else {
+    showLoginShell();
+  }
 });
 window.doLogin = doLogin; 
 window.openAddUserModal = openAddUserModal;
