@@ -155,6 +155,7 @@ let tasksCache       = [];
 let evidencesCache   = [];
 let teachersCache    = [];
 let kpiCache         = [];
+let activeSchoolYearId = null;
 let calendarMonth    = new Date().getMonth();
 let calendarYear     = new Date().getFullYear();
 let pendingFileData  = null;
@@ -486,6 +487,7 @@ function doLogout() {
   [programsCache, initiativesCache, tasksCache, evidencesCache, teachersCache, kpiCache] = [[], [], [], [], [], []];
   indicatorsCache = {};
   settingsCache = {};
+  activeSchoolYearId = null;
   showLoginShell();
   const e = document.getElementById('login-email'); if (e) e.value = '';
   const p = document.getElementById('login-password'); if (p) p.value = '';
@@ -531,6 +533,7 @@ async function loadAllData(renderAfter = true) {
   if (!currentUser) return;
   showLoadingOverlay(true);
   try {
+    await fetchActiveSchoolYear();
     await fetchPrograms();
     await fetchIndicators();
     await fetchEvidences();
@@ -660,6 +663,38 @@ function fmtDate(d) {
 }
 
 /* ─────────────────────────────────────────────────────────────
+   §12b  SUPABASE: SCHOOL YEAR
+   ───────────────────────────────────────────────────────────── */
+async function fetchActiveSchoolYear() {
+  activeSchoolYearId = null;
+  if (!sb) return null;
+  const { data, error } = await sb
+    .from('school_years')
+    .select('id')
+    .eq('is_active', true)
+    .eq('is_archived', false)
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.error('[fetchActiveSchoolYear]', error.message);
+    showToast('تعذّر جلب السنة الدراسية النشطة', 'error');
+    return null;
+  }
+  activeSchoolYearId = data?.id || null;
+  if (!activeSchoolYearId) {
+    showToast('لا توجد سنة دراسية نشطة', 'error');
+  }
+  return activeSchoolYearId;
+}
+
+async function requireActiveSchoolYearId() {
+  if (activeSchoolYearId) return activeSchoolYearId;
+  const id = await fetchActiveSchoolYear();
+  if (!id) throw new Error('لا توجد سنة دراسية نشطة');
+  return id;
+}
+
+/* ─────────────────────────────────────────────────────────────
    §13  SUPABASE: PROGRAMS
    ───────────────────────────────────────────────────────────── */
 async function fetchPrograms() {
@@ -707,11 +742,13 @@ async function sbInsertProgram(p) {
     const ls = lsLoad('programs_local',[]); ls.push(p); lsSave('programs_local', ls);
     return p;
   }
+  const schoolYearId = await requireActiveSchoolYearId();
   const { data, error } = await sb.from('programs').insert({
     name:p.name, description:p.desc||null, resp:p.resp||null,
     target_group:p.target||null, start_date:p.start||null,
     end_date:p.end||null, progress:parseInt(p.progress)||0,
     status:calcProgramStatus(p),
+    school_year_id: schoolYearId,
   }).select().single();
   if (error) throw error;
   return { ...p, id:data.id };
@@ -884,10 +921,12 @@ async function sbInsertInitiative(ini) {
   if (!sb) {
     ini.id = 'L'+Date.now(); initiativesCache.push(ini); lsSave('initiatives', initiativesCache); return ini;
   }
+  const schoolYearId = await requireActiveSchoolYearId();
   const { data, error } = await sb.from('initiatives').insert({
     goal:ini.goal, name:ini.name, description:ini.desc||null, resp:ini.resp||null,
     start_date:ini.start||null, end_date:ini.end||null,
     status:ini.status, progress:parseInt(ini.progress)||0, link:ini.link||null,
+    school_year_id: schoolYearId,
   }).select().single();
   if (error) throw error;
   return { ...ini, id:data.id };
@@ -935,9 +974,11 @@ async function sbInsertTask(t) {
   if (!sb) {
     t.id = 'L'+Date.now(); tasksCache.push(t); lsSave('tasks', tasksCache); return t;
   }
+  const schoolYearId = await requireActiveSchoolYearId();
   const { data, error } = await sb.from('tasks').insert({
     name:t.name, resp:t.resp||null, due_date:t.due||null,
     priority:t.priority, status:t.status, notes:t.notes||null,
+    school_year_id: schoolYearId,
   }).select().single();
   if (error) throw error;
   return { ...t, id:data.id };
@@ -1030,6 +1071,7 @@ async function sbInsertEvidence(ev) {
     return ev;
   }
 
+  const schoolYearId = await requireActiveSchoolYearId();
   const { data, error } = await sb.from('evidences').insert({
     title: ev.title,
     type: ev.type || null,
@@ -1041,6 +1083,7 @@ async function sbInsertEvidence(ev) {
     link: ev.link || null,
     notes: ev.notes || null,
     file_data: ev.file_data || null,
+    school_year_id: schoolYearId,
   }).select().single();
 
   if (error) throw error;
