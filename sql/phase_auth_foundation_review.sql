@@ -52,8 +52,43 @@ DROP FUNCTION IF EXISTS public.prevent_profile_role_escalation();
 -- ------------------------------------------------------------
 -- 2) أعمدة ملكية للشواهد الجديدة (بدون backfill)
 -- ------------------------------------------------------------
-ALTER TABLE public.evidences
-  ADD COLUMN IF NOT EXISTS created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL;
+-- إذا كان created_by موجوداً كـ text (تنفيذ يدوي سابق)، حوّله بأمان إلى uuid
+DO $$
+DECLARE
+  col_type text;
+BEGIN
+  SELECT data_type INTO col_type
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = 'evidences'
+    AND column_name = 'created_by';
+
+  IF col_type IS NULL THEN
+    ALTER TABLE public.evidences
+      ADD COLUMN created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL;
+  ELSIF col_type IN ('text', 'character varying') THEN
+    BEGIN
+      ALTER TABLE public.evidences DROP CONSTRAINT IF EXISTS evidences_created_by_fkey;
+    EXCEPTION WHEN undefined_object THEN
+      NULL;
+    END;
+    ALTER TABLE public.evidences
+      ALTER COLUMN created_by TYPE uuid
+      USING (
+        CASE
+          WHEN created_by IS NULL OR btrim(created_by::text) = '' THEN NULL
+          WHEN created_by::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            THEN created_by::text::uuid
+          ELSE NULL
+        END
+      );
+    ALTER TABLE public.evidences
+      DROP CONSTRAINT IF EXISTS evidences_created_by_fkey;
+    ALTER TABLE public.evidences
+      ADD CONSTRAINT evidences_created_by_fkey
+      FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE SET NULL;
+  END IF;
+END $$;
 
 ALTER TABLE public.evidences
   ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now();

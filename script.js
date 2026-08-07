@@ -163,6 +163,7 @@ let _planFilter      = 'all';
 let _planSearch      = '';
 let _taskFilter      = 'all';
 let _taskPriFilter   = 'all';
+let _openProgramDetailId = null;
 
 /* ─────────────────────────────────────────────────────────────
    §2  PERMISSIONS
@@ -451,6 +452,9 @@ function closeModal(id) {
     pendingImageData = null;
     pendingEvidenceFile = null;
   }
+  if (id === 'program-detail-modal') {
+    _openProgramDetailId = null;
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -663,17 +667,16 @@ function closeSidebar() {
    §12  STATUS HELPERS
    ───────────────────────────────────────────────────────────── */
 function calcProgramProgress(programId) {
-  const inds = indicatorsCache[programId] || [];
-
+  const inds = indicatorsCache[programId] || indicatorsCache[String(programId)] || [];
   if (!inds.length) return 0;
 
   const done = inds.filter(ind => {
+    const completed = ind.is_completed === true || ind.is_completed === 'true' || ind.is_completed === 1;
     const hasEvidence = evidencesCache.some(ev =>
       String(ev.program_id) === String(programId) &&
       String(ev.indicator_id) === String(ind.id)
     );
-
-    return ind.is_completed === true && hasEvidence;
+    return completed && hasEvidence;
   }).length;
 
   return Math.round((done / inds.length) * 100);
@@ -782,8 +785,10 @@ async function fetchPrograms() {
   resp: row.resp || '',
   target: row.target_group || '',
   evidence: [],
-  indicators: indicatorsCache[row.id] || []
+  indicators: indicatorsCache[row.id] || indicatorsCache[String(row.id)] || [],
+  school_year_id: row.school_year_id || null,
 }));
+    syncEvidencesToPrograms();
     lsSave('programs_local', programsCache);
   } catch (err) {
     console.error('[fetchPrograms]', err.message);
@@ -1095,43 +1100,107 @@ async function sbUpdateTaskStatus(id, status) {
 /* ─────────────────────────────────────────────────────────────
    §17  SUPABASE: EVIDENCES
    ───────────────────────────────────────────────────────────── */
-async function fetchEvidences() {
-  if (!sb) {
-    evidencesCache = lsLoad('evidences', []);
-    syncEvidencesToPrograms();
-    return;
-  }
 
-  const { data, error } = await sb
-    .from('evidences')
-    .select('*')
-    .order('created_at', { ascending: false });
-
-  if (error) {
-    console.error('[fetchEvidences]', error.message);
-    evidencesCache = lsLoad('evidences', []);
-    syncEvidencesToPrograms();
-    return;
-  }
-
-  evidencesCache = (data || []).map(r => ({
+/** تحويل موحّد لسجل evidences من Supabase → نموذج الواجهة */
+function mapEvidenceRow(r) {
+  if (!r || typeof r !== 'object') return null;
+  const programId = r.program_id != null ? r.program_id : (r.programId != null ? r.programId : null);
+  const indicatorId = r.indicator_id != null && r.indicator_id !== ''
+    ? r.indicator_id
+    : (r.indicatorId != null && r.indicatorId !== '' ? r.indicatorId : null);
+  const schoolYearId = r.school_year_id != null ? r.school_year_id : (r.schoolYearId != null ? r.schoolYearId : null);
+  const fileUrl = r.file_url != null && r.file_url !== ''
+    ? r.file_url
+    : (r.fileUrl != null && r.fileUrl !== '' ? r.fileUrl : null);
+  const fileName = r.file_name != null && r.file_name !== ''
+    ? r.file_name
+    : (r.fileName != null && r.fileName !== '' ? r.fileName : null);
+  const fileSize = r.file_size != null ? r.file_size : (r.fileSize != null ? r.fileSize : null);
+  const driveLink = (r.link || r.evidence_link || r.evidenceLink || '') || '';
+  const uploadDate = r.upload_date || r.date || (r.created_at ? String(r.created_at).slice(0, 10) : '');
+  return {
     id: r.id,
     title: r.title || '',
     type: r.type || '',
-    program_id: r.program_id || null,
-    indicator_id: r.indicator_id || null,
+    program_id: programId,
+    indicator_id: indicatorId,
     initiative_label: r.initiative_label || '',
     person: r.person || '',
-    date: r.upload_date || (r.created_at ? String(r.created_at).slice(0, 10) : ''),
-    link: r.link || '',
+    date: uploadDate,
+    link: driveLink,
+    evidence_link: driveLink,
     notes: r.notes || '',
     file_data: r.file_data || null,
-    file_url: r.file_url || null,
-    file_name: r.file_name || null,
-    file_size: r.file_size || null,
-    school_year_id: r.school_year_id || null,
-  }));
+    file_url: fileUrl,
+    file_name: fileName,
+    file_size: fileSize,
+    school_year_id: schoolYearId,
+    created_by: r.created_by || null,
+    created_at: r.created_at || null,
+  };
+}
 
+function evidenceDriveLink(ev) {
+  return sanitizeUrl(ev?.link || ev?.evidence_link || '');
+}
+
+function evidenceHasViewTarget(ev) {
+  return !!(ev?.file_url || evidenceDriveLink(ev));
+}
+
+function buildEvidenceItemHtml(ev, opts = {}) {
+  const showDelete = opts.showDelete && can('deleteEvidence');
+  const delBtn = showDelete
+    ? `<button class="btn-sm btn-delete" onclick="handleDelEv('${esc(ev.id)}');closeModal('program-detail-modal');viewProgramDetail('${esc(opts.programId)}')">🗑️</button>`
+    : '';
+  const metaBits = [
+    ev.person ? ('👩‍🏫 أضافتها: ' + esc(ev.person)) : '',
+    ev.date ? esc(fmtDate(ev.date)) : '',
+    ev.type ? esc(ev.type) : '',
+    ev.file_name ? esc(ev.file_name) : '',
+  ].filter(Boolean);
+  return `<div class="evidence-detail-item">
+    <div class="ev-det-icon">${getEvIcon(ev.type || ev.file_name)}</div>
+    <div class="ev-det-info">
+      <div class="ev-det-title">${esc(ev.title || ev.file_name || 'شاهد')}</div>
+      <div class="ev-det-meta">${metaBits.length ? metaBits.join(' · ') : '—'}</div>
+      ${ev.notes ? `<div class="ev-det-meta" style="font-style:italic">${esc(ev.notes)}</div>` : ''}
+    </div>
+    <div class="ev-det-actions">
+      ${evidenceViewButtonHtml(ev)}
+      ${delBtn}
+    </div>
+  </div>`;
+}
+
+async function fetchEvidences() {
+  if (!sb) {
+    evidencesCache = (lsLoad('evidences', []) || []).map(mapEvidenceRow).filter(Boolean);
+    syncEvidencesToPrograms();
+    return;
+  }
+
+  let data = null;
+  let error = null;
+  ({ data, error } = await sb
+    .from('evidences')
+    .select('*')
+    .order('created_at', { ascending: false }));
+
+  // إن فشل الترتيب على created_at جرّب بدون ترتيب بدل السقوط إلى كاش فارغ
+  if (error) {
+    console.warn('[fetchEvidences] retry without created_at order');
+    ({ data, error } = await sb.from('evidences').select('*'));
+  }
+
+  if (error) {
+    console.error('[fetchEvidences]');
+    showToast('تعذّر تحميل الشواهد', 'error');
+    // لا تستبدل كاش الواجهة بـ localStorage قديم يُخفي سجلات موجودة في DB
+    return;
+  }
+
+  evidencesCache = (data || []).map(mapEvidenceRow).filter(Boolean);
   lsSave('evidences', evidencesCache);
   syncEvidencesToPrograms();
 }
@@ -1144,12 +1213,31 @@ function syncEvidencesToPrograms() {
   });
 }
 
+async function refreshEvidenceViews(preferredProgramId) {
+  await fetchEvidences();
+  await fetchIndicators();
+  syncEvidencesToPrograms();
+  programsCache.forEach(p => {
+    p.progress = calcProgramProgress(p.id);
+  });
+  renderReports();
+  renderPrograms();
+  if (typeof renderDashboard === 'function') renderDashboard();
+  const detailId = preferredProgramId || _openProgramDetailId;
+  const detailModal = document.getElementById('program-detail-modal');
+  const detailOpen = detailModal && !detailModal.classList.contains('hidden');
+  if (detailOpen && detailId != null && detailId !== '') {
+    viewProgramDetail(detailId);
+  }
+}
+
 async function sbInsertEvidence(ev) {
   if (!sb) {
-    ev.id = 'L' + Date.now();
-    evidencesCache.unshift(ev);
+    const local = mapEvidenceRow({ ...ev, id: 'L' + Date.now() });
+    evidencesCache.unshift(local);
     lsSave('evidences', evidencesCache);
-    return ev;
+    syncEvidencesToPrograms();
+    return local;
   }
 
   const schoolYearId = ev.school_year_id || await requireActiveSchoolYearId();
@@ -1171,24 +1259,19 @@ async function sbInsertEvidence(ev) {
     created_by: currentUser?.id || null,
   };
 
-  const { data, error } = await sb.from('evidences').insert(row).select().single();
+  const { data, error } = await sb.from('evidences').insert(row).select('*').single();
   if (error) throw error;
-  return {
-    ...ev,
-    id: data.id,
-    school_year_id: data.school_year_id || schoolYearId,
-    file_url: data.file_url || ev.file_url || null,
-    file_name: data.file_name || ev.file_name || null,
-    file_size: data.file_size != null ? data.file_size : (ev.file_size || null),
-    link: data.link || ev.link || null,
-  };
+  const mapped = mapEvidenceRow(data);
+  if (!mapped) throw new Error('تعذّر حفظ الشاهد');
+  return mapped;
 }
 
 async function sbDeleteEvidence(id) {
-  if (!sb) { evidencesCache = evidencesCache.filter(e => e.id !== id); lsSave('evidences', evidencesCache); return; }
+  if (!sb) { evidencesCache = evidencesCache.filter(e => String(e.id) !== String(id)); lsSave('evidences', evidencesCache); syncEvidencesToPrograms(); return; }
   const { error } = await sb.from('evidences').delete().eq('id', id);
   if (error) throw error;
-  evidencesCache = evidencesCache.filter(e => e.id !== id);
+  evidencesCache = evidencesCache.filter(e => String(e.id) !== String(id));
+  syncEvidencesToPrograms();
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -1396,25 +1479,6 @@ function renderPrograms() {
   }
   grid.innerHTML = filtered.map(p => buildProgramCard(p)).join('');
 }
-function calcProgramProgress(programId) {
-  const inds = indicatorsCache[programId] || [];
-  if (!inds.length) return 0;
-
-  let done = 0;
-
-  inds.forEach(ind => {
-    const hasEvidence = evidencesCache.some(ev =>
-      ev.program_id === programId &&
-      String(ev.indicator_id) === String(ind.id)
-    );
-
-    if (ind.is_completed && hasEvidence) {
-      done++;
-    }
-  });
-
-  return Math.round((done / inds.length) * 100);
-}
 async function updateProgramProgress(programId) {
   if (!programId) return;
 
@@ -1428,11 +1492,11 @@ async function updateProgramProgress(programId) {
     .eq('id', programId);
 
   if (error) {
-    console.error('update progress error:', error.message);
+    console.error('[updateProgramProgress]');
     return;
   }
 
-  const prog = programsCache.find(p => p.id === programId);
+  const prog = programsCache.find(p => String(p.id) === String(programId));
   if (prog) prog.progress = pct;
 
   return pct;
@@ -1440,7 +1504,7 @@ async function updateProgramProgress(programId) {
 function buildProgramCard(p) {
   const status = calcProgramStatus(p);
  const pct = calcProgramProgress(p.id);
-  const inds   = p.indicators || indicatorsCache[p.id] || [];
+  const inds   = p.indicators || indicatorsCache[p.id] || indicatorsCache[String(p.id)] || [];
 
   /* ألوان الهوية الجديدة بدل الأخضر */
   const clr =
@@ -1643,54 +1707,79 @@ async function deleteProgram(id) {
 function viewProgramDetail(id) {
   const p = programsCache.find(x => String(x.id) === String(id));
   if (!p) {
-    showToast('لم يتم العثور على البرنامج رقم ' + id, 'error');
+    showToast('لم يتم العثور على البرنامج', 'error');
     return;
   }
 
+  _openProgramDetailId = p.id;
+
   const status = calcProgramStatus(p);
-  const pct = parseInt(p.progress) || 0;
+  const pct = parseInt(p.progress) || calcProgramProgress(p.id) || 0;
   const clr = pct >= 90 ? '#27ae60' : pct >= 60 ? '#2e86c1' : pct >= 30 ? '#f39c12' : '#e74c3c';
-  const inds = indicatorsCache[id] || p.indicators || [];
-  const evs = evidencesCache.filter(e => String(e.program_id) === String(id));
+  const inds = indicatorsCache[id] || indicatorsCache[String(id)] || p.indicators || [];
+  // كل شواهد البرنامج — من cache الموثوق أو من p.evidence
+  const fromCache = evidencesCache.filter(e => String(e.program_id) === String(id));
+  const fromProg = Array.isArray(p.evidence) ? p.evidence.filter(e => String(e.program_id) === String(id) || e.program_id == null) : [];
+  const byId = new Map();
+  [...fromCache, ...fromProg].forEach(ev => {
+    if (ev && ev.id != null) byId.set(String(ev.id), ev);
+  });
+  const evs = Array.from(byId.values());
+
+  const indicatorIdSet = new Set(inds.map(ind => String(ind.id)));
+  const generalEvs = evs.filter(ev => {
+    if (ev.indicator_id == null || ev.indicator_id === '') return true;
+    return !indicatorIdSet.has(String(ev.indicator_id));
+  });
+
+  console.info('[UI] evidencesCache=', evidencesCache.length,
+    'program', String(id), 'evs=', evs.length,
+    'indicators=', inds.length, 'general=', generalEvs.length);
 
   const ti = document.getElementById('detail-modal-title');
-if (ti) ti.textContent = p.name;
-  const indsHtml = inds.length
-   ? inds.map(ind => `
-  <div onclick="sbToggleIndicator('${esc(p.id)}','${esc(ind.id)}'); setTimeout(()=>viewProgramDetail('${esc(p.id)}'),300);"
-       style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-light)">
-    <span style="font-size:18px">${ind.is_completed ? '✅' : '⬜'}</span>
-    <span style="font-size:13px;${ind.is_completed ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">${esc(ind.indicator_text)}</span>
-  </div>`).join('')
+  if (ti) ti.textContent = p.name;
+
+  const indicatorsBlock = inds.length
+    ? inds.map(ind => {
+        const linked = evs.filter(ev =>
+          ev.indicator_id != null &&
+          ev.indicator_id !== '' &&
+          String(ev.indicator_id) === String(ind.id)
+        );
+        return `
+      <div class="indicator-detail-box">
+        <div style="font-weight:700;margin-bottom:8px">
+          ${esc(ind.indicator_text || ind.text || ind.name || ind.id)}
+          ${ind.is_completed === true || ind.is_completed === 'true' ? ' ✅' : ' ◻️'}
+        </div>
+        <div class="evidence-list-detail" style="display:flex;flex-direction:column;gap:8px">
+          ${linked.length
+            ? linked.map(ev => buildEvidenceItemHtml(ev, { showDelete: true, programId: p.id })).join('')
+            : `<div style="color:#888;font-size:13px">لا توجد شواهد مرتبطة بهذا المؤشر</div>`
+          }
+        </div>
+      </div>`;
+      }).join('')
     : '<p style="color:var(--text-muted);font-size:13px;padding:8px 0">لا توجد مؤشرات</p>';
 
-  const evHtml = evs.length
-    ? evs.map(ev => {
-        const icon = getEvIcon(ev.type);
-        const delBtn = can('deleteEvidence')
-          ? `<button class="btn-sm btn-delete" onclick="handleDelEv('${ev.id}');closeModal('program-detail-modal');viewProgramDetail('${p.id}')">🗑️</button>`
-          : '';
-        return `<div class="evidence-detail-item">
-          <div class="ev-det-icon">${icon}</div>
-          <div class="ev-det-info">
-            <div class="ev-det-title">${esc(ev.title)}</div>
-            <div class="ev-det-meta">${ev.person ? ('👩‍🏫 أضافتها: ' + esc(ev.person)) : '—'}${ev.date ? (' · ' + esc(fmtDate(ev.date))) : ''}${ev.type ? (' · ' + esc(ev.type)) : ''}</div>
-            ${ev.notes ? `<div class="ev-det-meta" style="font-style:italic">${esc(ev.notes)}</div>` : ''}
-          </div>
-          <div class="ev-det-actions">
-          ${evidenceViewButtonHtml(ev)}
-            ${delBtn}
-          </div>
-        </div>`;
-      }).join('')
-    : '<p style="color:var(--text-muted);font-size:13px;padding:8px 0">لا توجد شواهد مرتبطة. تُضاف الشواهد من صفحة «التقارير والشواهد».</p>';
+  const generalBlock = `
+    <div class="detail-section">
+      <h4>📎 شواهد عامة للبرنامج</h4>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        ${generalEvs.length
+          ? generalEvs.map(ev => buildEvidenceItemHtml(ev, { showDelete: true, programId: p.id })).join('')
+          : '<p style="color:var(--text-muted);font-size:13px;padding:8px 0">لا توجد شواهد عامة (بدون مؤشر أو غير مطابقة لمؤشر حالي).</p>'
+        }
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:8px">إجمالي شواهد البرنامج المعروضة: ${evs.length}</div>
+    </div>`;
 
-const body = document.getElementById('program-detail-body');
-if (!body) {
-  showToast('program-detail-body غير موجود', 'error');
-  return;
-}
- 
+  const body = document.getElementById('program-detail-body');
+  if (!body) {
+    showToast('تعذّر عرض التفاصيل', 'error');
+    return;
+  }
+
   body.innerHTML = `
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;padding:16px;background:var(--bg);border-radius:10px">
       <div style="flex:1">
@@ -1718,36 +1807,12 @@ if (!body) {
       ${p.desc ? `<div style="margin-top:12px;padding:12px 14px;background:var(--bg);border-radius:8px;font-size:13px;line-height:1.7">${esc(p.desc)}</div>` : ''}
     </div>
     <div class="detail-section">
-  <h4>📌 المؤشرات مع الشواهد المرتبطة</h4>
-
-  ${inds.map(ind => {
-    const linked = evs.filter(ev =>
-      String(ev.indicator_id) === String(ind.id)
-    );
-
-    return `
-      <div class="indicator-detail-box">
-        <div>
-          ${esc(ind.indicator_text || ind.text || ind.name || ind.id)}
-          ${ind.is_completed === true || ind.is_completed === 'true' ? '✅' : '◻️'}
-        </div>
-
-        <div class="evidence-list-detail">
-          ${linked.length
-            ? linked.map(ev => `
-              <div class="evidence-item-detail">
-                ${getEvIcon(ev.type)} ${esc(ev.title || ev.name || 'شاهد')}
-                ${evidenceViewButtonHtml(ev)}
-              </div>
-            `).join('')
-            : `<div style="color:#888">لا توجد شواهد مرتبطة بهذا المؤشر</div>`
-          }
-        </div>
-      </div>
-    `;
-  }).join('')}
-</div>
-`;
+      <h4>📌 المؤشرات مع الشواهد المرتبطة</h4>
+      ${indicatorsBlock}
+    </div>
+    ${generalBlock}
+  `;
+  console.info('[UI] program detail rendered items=', evs.length);
   openModal('program-detail-modal');
 }
 
@@ -2002,27 +2067,30 @@ function extractEvidenceStoragePath(fileUrl) {
 
 async function resolveEvidenceViewUrl(ev) {
   if (!ev) return '';
-  const external = sanitizeUrl(ev.link || '');
-  const storagePath = extractEvidenceStoragePath(ev.file_url);
-  if (storagePath && sb) {
+  const drive = evidenceDriveLink(ev);
+  const rawFile = ev.file_url != null ? String(ev.file_url).trim() : '';
+  const storagePath = extractEvidenceStoragePath(rawFile);
+  // ملف Storage: Signed URL فقط (لا تستخدم المسار النسبي كرابط عام)
+  if (storagePath && sb && !/^https?:\/\//i.test(storagePath)) {
     const { data, error } = await sb.storage
       .from(EVIDENCE_BUCKET)
       .createSignedUrl(storagePath, SIGNED_URL_TTL_SEC);
     if (!error && data?.signedUrl) return data.signedUrl;
   }
-  // روابط Drive الخارجية أو روابط عامة قديمة أثناء الانتقال
-  return sanitizeUrl(ev.file_url) || external;
-}
-
-function getEvidenceOpenUrl(ev) {
-  return sanitizeUrl(ev?.link || '') || sanitizeUrl(ev?.file_url || '');
+  // رابط http قديم محفوظ في file_url
+  if (/^https?:\/\//i.test(rawFile)) {
+    const safe = sanitizeUrl(rawFile);
+    if (safe) return safe;
+  }
+  // Google Drive / رابط خارجي
+  return drive;
 }
 
 function evidenceViewButtonHtml(ev) {
-  const hasFile = !!(ev?.file_url || ev?.link);
-  if (!hasFile) return '—';
+  if (!evidenceHasViewTarget(ev)) return '—';
   const id = esc(ev.id);
-  return `<button type="button" class="btn-sm btn-view evidence-view-btn" onclick="openEvidenceFile('${id}')">عرض الملف</button>`;
+  const label = evidenceDriveLink(ev) && !ev.file_url ? 'فتح الرابط' : 'عرض الملف';
+  return `<button type="button" class="btn-sm btn-view evidence-view-btn" onclick="openEvidenceFile('${id}')">${label}</button>`;
 }
 
 async function openEvidenceFile(evId) {
@@ -2176,21 +2244,19 @@ async function saveEvidence() {
     };
 
     const saved = await sbInsertEvidence(ev);
+    // لا تغيّر is_completed للمعلمة؛ فقط admin/vice عبر toggleIndicator
     if (indicatorId && can('toggleIndicator')) {
-      const list = indicatorsCache[progId] || [];
+      const list = indicatorsCache[progId] || indicatorsCache[String(progId)] || [];
       const ind = list.find(i => String(i.id) === String(indicatorId));
       if (ind) ind.is_completed = true;
       if (sb && ind) {
         await sb.from('program_indicators').update({ is_completed: true }).eq('id', indicatorId);
       }
     }
-    evidencesCache.unshift(saved);
-    syncEvidencesToPrograms();
-    if (saved.program_id) await syncProgress(saved.program_id);
     pendingEvidenceFile = null;
     closeModal('evidence-modal');
-    renderPrograms();
-    renderReports();
+    // المصدر الموثوق بعد الحفظ: إعادة الجلب ثم الرندر
+    await refreshEvidenceViews(saved.program_id || progId);
     showToast('تم رفع الشاهد وحفظه بنجاح.','success');
   } catch (err) {
     console.error('[saveEvidence]');
@@ -2213,17 +2279,21 @@ async function fetchIndicators() {
     .select('*');
 
   if (error) {
-    console.error(error.message);
+    console.error('[fetchIndicators]');
     return;
   }
 
   indicatorsCache = {};
 
-  data.forEach(ind => {
-    if (!indicatorsCache[ind.program_id]) {
-      indicatorsCache[ind.program_id] = [];
-    }
-    indicatorsCache[ind.program_id].push(ind);
+  (data || []).forEach(ind => {
+    const pid = ind.program_id;
+    if (pid == null) return;
+    if (!indicatorsCache[pid]) indicatorsCache[pid] = [];
+    indicatorsCache[pid].push(ind);
+  });
+
+  programsCache.forEach(p => {
+    p.indicators = indicatorsCache[p.id] || indicatorsCache[String(p.id)] || [];
   });
 }
 
@@ -2235,28 +2305,16 @@ async function handleDelEv(evId) {
 
   if (!confirm('حذف هذا الشاهد؟')) return;
 
-  const target = evidencesCache.find(e => e.id === evId);
+  const target = evidencesCache.find(e => String(e.id) === String(evId));
   const affectedProg = target?.program_id || null;
 
   try {
-   await sbDeleteEvidence(evId);
-
-await fetchEvidences();
-await fetchIndicators();
-
-if (affectedProg) {
-  await updateProgramProgress(affectedProg);
-}
-
-renderPrograms();
-renderDashboard();
-renderReports();
-
+    await sbDeleteEvidence(evId);
+    await refreshEvidenceViews(affectedProg);
     showToast('تم حذف الشاهد 🗑️', 'warning');
-
   } catch (err) {
-    console.error('[handleDelEv]', err.message);
-    showToast('خطأ: ' + err.message, 'error');
+    console.error('[handleDelEv]');
+    showToast('تعذّر حذف الشاهد', 'error');
   }
 }
 
@@ -2684,14 +2742,35 @@ function fillReportIndicators(progId) {
 function renderReports() {
   const TI={'صورة':'📷','PDF':'📄','Word':'📝','Excel':'📊','Google Drive':'☁️','ملف':'📎','YouTube':'🎥','رابط خارجي':'🔗'};
   const tbody=document.getElementById('reports-tbody'); if(!tbody)return;
-  tbody.innerHTML=evidencesCache.length
-    ? evidencesCache.map((r,i)=>{
-        const pName=r.program_id?programsCache.find(p=>String(p.id)===String(r.program_id))?.name||'—':'—';
-        return`<tr><td>${i+1}</td><td style="font-weight:600">${esc(r.title)}</td>
-          <td><span class="badge badge-info">${TI[r.type]||getEvIcon(r.type)} ${esc(r.type||'—')}</span></td>
-          <td>${esc(pName)}</td><td>${esc(r.person||'—')}</td><td>${esc(fmtDate(r.date))}</td>
+
+  const yearId = activeSchoolYearId;
+  let rows = Array.isArray(evidencesCache) ? evidencesCache.slice() : [];
+  // السنة النشطة إن وُجدت؛ لا تُسقط الصفوف بسبب NULL في الملف/الرابط/المؤشر
+  if (yearId != null && yearId !== '') {
+    const yearRows = rows.filter(r =>
+      r.school_year_id == null ||
+      r.school_year_id === '' ||
+      String(r.school_year_id) === String(yearId)
+    );
+    // إن وُجدت شواهد للسنة النشطة استخدمها؛ وإلا اعرض الكل لتجنّب شاشة فارغة خاطئة
+    if (yearRows.length) rows = yearRows;
+  }
+
+  console.info('[UI] renderReports evidencesCache=', evidencesCache.length,
+    'activeYear=', yearId ? '(set)' : '(none)', 'rendered=', rows.length);
+
+  tbody.innerHTML = rows.length
+    ? rows.map((r,i)=>{
+        const title = r.title || r.file_name || 'شاهد';
+        const typeLabel = r.type || (r.file_name ? evidenceTypeFromFileName(r.file_name) : '—');
+        const pName = r.program_id != null
+          ? (programsCache.find(p => String(p.id) === String(r.program_id))?.name || '—')
+          : '—';
+        return`<tr><td>${i+1}</td><td style="font-weight:600">${esc(title)}</td>
+          <td><span class="badge badge-info">${TI[typeLabel]||getEvIcon(typeLabel||r.file_name)} ${esc(typeLabel||'—')}</span></td>
+          <td>${esc(pName)}</td><td>${esc(r.person||'—')}</td><td>${esc(fmtDate(r.date || r.created_at))}</td>
           <td>${evidenceViewButtonHtml(r)}</td>
-          <td>${can('deleteEvidence')?`<button class="btn-sm btn-delete" onclick="handleDelEv('${r.id}')">🗑️</button>`:''}</td></tr>`;
+          <td>${can('deleteEvidence')?`<button class="btn-sm btn-delete" onclick="handleDelEv('${esc(r.id)}')">🗑️</button>`:''}</td></tr>`;
       }).join('')
     : '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-muted)">لا توجد شواهد</td></tr>';
 }
@@ -2762,13 +2841,9 @@ async function saveReport() {
     };
 
     const saved = await sbInsertEvidence(ev);
-    evidencesCache.unshift(saved);
-    syncEvidencesToPrograms();
-    if (saved.program_id) await syncProgress(saved.program_id);
     pendingEvidenceFile = null;
     closeModal('report-modal');
-    renderReports();
-    renderPrograms();
+    await refreshEvidenceViews(saved.program_id || progId);
     showToast('تم رفع الشاهد وحفظه بنجاح.','success');
   } catch (err) {
     console.error('[saveReport]');
