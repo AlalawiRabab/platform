@@ -46,7 +46,7 @@
 |---|--------|---------|--------|----------|
 | M1 | رفع ملفات بدون تحقق صارم من الامتداد | Medium | **أُصلح** | قائمة بيضاء للامتدادات + حد 5MB + تحقق MIME للصور. |
 | M2 | غياب تحقق طول المدخلات | Medium | **أُصلح** | `clampInput` بحد أقصى 500/1000 حرف. |
-| M3 | كلمات مرور تجريبية ضعيفة `1234` | Medium | **أُصلح في الكود** | غُيّرت إلى `ChangeMe!1234` — يجب تغييرها في قاعدة البيانات يدوياً إن وُجدت الحسابات القديمة. |
+| M3 | كلمات مرور تجريبية ضعيفة / مكشوفة في المستودع | Medium | **قيد المعالجة على فرع security-hardening** | أُزيلت كلمات المرور من الكود والمستودع. يجب تدوير كلمات المرور في قاعدة البيانات يدوياً والانتقال إلى Supabase Auth (انظر `SECURITY-MIGRATION-PLAN.md`). |
 | M4 | غياب CSP وheaders أمنية | Medium | **أُصلح جزئياً** | أُضيفت CSP meta + nosniff في HTML. الـ headers على مستوى الاستضافة تحتاج ضبط يدوي. |
 | M5 | تعديل حالة المهمة بدون صلاحية | Medium | **أُصلح** | `chgTaskStatus` يتطلب `editTask`. |
 | M6 | `handleDelInd` غير موجود (زر حذف معطل/خطأ) | Medium | **أُصلح** | أُنشئت الدالة مع فحص صلاحية. |
@@ -76,12 +76,13 @@
 
 1. افتح **Supabase Dashboard → SQL Editor**.
 2. نفّذ محتوى الملف: `supabase-security.sql`.
-3. غيّر كلمات مرور الحسابات التجريبية:
+3. غيّر كلمات مرور الحسابات التجريبية يدوياً في Dashboard (لا تضع القيم الحقيقية في المستودع):
 
 ```sql
-UPDATE users SET password = 'كلمة_قوية_خاصة_بك' WHERE email = 'admin@school.sa';
-UPDATE users SET password = 'كلمة_قوية_خاصة_بك' WHERE email = 'vice@school.sa';
-UPDATE users SET password = 'كلمة_قوية_خاصة_بك' WHERE email = 'teacher@school.sa';
+-- استبدل القيم يدوياً في SQL Editor فقط — لا تحفظها في Git
+UPDATE users SET password = '<NEW_STRONG_PASSWORD>' WHERE email = '<ADMIN_LOGIN_ID>';
+UPDATE users SET password = '<NEW_STRONG_PASSWORD>' WHERE email = '<VICE_LOGIN_ID>';
+UPDATE users SET password = '<NEW_STRONG_PASSWORD>' WHERE email = '<TEACHER_LOGIN_ID>';
 ```
 
 ### ب) مخاطر متبقية بسبب طبيعة المعمارية (Frontend-only)

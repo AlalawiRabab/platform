@@ -35,13 +35,13 @@
     <div class="login-card">
       <h2>تسجيل الدخول</h2>
       <div class="login-field-group">
-        <label for="login-email">اسم المستخدم</label>
-        <input type="text" id="login-email" placeholder="اسم المستخدم" autocomplete="username"/>
+        <label for="login-email">البريد الإلكتروني</label>
+        <input type="email" id="login-email" placeholder="email@school.sa" autocomplete="username" dir="ltr"/>
       </div>
       <div class="login-field-group">
         <label for="login-password">كلمة المرور</label>
         <input type="password" id="login-password" placeholder="كلمة المرور" autocomplete="current-password"
-               onkeydown="if(event.key==='Enter')doLogin()"/>
+               onkeydown="if(event.key==='Enter')window.doLogin()"/>
       </div>
      <button id="login-btn" class="btn-login" onclick="window.doLogin()">دخول إلى المنصة</button>
       
@@ -642,7 +642,7 @@
   
  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1"></script>
 <script src="config.js"></script>
-<script src="./script.js?v=20260807c"></script>
+<script src="./script.js?v=20260807-auth2"></script>
   
 </body>
 </html>

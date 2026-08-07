@@ -127,18 +127,14 @@
    --   END LOOP;
    -- END $$;
 
-   -- ⑩ seed users — غيّر كلمات المرور فوراً بعد أول تشغيل
-   INSERT INTO users (name,email,password,role) VALUES
-     ('سارة العتيبي','lyla127','1277','admin'),
-     ('نورة القحطاني','vice@school.sa','ChangeMe!1234','vice'),
-     ('هند الزهراني','teacher@school.sa','ChangeMe!1234','teacher')
-   ON CONFLICT (email) DO NOTHING;
+   -- ⑩ إنشاء المستخدمين يتم عبر Supabase Auth فقط.
+   -- لا تُدرج كلمات مرور داخل هذا الملف أو أي seed في المستودع.
 
    ================================================================ */
 
 'use strict';
 
-console.log('[script.js] BUILD=20260807a school_year_id insert guard enabled');
+console.log('[script.js] BUILD=20260807-auth-teacher-perms');
 
 /* ─────────────────────────────────────────────────────────────
    §0  SUPABASE
@@ -175,31 +171,33 @@ const PERMS = {
   admin:{
     addProgram:true,editProgram:true,deleteProgram:true,
     addIndicator:true,deleteIndicator:true,toggleIndicator:true,
-    addEvidence:true,deleteEvidence:true,
+    addEvidence:true,editEvidence:true,deleteEvidence:true,
     addInitiative:true,editInitiative:true,deleteInitiative:true,
     addTask:true,editTask:true,deleteTask:true,
     addTeacher:true,editTeacher:true,deleteTeacher:true,
     viewTeacherLinks:true,addTeacherLink:true,
     editSettings:true,manageUsers:true,
   },
+  // صلاحيات الوكيلة المعتمدة سابقاً في المشروع (بدون إدارة مستخدمين/حذف)
   vice:{
     addProgram:true,editProgram:true,deleteProgram:false,
     addIndicator:true,deleteIndicator:false,toggleIndicator:true,
-    addEvidence:true,deleteEvidence:false,
+    addEvidence:true,editEvidence:true,deleteEvidence:false,
     addInitiative:true,editInitiative:true,deleteInitiative:false,
     addTask:true,editTask:true,deleteTask:false,
     addTeacher:true,editTeacher:true,deleteTeacher:true,
     viewTeacherLinks:true,addTeacherLink:true,
     editSettings:false,manageUsers:false,
   },
+  // المعلمة: مشاهدة + إرفاق شاهد فقط
   teacher:{
     addProgram:false,editProgram:false,deleteProgram:false,
-    addIndicator:false,deleteIndicator:false,toggleIndicator:true,
-    addEvidence:true,deleteEvidence:false,
+    addIndicator:false,deleteIndicator:false,toggleIndicator:false,
+    addEvidence:true,editEvidence:false,deleteEvidence:false,
     addInitiative:false,editInitiative:false,deleteInitiative:false,
     addTask:false,editTask:false,deleteTask:false,
     addTeacher:false,editTeacher:false,deleteTeacher:false,
-    viewTeacherLinks:false,addTeacherLink:true,
+    viewTeacherLinks:false,addTeacherLink:false,
     editSettings:false,manageUsers:false,
   },
 };
@@ -208,15 +206,27 @@ const can = a => currentUser ? (PERMS[currentUser.role]?.[a] === true) : false;
 const NAV_ALLOWED = {
   admin  : ['dashboard','programs','plan','kpi','tasks','reports','teachers','calendar','stats','settings','users'],
   vice   : ['dashboard','programs','plan','kpi','tasks','reports','teachers','calendar','stats'],
-  teacher: ['dashboard','programs','reports','teachers'],
+  teacher: ['dashboard','programs','reports'],
 };
 
-const SESSION_KEY = 'sop_session';
 const ALLOWED_EVIDENCE_EXT = ['pdf','jpg','jpeg','png','doc','docx','xls','xlsx'];
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_INPUT_LEN = 500;
 const VALID_ROLES = ['admin','vice','teacher'];
 const EVIDENCE_BUCKET = 'evidences';
+const SIGNED_URL_TTL_SEC = 3600;
+const ALLOWED_EVIDENCE_MIME = [
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+];
+let _authListenerBound = false;
+let _authHandling = false;
+let _sessionBootstrapDone = false;
 
 function escapeHtml(str) {
   if (str == null) return '';
@@ -272,20 +282,10 @@ function isSectionAllowed(section) {
   return (NAV_ALLOWED[currentUser.role] || []).includes(section);
 }
 
-function saveSession(user) {
-  try {
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify({
-      id: user.id,
-      email: user.email,
-      ts: Date.now(),
-    }));
-  } catch {}
+function clearLegacySessionArtifacts() {
+  try { sessionStorage.removeItem('sop_session'); } catch {}
   try { localStorage.removeItem('currentUser'); } catch {}
-}
-
-function clearSession() {
-  try { sessionStorage.removeItem(SESSION_KEY); } catch {}
-  try { localStorage.removeItem('currentUser'); } catch {}
+  try { sessionStorage.removeItem('currentUser'); } catch {}
 }
 
 function showAppShell() {
@@ -298,80 +298,101 @@ function showLoginShell() {
   document.getElementById('login-page')?.classList.remove('hidden');
 }
 
-async function authenticateUser(email, pass) {
-  if (!sb) {
-    const u = FALLBACK_USERS.find(x => x.email === email && x.password === pass);
-    return u ? { id: u.id, name: u.name, email: u.email, role: u.role } : null;
-  }
-  try {
-    const { data, error } = await sb.rpc('authenticate_user', { p_email: email, p_password: pass });
-    if (error) throw error;
-    const user = Array.isArray(data) ? data[0] : data;
-    if (user && VALID_ROLES.includes(user.role)) return user;
-  } catch (err) {
-    console.warn('[Auth] RPC unavailable, using legacy query:', err.message);
-  }
-  const { data, error } = await sb
-    .from('users')
-    .select('id,name,email,role')
-    .eq('email', email)
-    .eq('password', pass)
-    .maybeSingle();
-  if (error) throw error;
-  return data && VALID_ROLES.includes(data.role) ? data : null;
+function clearLoginPasswordField() {
+  const p = document.getElementById('login-password');
+  if (p) p.value = '';
 }
 
-async function fetchUserSession(id, email) {
-  if (!sb) {
-    const u = FALLBACK_USERS.find(x => x.id === id && x.email === email);
-    return u ? { id: u.id, name: u.name, email: u.email, role: u.role } : null;
-  }
-  try {
-    const { data, error } = await sb.rpc('get_user_by_id', { p_id: id, p_email: email });
-    if (error) throw error;
-    const user = Array.isArray(data) ? data[0] : data;
-    if (user && VALID_ROLES.includes(user.role)) return user;
-  } catch (err) {
-    console.warn('[Session] RPC unavailable:', err.message);
-  }
+async function fetchProfileForAuthUser(authUser) {
+  if (!sb || !authUser?.id) return null;
   const { data, error } = await sb
-    .from('users')
-    .select('id,name,email,role')
-    .eq('id', id)
-    .eq('email', email)
+    .from('profiles')
+    .select('id,name,username,role')
+    .eq('id', authUser.id)
     .maybeSingle();
-  if (error) throw error;
-  return data && VALID_ROLES.includes(data.role) ? data : null;
+  if (error || !data || !VALID_ROLES.includes(data.role)) return null;
+  return {
+    id: data.id,
+    name: data.name || data.username || 'مستخدم',
+    username: data.username || null,
+    email: authUser.email || '',
+    role: data.role,
+  };
 }
 
-async function restoreSession() {
-  let raw = null;
-  try { raw = sessionStorage.getItem(SESSION_KEY); } catch {}
-  if (!raw) {
-    try {
-      const legacy = localStorage.getItem('currentUser');
-      if (legacy) {
-        const parsed = JSON.parse(legacy);
-        if (parsed?.id && parsed?.email) {
-          raw = JSON.stringify({ id: parsed.id, email: parsed.email, ts: Date.now() });
-          localStorage.removeItem('currentUser');
-        }
-      }
-    } catch {}
-  }
-  if (!raw) return false;
+async function denyAccessAndSignOut(message) {
+  currentUser = null;
+  _sessionBootstrapDone = false;
+  clearLegacySessionArtifacts();
+  try { if (sb) await sb.auth.signOut(); } catch {}
+  showLoginShell();
+  if (message) showToast(message, 'error');
+}
+
+/** مسار واحد: profile → currentUser → الواجهة → البيانات */
+async function bootstrapAuthenticatedSession(session) {
+  if (!session?.user) return false;
+  if (_authHandling) return false;
+  if (_sessionBootstrapDone && currentUser?.id === session.user.id) return true;
+
+  _authHandling = true;
   try {
-    const { id, email } = JSON.parse(raw);
-    if (!id || !email) { clearSession(); return false; }
-    const user = await fetchUserSession(id, email);
-    if (!user) { clearSession(); return false; }
-    currentUser = user;
-    saveSession(user);
+    const profile = await fetchProfileForAuthUser(session.user);
+    if (!profile) {
+      await denyAccessAndSignOut('تعذّر الدخول. تحقق من بيانات الاعتماد أو راجع المسؤول.');
+      return false;
+    }
+    currentUser = profile;
+    clearLegacySessionArtifacts();
+    showAppShell();
+    await loadSettings();
+    await loadAllData(false);
+    applyRoleUI();
+    _sessionBootstrapDone = true;
     return true;
-  } catch {
-    clearSession();
+  } catch (err) {
+    console.error('[bootstrapAuthenticatedSession]');
+    await denyAccessAndSignOut('تعذّر تجهيز الجلسة. حاول مرة أخرى.');
     return false;
+  } finally {
+    _authHandling = false;
   }
+}
+
+async function handleSignedOut() {
+  currentUser = null;
+  _sessionBootstrapDone = false;
+  clearLegacySessionArtifacts();
+  [programsCache, initiativesCache, tasksCache, evidencesCache, teachersCache, kpiCache] = [[], [], [], [], [], []];
+  indicatorsCache = {};
+  settingsCache = {};
+  activeSchoolYearId = null;
+  showLoginShell();
+}
+
+async function handleAuthStateEvent(event, session) {
+  if (event === 'SIGNED_OUT') {
+    await handleSignedOut();
+    return;
+  }
+  if (!session?.user) return;
+  // TOKEN_REFRESHED: لا تعِد تحميل البيانات
+  if (event === 'TOKEN_REFRESHED') return;
+  // منع التكرار مع doLogin / getSession
+  if (_authHandling) return;
+  if (_sessionBootstrapDone && currentUser?.id === session.user.id) return;
+  await bootstrapAuthenticatedSession(session);
+}
+
+function bindAuthStateListener() {
+  if (!sb || _authListenerBound) return;
+  _authListenerBound = true;
+  sb.auth.onAuthStateChange((event, session) => {
+    // callback خفيف — العمل غير المتزامن خارجاً
+    queueMicrotask(() => {
+      void handleAuthStateEvent(event, session);
+    });
+  });
 }
 
 function requireAuth(action) {
@@ -435,26 +456,24 @@ function closeModal(id) {
 /* ─────────────────────────────────────────────────────────────
    §7  AUTH
    ───────────────────────────────────────────────────────────── */
-const FALLBACK_USERS = [
-  {id:'f1',name:'سارة العتيبي', email:'lyla127',           password:'1277',role:'admin'},
-  {id:'f2',name:'نورة القحطاني',email:'vice@school.sa',    password:'ChangeMe!1234',role:'vice'},
-  {id:'f3',name:'هند الزهراني', email:'teacher@school.sa', password:'ChangeMe!1234',role:'teacher'},
-];
-
 async function doLogin() {
   const email = (document.getElementById('login-email')?.value || '').trim().toLowerCase();
   const pass  = (document.getElementById('login-password')?.value || '');
 
   if (!email || !pass) {
-    showToast('يرجى إدخال اسم المستخدم وكلمة المرور', 'error');
+    showToast('يرجى إدخال البريد الإلكتروني وكلمة المرور', 'error');
     return;
   }
-  if (!isValidLoginId(email)) {
-    showToast('صيغة اسم المستخدم غير صحيحة', 'error');
+  if (!isValidEmail(email)) {
+    showToast('صيغة البريد الإلكتروني غير صحيحة', 'error');
     return;
   }
-  if (pass.length < 4 || pass.length > 128) {
-    showToast('كلمة المرور يجب أن تكون بين 4 و 128 حرفاً', 'error');
+  if (pass.length < 6 || pass.length > 128) {
+    showToast('كلمة المرور غير صحيحة', 'error');
+    return;
+  }
+  if (!sb) {
+    showToast('تعذّر الاتصال بخدمة المصادقة', 'error');
     return;
   }
 
@@ -466,27 +485,19 @@ async function doLogin() {
 
   try {
     showLoadingOverlay?.(true);
-
-    const user = await authenticateUser(email, pass);
-
-    if (!user) {
-      showToast('اسم المستخدم أو كلمة المرور غير صحيحة', 'error');
+    const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
+    if (error || !data?.session) {
+      showToast('تعذّر تسجيل الدخول. تحقق من البيانات وحاول مرة أخرى.', 'error');
       return;
     }
-
-    currentUser = user;
-    saveSession(user);
-    showAppShell();
-
-    await loadAllData?.();
-    applyRoleUI?.();
-
+    const ok = await bootstrapAuthenticatedSession(data.session);
+    if (!ok) return;
     showToast('تم تسجيل الدخول بنجاح', 'success');
-
   } catch (err) {
-    console.error('[doLogin]', err);
-    showToast('حدث خطأ أثناء تسجيل الدخول', 'error');
+    console.error('[doLogin]');
+    showToast('تعذّر تسجيل الدخول. حاول مرة أخرى.', 'error');
   } finally {
+    clearLoginPasswordField();
     showLoadingOverlay?.(false);
     if (btn) {
       btn.disabled = false;
@@ -495,16 +506,19 @@ async function doLogin() {
   }
 }
 window.doLogin = doLogin;
-function doLogout() {
+
+async function doLogout() {
+  _sessionBootstrapDone = false;
   currentUser = null;
-  clearSession();
   [programsCache, initiativesCache, tasksCache, evidencesCache, teachersCache, kpiCache] = [[], [], [], [], [], []];
   indicatorsCache = {};
   settingsCache = {};
   activeSchoolYearId = null;
+  clearLegacySessionArtifacts();
+  try { if (sb) await sb.auth.signOut(); } catch {}
   showLoginShell();
   const e = document.getElementById('login-email'); if (e) e.value = '';
-  const p = document.getElementById('login-password'); if (p) p.value = '';
+  clearLoginPasswordField();
 }
 window.doLogout = doLogout;
 /* ─────────────────────────────────────────────────────────────
@@ -551,11 +565,20 @@ async function loadAllData(renderAfter = true) {
     await fetchPrograms();
     await fetchIndicators();
     await fetchEvidences();
-    await fetchTasks();
-    await fetchInitiatives();
-    await fetchTeachers();
+    if (isSectionAllowed('plan') || isSectionAllowed('tasks')) {
+      await fetchTasks();
+      await fetchInitiatives();
+    } else {
+      tasksCache = [];
+      initiativesCache = [];
+    }
+    if (isSectionAllowed('teachers')) {
+      await fetchTeachers();
+    } else {
+      teachersCache = [];
+    }
     await fetchKPI();
-    await loadSettings();
+    // settings تُحمَّل في bootstrapAuthenticatedSession بعد نجاح الجلسة فقط
 
     programsCache.forEach(p => {
       p.progress = calcProgramProgress(p.id);
@@ -564,8 +587,8 @@ async function loadAllData(renderAfter = true) {
     if (renderAfter) renderSection(_activeSection);
 
   } catch (e) {
-    console.error('[loadAllData]', e);
-    showToast('خطأ في تحميل البيانات: ' + e.message, 'error');
+    console.error('[loadAllData]');
+    showToast('تعذّر تحميل بعض البيانات', 'error');
   } finally {
     showLoadingOverlay(false);
   }
@@ -690,7 +713,7 @@ async function fetchActiveSchoolYear() {
       const row = Array.isArray(rpc.data) ? rpc.data[0] : rpc.data;
       if (row?.id) {
         activeSchoolYearId = row.id;
-        console.log('[fetchActiveSchoolYear] via rpc =', activeSchoolYearId);
+        console.log('[fetchActiveSchoolYear] via rpc =', activeSchoolYearId ? '(set)' : '(empty)');
         return activeSchoolYearId;
       }
     } else {
@@ -709,7 +732,7 @@ async function fetchActiveSchoolYear() {
     }
     const id = (Array.isArray(data) && data[0]?.id) ? data[0].id : null;
     if (id) activeSchoolYearId = id;
-    console.log('[fetchActiveSchoolYear] via table =', activeSchoolYearId, data);
+    console.log('[fetchActiveSchoolYear] via table =', activeSchoolYearId ? '(set)' : '(empty)');
     return activeSchoolYearId;
   } catch (err) {
     console.error('[fetchActiveSchoolYear] exception', err);
@@ -792,22 +815,19 @@ async function sbInsertProgram(p) {
     progress: parseInt(p.progress) || 0,
     status: calcProgramStatus(p),
     school_year_id: yearId,
+    created_by: currentUser?.id || null,
   };
 
   if (payload.school_year_id == null || payload.school_year_id === undefined) {
-    console.error('[sbInsertProgram] blocked: school_year_id missing', payload);
+    console.error('[sbInsertProgram] blocked: school_year_id missing');
     throw new Error(NO_ACTIVE_YEAR_MSG);
   }
 
-  console.log('[sbInsertProgram] activeSchoolYearId =', yearId);
-  console.log('[sbInsertProgram] insert payload =', JSON.parse(JSON.stringify(payload)));
-
   const { data, error } = await sb.from('programs').insert(payload).select().single();
   if (error) {
-    console.error('[sbInsertProgram] supabase error', error);
+    console.error('[sbInsertProgram] supabase error', error.message || error);
     throw error;
   }
-  console.log('[sbInsertProgram] SUCCESS id=', data?.id, 'school_year_id=', data?.school_year_id);
   return { ...p, id: data.id, school_year_id: data.school_year_id || yearId };
 }
 
@@ -1148,9 +1168,9 @@ async function sbInsertEvidence(ev) {
     file_name: ev.file_name || null,
     file_size: ev.file_size != null ? ev.file_size : null,
     upload_date: ev.date || new Date().toISOString().split('T')[0],
+    created_by: currentUser?.id || null,
   };
 
-  console.log('[sbInsertEvidence] payload =', row);
   const { data, error } = await sb.from('evidences').insert(row).select().single();
   if (error) throw error;
   return {
@@ -1203,6 +1223,7 @@ async function sbInsertTeacher(tf) {
     name:tf.name, assigned_tasks:parseInt(tf.assigned)||0,
     done_tasks:parseInt(tf.done)||0, last_report:tf.lastReport||null, notes:tf.notes||null,
     drive_link:tf.driveLink||null, created_by:tf.createdBy||null,
+    owner_id: currentUser?.id || null,
   }).select().single();
   if (error) throw error;
   return { ...tf, id:data.id };
@@ -1529,7 +1550,6 @@ function openProgramModal(id) {
   if (ti) ti.textContent = 'إضافة برنامج جديد';
   if (id) {
    const p = programsCache.find(x => String(x.id) === String(id)); if (!p) {
-  console.log('لم يتم العثور على البرنامج', id, programsCache);
   showToast('لم يتم العثور على البرنامج','error');
   return;
 }
@@ -1586,7 +1606,6 @@ async function saveProgram() {
         return;
       }
       p.school_year_id = yearId;
-      console.log('[saveProgram] about to insert with school_year_id=', yearId);
       saved = await sbInsertProgram(p);
       saved.indicators = []; saved.evidence = [];
       programsCache.push(saved);
@@ -1901,6 +1920,12 @@ function handleEvidenceFileSelect(input, prefix) {
     pendingEvidenceFile = null;
     return;
   }
+  if (file.type && !ALLOWED_EVIDENCE_MIME.includes(file.type)) {
+    showToast('نوع الملف غير مسموح','error');
+    input.value = '';
+    pendingEvidenceFile = null;
+    return;
+  }
   pendingEvidenceFile = file;
   const prev = document.getElementById(`${prefix}-file-preview`);
   if (!prev) return;
@@ -1921,13 +1946,18 @@ function clearEvidenceFile(prefix) {
 
 async function uploadEvidenceToStorage(file, meta) {
   if (!sb) throw new Error('Supabase غير متصل');
-  const yearId = meta.schoolYearId;
-  const programId = meta.programId || 'general';
-  const indicatorId = meta.indicatorId || 'general';
-  if (!yearId) throw new Error(NO_ACTIVE_YEAR_MSG);
+  if (!currentUser?.id) throw new Error('يجب تسجيل الدخول أولاً');
+  if (file.size > MAX_FILE_SIZE) throw new Error('الملف أكبر من 10MB');
+  if (!validateFileExtension(file.name, ALLOWED_EVIDENCE_EXT)) {
+    throw new Error('نوع الملف غير مسموح');
+  }
+  if (file.type && !ALLOWED_EVIDENCE_MIME.includes(file.type)) {
+    throw new Error('نوع الملف غير مسموح');
+  }
 
   const safeName = sanitizeStorageFileName(file.name);
-  const path = `${yearId}/${programId}/${indicatorId}/${Date.now()}-${safeName}`;
+  // مسار جديد: {auth.uid()}/{اسم فريد}
+  const path = `${currentUser.id}/${Date.now()}-${safeName}`;
 
   const { error: upErr } = await sb.storage
     .from(EVIDENCE_BUCKET)
@@ -1936,29 +1966,79 @@ async function uploadEvidenceToStorage(file, meta) {
       upsert: false,
       contentType: file.type || undefined,
     });
-  if (upErr) throw upErr;
+  if (upErr) throw new Error('تعذّر رفع الملف');
 
-  const { data: pub } = sb.storage.from(EVIDENCE_BUCKET).getPublicUrl(path);
-  const fileUrl = pub?.publicUrl || null;
-  if (!fileUrl) throw new Error('تعذّر الحصول على رابط الملف بعد الرفع');
-
+  // مسار الكائن فقط — بدون getPublicUrl
   return {
     path,
-    file_url: fileUrl,
+    file_url: path,
     file_name: file.name,
     file_size: file.size,
   };
 }
 
+function extractEvidenceStoragePath(fileUrl) {
+  if (!fileUrl) return null;
+  const raw = String(fileUrl).trim();
+  if (!raw) return null;
+  // مسار نسبي داخل الـ bucket
+  if (!/^https?:\/\//i.test(raw)) {
+    return raw.replace(/^\/+/, '').replace(/^evidences\//, '');
+  }
+  try {
+    const u = new URL(raw);
+    const markers = [
+      `/storage/v1/object/public/${EVIDENCE_BUCKET}/`,
+      `/storage/v1/object/sign/${EVIDENCE_BUCKET}/`,
+      `/storage/v1/object/authenticated/${EVIDENCE_BUCKET}/`,
+    ];
+    for (const m of markers) {
+      const idx = u.pathname.indexOf(m);
+      if (idx !== -1) return decodeURIComponent(u.pathname.slice(idx + m.length));
+    }
+  } catch {}
+  return null;
+}
+
+async function resolveEvidenceViewUrl(ev) {
+  if (!ev) return '';
+  const external = sanitizeUrl(ev.link || '');
+  const storagePath = extractEvidenceStoragePath(ev.file_url);
+  if (storagePath && sb) {
+    const { data, error } = await sb.storage
+      .from(EVIDENCE_BUCKET)
+      .createSignedUrl(storagePath, SIGNED_URL_TTL_SEC);
+    if (!error && data?.signedUrl) return data.signedUrl;
+  }
+  // روابط Drive الخارجية أو روابط عامة قديمة أثناء الانتقال
+  return sanitizeUrl(ev.file_url) || external;
+}
+
 function getEvidenceOpenUrl(ev) {
-  return sanitizeUrl(ev?.file_url || ev?.link || '');
+  return sanitizeUrl(ev?.link || '') || sanitizeUrl(ev?.file_url || '');
 }
 
 function evidenceViewButtonHtml(ev) {
-  const url = getEvidenceOpenUrl(ev);
-  if (!url) return '—';
-  return safeLinkHtml(url, 'عرض الملف', 'btn-sm btn-view evidence-view-btn');
+  const hasFile = !!(ev?.file_url || ev?.link);
+  if (!hasFile) return '—';
+  const id = esc(ev.id);
+  return `<button type="button" class="btn-sm btn-view evidence-view-btn" onclick="openEvidenceFile('${id}')">عرض الملف</button>`;
 }
+
+async function openEvidenceFile(evId) {
+  if (!requireAuth()) return;
+  const ev = evidencesCache.find(e => String(e.id) === String(evId));
+  if (!ev) { showToast('الملف غير موجود', 'error'); return; }
+  try {
+    const url = await resolveEvidenceViewUrl(ev);
+    if (!url) { showToast('تعذّر فتح الملف', 'error'); return; }
+    window.open(url, '_blank', 'noopener,noreferrer');
+  } catch (err) {
+    console.error('[openEvidenceFile]');
+    showToast('تعذّر فتح الملف', 'error');
+  }
+}
+window.openEvidenceFile = openEvidenceFile;
 
 function fillEvidenceIndicators(progId) {
   const sel = document.getElementById('ev-indicator-id');
@@ -2096,7 +2176,7 @@ async function saveEvidence() {
     };
 
     const saved = await sbInsertEvidence(ev);
-    if (indicatorId) {
+    if (indicatorId && can('toggleIndicator')) {
       const list = indicatorsCache[progId] || [];
       const ind = list.find(i => String(i.id) === String(indicatorId));
       if (ind) ind.is_completed = true;
@@ -2113,8 +2193,8 @@ async function saveEvidence() {
     renderReports();
     showToast('تم رفع الشاهد وحفظه بنجاح.','success');
   } catch (err) {
-    console.error('[saveEvidence]', err.message || err);
-    showToast('خطأ: ' + (err.message || err), 'error');
+    console.error('[saveEvidence]');
+    showToast('تعذّر حفظ الشاهد', 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '📎 حفظ الشاهد'; }
   }
@@ -2691,8 +2771,8 @@ async function saveReport() {
     renderPrograms();
     showToast('تم رفع الشاهد وحفظه بنجاح.','success');
   } catch (err) {
-    console.error('[saveReport]', err.message || err);
-    showToast('خطأ: ' + (err.message || err), 'error');
+    console.error('[saveReport]');
+    showToast('تعذّر حفظ الشاهد', 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '📤 رفع الشاهد'; }
   }
@@ -2980,25 +3060,31 @@ function drawCompare() {
 /* ─────────────────────────────────────────────────────────────
    §34  USERS MANAGEMENT (admin only)
    ───────────────────────────────────────────────────────────── */
+async function invokeAdminUsers(body) {
+  if (!sb) throw new Error('Supabase غير متصل');
+  const { data, error } = await sb.functions.invoke('admin-users', { body });
+  if (error) throw error;
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
 async function renderUsersSection() {
   if (!can('manageUsers')) return;
   const sec = document.getElementById('section-users'); if (!sec) return;
   let users = [];
   if (sb) {
     try {
-      const { data, error } = await sb.rpc('admin_list_users', {
-        p_admin_id: currentUser.id,
-        p_admin_email: currentUser.email,
-      });
-      if (error) throw error;
-      users = data || [];
+      const data = await invokeAdminUsers({ action: 'list' });
+      users = data?.users || [];
     } catch (err) {
-      console.warn('[fetchUsers] RPC fallback:', err.message);
-      const { data, error } = await sb.from('users').select('id,name,email,role,created_at').order('created_at');
-      if (error) console.error('[fetchUsers]', error.message);
-      else users = data || [];
+      console.error('[fetchUsers]', err && err.message ? err.message : err);
+      showToast('تعذّر تحميل المستخدمين. تأكد من نشر Edge Function: admin-users', 'error');
+      users = [];
     }
-  } else { users = FALLBACK_USERS.map(u => ({ id:u.id, name:u.name, email:u.email, role:u.role, created_at:null })); }
+  } else {
+    users = [];
+    showToast('تعذّر تحميل المستخدمين: الاتصال بـ Supabase مطلوب', 'error');
+  }
   const RL={admin:'مدير',vice:'وكيل',teacher:'معلم'};
   const RB={admin:'badge-danger',vice:'badge-info',teacher:'badge-success'};
   sec.innerHTML = `
@@ -3007,10 +3093,10 @@ async function renderUsersSection() {
       <button class="btn-primary" onclick="openAddUserModal()">+ إضافة مستخدم</button>
     </div>
     <div class="table-wrapper"><table class="data-table">
-      <thead><tr><th>#</th><th>الاسم</th><th>البريد الإلكتروني</th><th>الدور</th><th>تاريخ الإضافة</th><th>إجراءات</th></tr></thead>
+      <thead><tr><th>#</th><th>الاسم</th><th>البريد / اسم العرض</th><th>الدور</th><th>تاريخ الإضافة</th><th>إجراءات</th></tr></thead>
       <tbody>
         ${users.map((u,i)=>`<tr><td>${i+1}</td><td style="font-weight:700">${esc(u.name)}</td>
-          <td style="direction:ltr;text-align:right">${esc(u.email)}</td>
+          <td style="direction:ltr;text-align:right">${esc(u.email || u.username || '—')}</td>
           <td><span class="badge ${RB[u.role]||'badge-secondary'}">${esc(RL[u.role]||u.role)}</span></td>
           <td>${esc(fmtDate(u.created_at))}</td>
           <td><div style="display:flex;gap:6px;align-items:center">
@@ -3030,7 +3116,8 @@ async function renderUsersSection() {
       <div class="modal-body">
         <div class="form-group"><label>الاسم الكامل</label><input type="text" id="nu-name" placeholder="الاسم الكامل"/></div>
         <div class="form-group"><label>البريد الإلكتروني</label><input type="email" id="nu-email" placeholder="email@school.sa"/></div>
-        <div class="form-group"><label>كلمة المرور</label><input type="password" id="nu-pass" placeholder="كلمة المرور"/></div>
+        <div class="form-group"><label>اسم العرض (اختياري)</label><input type="text" id="nu-username" placeholder="يظهر في الواجهة فقط"/></div>
+        <div class="form-group"><label>كلمة المرور</label><input type="password" id="nu-pass" placeholder="كلمة المرور (8 أحرف على الأقل)"/></div>
         <div class="form-group"><label>الدور</label>
           <select id="nu-role"><option value="teacher">معلم</option><option value="vice">وكيل</option><option value="admin">مدير</option></select>
         </div>
@@ -3053,30 +3140,26 @@ async function handleAddUser() {
   const g = id => (document.getElementById(id)?.value||'').trim();
   const name=clampInput(g('nu-name'));
   const email=g('nu-email').toLowerCase();
+  const username=clampInput(g('nu-username')) || null;
   const pass=g('nu-pass');
   const role=g('nu-role');
   if (!name||!email||!pass) { showToast('يرجى تعبئة جميع الحقول','error'); return; }
   if (!isValidEmail(email)) { showToast('صيغة البريد غير صحيحة','error'); return; }
-  if (pass.length < 4 || pass.length > 128) { showToast('كلمة المرور يجب أن تكون بين 4 و 128 حرفاً','error'); return; }
+  if (pass.length < 8 || pass.length > 128) { showToast('كلمة المرور يجب أن تكون بين 8 و 128 حرفاً','error'); return; }
   if (!VALID_ROLES.includes(role)) { showToast('دور غير صالح','error'); return; }
   try {
-    const { error } = await sb.rpc('admin_add_user', {
-      p_admin_id: currentUser.id,
-      p_admin_email: currentUser.email,
-      p_name: name,
-      p_email: email,
-      p_password: pass,
-      p_role: role,
+    await invokeAdminUsers({
+      action: 'create',
+      email,
+      password: pass,
+      name,
+      username,
+      role,
     });
-    if (error) {
-      // fallback إذا لم تُنفَّذ دوال الأمان بعد
-      const { error: e2 } = await sb.from('users').insert({ name, email, password: pass, role });
-      if (e2) throw e2;
-    }
     closeModal('add-user-modal');
     showToast('تمت إضافة المستخدم ✅','success');
     await renderUsersSection();
-  } catch(err){ console.error('[handleAddUser]',err.message); showToast('خطأ: '+err.message,'error'); }
+  } catch(err){ console.error('[handleAddUser]'); showToast('تعذّر إتمام العملية','error'); }
 }
 
 async function handleDelUser(id) {
@@ -3085,18 +3168,10 @@ async function handleDelUser(id) {
   if (!confirm('حذف هذا المستخدم؟')) return;
   if (!sb) { showToast('Supabase غير متصل','error'); return; }
   try {
-    const { error } = await sb.rpc('admin_delete_user', {
-      p_admin_id: currentUser.id,
-      p_admin_email: currentUser.email,
-      p_target_id: id,
-    });
-    if (error) {
-      const { error: e2 } = await sb.from('users').delete().eq('id', id);
-      if (e2) throw e2;
-    }
+    await invokeAdminUsers({ action: 'delete', target_id: id });
     showToast('تم الحذف 🗑️','warning');
     await renderUsersSection();
-  } catch(err){ console.error('[handleDelUser]',err.message); showToast('خطأ: '+err.message,'error'); }
+  } catch(err){ console.error('[handleDelUser]'); showToast('تعذّر إتمام العملية','error'); }
 }
 
 async function handleChgRole(id, role) {
@@ -3109,18 +3184,9 @@ async function handleChgRole(id, role) {
   }
   if (!sb) { showToast('Supabase غير متصل','error'); return; }
   try {
-    const { error } = await sb.rpc('admin_change_role', {
-      p_admin_id: currentUser.id,
-      p_admin_email: currentUser.email,
-      p_target_id: id,
-      p_role: role,
-    });
-    if (error) {
-      const { error: e2 } = await sb.from('users').update({ role }).eq('id', id);
-      if (e2) throw e2;
-    }
+    await invokeAdminUsers({ action: 'change_role', target_id: id, role });
     showToast('تم تعديل الدور ✅','success');
-  } catch(err){ console.error('[handleChgRole]',err.message); showToast('خطأ: '+err.message,'error'); }
+  } catch(err){ console.error('[handleChgRole]'); showToast('تعذّر إتمام العملية','error'); await renderUsersSection(); }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -3130,21 +3196,31 @@ document.addEventListener('DOMContentLoaded', async () => {
   calendarMonth = new Date().getMonth();
   calendarYear = new Date().getFullYear();
 
-  await loadSettings();
+  bindAuthStateListener();
+  showLoginShell();
 
-  const hasSession = await restoreSession();
-  if (hasSession) {
-    showAppShell();
-    await loadAllData(false);
-    applyRoleUI();
-    renderSection(_activeSection || 'dashboard');
-    renderDashboard();
-    renderPrograms();
-    renderReports();
-    drawDashPie();
-  } else {
-    showLoginShell();
+  if (!sb) {
+    showToast('تعذّر الاتصال بخدمة المصادقة', 'error');
+    return;
   }
+
+  clearLegacySessionArtifacts();
+  const { data, error } = await sb.auth.getSession();
+  if (error || !data?.session) {
+    showLoginShell();
+    return;
+  }
+
+  const ok = await bootstrapAuthenticatedSession(data.session);
+  if (!ok) {
+    showLoginShell();
+    return;
+  }
+  renderSection(_activeSection || 'dashboard');
+  renderDashboard();
+  renderPrograms();
+  renderReports();
+  drawDashPie();
 });
 window.doLogin = doLogin; 
 window.openAddUserModal = openAddUserModal;

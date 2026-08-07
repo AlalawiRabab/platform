@@ -219,5 +219,7 @@ BEGIN
   END LOOP;
 END $$;
 
--- ⑤ تذكير: غيّر كلمات المرور التجريبية فوراً
--- UPDATE users SET password = 'كلمة_قوية_جديدة' WHERE email = 'admin@school.sa';
+-- ⑤ تذكير: لا تُدرج كلمات مرور حقيقية في المستودع.
+-- غيّر كلمات المرور يدوياً من SQL Editor ثم انتقل إلى Supabase Auth
+-- (راجع SECURITY-MIGRATION-PLAN.md).
+-- UPDATE users SET password = '<NEW_STRONG_PASSWORD>' WHERE email = '<LOGIN_ID>';
