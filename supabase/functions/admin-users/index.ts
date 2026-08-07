@@ -1,25 +1,41 @@
 // Supabase Edge Function: admin-users
- // مراجعة فقط — لا تُنشر تلقائياً
- // Secrets:
- //   SUPABASE_URL
- //   SUPABASE_ANON_KEY
- //   SUPABASE_SERVICE_ROLE_KEY  ← فقط في Secrets
- //   ALLOWED_ORIGINS           ← قائمة مفصولة بفواصل، بدون تخمين رابط الإنتاج
+ // مراجعة — لا تُنشر تلقائياً
+ // Secrets: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, ALLOWED_ORIGINS
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 
 const ALLOWED_METHODS = new Set(['POST', 'OPTIONS'])
+const ALLOWED_ROLES = new Set(['admin', 'vice', 'teacher'])
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-function parseAllowedOrigins(): string[] {
+type AdminClient = ReturnType<typeof createClient>
+
+function parseAllowedOriginsRaw(): string[] {
   const raw = Deno.env.get('ALLOWED_ORIGINS') ?? ''
-  return raw
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
+  return raw.split(',').map((s) => s.trim()).filter(Boolean)
+}
+
+/** يحوّل عناصر ALLOWED_ORIGINS إلى origins فقط (يدعم إدخال أصل أو رابط كامل). */
+function allowedOriginsList(): string[] {
+  const out: string[] = []
+  for (const entry of parseAllowedOriginsRaw()) {
+    try {
+      const u = new URL(entry)
+      if (u.protocol === 'http:' || u.protocol === 'https:') out.push(u.origin)
+    } catch {
+      /* تجاهل الإدخالات غير الصالحة */
+    }
+  }
+  return [...new Set(out)]
+}
+
+function recoveryRedirectForOrigin(origin: string): string {
+  return `${origin.replace(/\/$/, '')}/index.html`
 }
 
 function corsHeadersFor(req: Request): Record<string, string> {
-  const allowed = parseAllowedOrigins()
+  const allowed = allowedOriginsList()
   const origin = req.headers.get('Origin') || ''
   const headers: Record<string, string> = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -39,11 +55,79 @@ function json(req: Request, payload: unknown, status = 200) {
   })
 }
 
+function isUuid(v: string): boolean {
+  return UUID_RE.test(String(v || '').trim())
+}
+
 function isStrongPassword(password: string): boolean {
   if (password.length < 8 || password.length > 128) return false
   const hasLetter = /[A-Za-z\u0600-\u06FF]/.test(password)
   const hasNumber = /\d/.test(password)
   return hasLetter && hasNumber
+}
+
+function normalizeUsername(raw: unknown): string | null {
+  if (raw == null) return null
+  const u = String(raw).trim()
+  if (!u) return null
+  if (u.length < 3 || u.length > 64) return null
+  if (!/^[a-zA-Z0-9._\u0600-\u06FF-]+$/.test(u)) return null
+  return u
+}
+
+function normalizeAction(raw: unknown): string {
+  const a = String(raw || '').trim().toLowerCase()
+  if (a === 'change-role') return 'change_role'
+  if (a === 'reset-password') return 'send_password_reset'
+  return a
+}
+
+/**
+ * يبني redirectTo كاملاً من أصل مسموح فقط، مثل:
+ * http://127.0.0.1:5500/index.html
+ * يرفض أي redirect حر خارج ALLOWED_ORIGINS.
+ */
+function pickRedirectTo(requested: unknown): string | null {
+  const allowed = allowedOriginsList()
+  if (!allowed.length) return null
+
+  const req = String(requested || '').trim()
+  if (!req) return recoveryRedirectForOrigin(allowed[0])
+
+  try {
+    const u = new URL(req)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
+    if (!allowed.includes(u.origin)) return null
+    const path = u.pathname || '/'
+    if (path !== '/' && path !== '/index.html') return null
+    return recoveryRedirectForOrigin(u.origin)
+  } catch {
+    return null
+  }
+}
+
+async function countAdmins(admin: AdminClient): Promise<number | null> {
+  const { count, error } = await admin
+    .from('profiles')
+    .select('id', { count: 'exact', head: true })
+    .eq('role', 'admin')
+  if (error || count == null) return null
+  return count
+}
+
+async function buildEmailMap(admin: AdminClient): Promise<Map<string, string> | null> {
+  const emailById = new Map<string, string>()
+  const perPage = 200
+  for (let page = 1; page <= 50; page++) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage })
+    if (error) return null
+    const users = data?.users || []
+    for (const u of users) {
+      emailById.set(u.id, u.email || '')
+    }
+    if (users.length < perPage) break
+  }
+  return emailById
 }
 
 Deno.serve(async (req) => {
@@ -71,16 +155,15 @@ Deno.serve(async (req) => {
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) return json(req, { error: 'unauthorized' }, 401)
 
-    // 1) تحقق JWT أولاً بمفتاح anon + توكن المستدعي
+    // 1) JWT أولاً
     const userClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
     })
     const { data: userData, error: userErr } = await userClient.auth.getUser()
     if (userErr || !userData?.user?.id) return json(req, { error: 'unauthorized' }, 401)
-
     const callerId = userData.user.id
 
-    // 2) قراءة profile للمستدعي الموثوق (ليس role من الواجهة)
+    // 2) profile admin من DB (ليس من الواجهة)
     const { data: callerProfile, error: callerProfileErr } = await userClient
       .from('profiles')
       .select('id,role')
@@ -91,27 +174,30 @@ Deno.serve(async (req) => {
       return json(req, { error: 'forbidden' }, 403)
     }
 
-    // 3) بعد تأكيد admin فقط: استخدم service_role
+    // 3) service_role بعد تأكيد admin فقط
     const admin = createClient(supabaseUrl, serviceKey)
 
     const body = await req.json().catch(() => null)
     if (!body || typeof body !== 'object') return json(req, { error: 'invalid_payload' }, 400)
-    const action = String((body as { action?: string }).action || '')
+    const action = normalizeAction((body as { action?: string }).action)
 
+    // ---------- list (ترقيم صفحات) ----------
     if (action === 'list') {
-      const { data: profiles, error } = await admin
+      const page = Math.max(1, Number((body as { page?: number }).page) || 1)
+      const perPage = Math.min(100, Math.max(1, Number((body as { per_page?: number }).per_page) || 50))
+      const from = (page - 1) * perPage
+      const to = from + perPage - 1
+
+      const { data: profiles, error, count } = await admin
         .from('profiles')
-        .select('id,name,username,role,created_at')
+        .select('id,name,username,role,created_at', { count: 'exact' })
         .order('created_at', { ascending: true })
+        .range(from, to)
       if (error) return json(req, { error: 'operation_failed' }, 400)
 
-      const { data: authList, error: authErr } = await admin.auth.admin.listUsers({
-        page: 1,
-        perPage: 1000,
-      })
-      if (authErr) return json(req, { error: 'operation_failed' }, 400)
+      const emailById = await buildEmailMap(admin)
+      if (!emailById) return json(req, { error: 'operation_failed' }, 400)
 
-      const emailById = new Map((authList?.users || []).map((u) => [u.id, u.email || '']))
       const users = (profiles || []).map((p) => ({
         id: p.id,
         name: p.name,
@@ -120,21 +206,40 @@ Deno.serve(async (req) => {
         created_at: p.created_at,
         email: emailById.get(p.id) || '',
       }))
-      return json(req, { users })
+      return json(req, {
+        users,
+        page,
+        per_page: perPage,
+        total: count ?? users.length,
+      })
     }
 
+    // ---------- create ----------
     if (action === 'create') {
       const email = String((body as { email?: string }).email || '').trim().toLowerCase()
       const password = String((body as { password?: string }).password || '')
       const name = String((body as { name?: string }).name || '').trim()
-      const usernameRaw = (body as { username?: string }).username
-      const username = usernameRaw ? String(usernameRaw).trim() : null
+      const username = normalizeUsername((body as { username?: string }).username)
       const role = String((body as { role?: string }).role || '')
 
-      if (!email || !name || !['admin', 'vice', 'teacher'].includes(role)) {
+      if (!email || !name || name.length > 120 || !ALLOWED_ROLES.has(role)) {
         return json(req, { error: 'invalid_payload' }, 400)
       }
       if (!isStrongPassword(password)) return json(req, { error: 'invalid_payload' }, 400)
+      if ((body as { username?: string }).username != null &&
+          String((body as { username?: string }).username).trim() !== '' &&
+          !username) {
+        return json(req, { error: 'invalid_payload' }, 400)
+      }
+
+      if (username) {
+        const { data: taken } = await admin
+          .from('profiles')
+          .select('id')
+          .eq('username', username)
+          .maybeSingle()
+        if (taken) return json(req, { error: 'username_taken' }, 409)
+      }
 
       const { data: created, error: createErr } = await admin.auth.admin.createUser({
         email,
@@ -154,16 +259,53 @@ Deno.serve(async (req) => {
         return json(req, { error: 'operation_failed' }, 400)
       }
 
-      // لا تُعاد كلمة المرور
       return json(req, { id: created.user.id, email, name, username, role })
     }
 
-    if (action === 'change_role') {
-      const targetId = String((body as { target_id?: string }).target_id || '')
-      const role = String((body as { role?: string }).role || '')
-      if (!targetId || !['admin', 'vice', 'teacher'].includes(role)) {
+    // ---------- update (name + username فقط) ----------
+    if (action === 'update') {
+      const targetId = String((body as { target_id?: string }).target_id || '').trim()
+      const name = String((body as { name?: string }).name || '').trim()
+      const username = normalizeUsername((body as { username?: string }).username)
+
+      if (!isUuid(targetId) || !name || name.length > 120 || !username) {
         return json(req, { error: 'invalid_payload' }, 400)
       }
+
+      const { data: existing, error: exErr } = await admin
+        .from('profiles')
+        .select('id')
+        .eq('id', targetId)
+        .maybeSingle()
+      if (exErr || !existing) return json(req, { error: 'invalid_payload' }, 400)
+
+      const { data: taken } = await admin
+        .from('profiles')
+        .select('id')
+        .eq('username', username)
+        .neq('id', targetId)
+        .maybeSingle()
+      if (taken) return json(req, { error: 'username_taken' }, 409)
+
+      // لا تُحدَّث role / id / password / email هنا
+      const { data: updated, error } = await admin
+        .from('profiles')
+        .update({ name, username })
+        .eq('id', targetId)
+        .select('id,name,username,role,created_at')
+        .maybeSingle()
+      if (error || !updated) return json(req, { error: 'operation_failed' }, 400)
+      return json(req, { ok: true, user: updated })
+    }
+
+    // ---------- change_role / change-role ----------
+    if (action === 'change_role') {
+      const targetId = String((body as { target_id?: string }).target_id || '').trim()
+      const role = String((body as { role?: string }).role || '')
+      if (!isUuid(targetId) || !ALLOWED_ROLES.has(role)) {
+        return json(req, { error: 'invalid_payload' }, 400)
+      }
+      // منع تغيير دور الحساب الحالي (بما فيها خفض دور admin الذاتي)
       if (targetId === callerId) return json(req, { error: 'forbidden' }, 403)
 
       const { data: target, error: targetErr } = await admin
@@ -174,12 +316,9 @@ Deno.serve(async (req) => {
       if (targetErr || !target) return json(req, { error: 'invalid_payload' }, 400)
 
       if (target.role === 'admin' && role !== 'admin') {
-        const { count, error: countErr } = await admin
-          .from('profiles')
-          .select('id', { count: 'exact', head: true })
-          .eq('role', 'admin')
-        if (countErr || count == null) return json(req, { error: 'operation_failed' }, 400)
-        if (count <= 1) return json(req, { error: 'forbidden' }, 403)
+        const n = await countAdmins(admin)
+        if (n == null) return json(req, { error: 'operation_failed' }, 400)
+        if (n <= 1) return json(req, { error: 'forbidden' }, 403)
       }
 
       const { data: updated, error } = await admin
@@ -192,9 +331,42 @@ Deno.serve(async (req) => {
       return json(req, { ok: true })
     }
 
+    // ---------- send_password_reset / reset-password ----------
+    if (action === 'send_password_reset') {
+      const targetId = String((body as { target_id?: string }).target_id || '').trim()
+      if (!isUuid(targetId)) return json(req, { error: 'invalid_payload' }, 400)
+
+      const { data: target, error: targetErr } = await admin
+        .from('profiles')
+        .select('id')
+        .eq('id', targetId)
+        .maybeSingle()
+      if (targetErr || !target) return json(req, { error: 'invalid_payload' }, 400)
+
+      const { data: authUser, error: authErr } = await admin.auth.admin.getUserById(targetId)
+      const email = authUser?.user?.email || ''
+      if (authErr || !email) return json(req, { error: 'operation_failed' }, 400)
+
+      const redirectTo = pickRedirectTo((body as { redirect_to?: string }).redirect_to)
+      if (!redirectTo) return json(req, { error: 'invalid_payload' }, 400)
+
+      // إرسال رسالة الاستعادة — لا تُعاد الروابط/التوكن في الاستجابة
+      const mailClient = createClient(supabaseUrl, anonKey)
+      const { error: resetErr } = await mailClient.auth.resetPasswordForEmail(email, {
+        redirectTo,
+      })
+      if (resetErr) return json(req, { error: 'operation_failed' }, 400)
+
+      return json(req, {
+        ok: true,
+        message: 'password_reset_sent',
+      })
+    }
+
+    // ---------- delete ----------
     if (action === 'delete') {
-      const targetId = String((body as { target_id?: string }).target_id || '')
-      if (!targetId) return json(req, { error: 'invalid_payload' }, 400)
+      const targetId = String((body as { target_id?: string }).target_id || '').trim()
+      if (!isUuid(targetId)) return json(req, { error: 'invalid_payload' }, 400)
       if (targetId === callerId) return json(req, { error: 'forbidden' }, 403)
 
       const { data: target, error: targetErr } = await admin
@@ -205,15 +377,11 @@ Deno.serve(async (req) => {
       if (targetErr || !target) return json(req, { error: 'invalid_payload' }, 400)
 
       if (target.role === 'admin') {
-        const { count, error: countErr } = await admin
-          .from('profiles')
-          .select('id', { count: 'exact', head: true })
-          .eq('role', 'admin')
-        if (countErr || count == null) return json(req, { error: 'operation_failed' }, 400)
-        if (count <= 1) return json(req, { error: 'forbidden' }, 403)
+        const n = await countAdmins(admin)
+        if (n == null) return json(req, { error: 'operation_failed' }, 400)
+        if (n <= 1) return json(req, { error: 'forbidden' }, 403)
       }
 
-      // احذف Auth user أولاً؛ CASCADE يحذف profile
       const { error: delAuthErr } = await admin.auth.admin.deleteUser(targetId)
       if (delAuthErr) return json(req, { error: 'operation_failed' }, 400)
       return json(req, { ok: true })

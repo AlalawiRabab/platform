@@ -637,12 +637,37 @@
   </div>
 </div>
 
+<!-- PASSWORD RECOVERY (جلسة PASSWORD_RECOVERY فقط — بلا دخول للتطبيق) -->
+<div id="password-recovery-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>تعيين كلمة مرور جديدة</h3>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">أدخل كلمة المرور الجديدة ثم أكّدها. الحد الأدنى 8 أحرف.</p>
+      <div class="form-group">
+        <label for="pr-pass">كلمة المرور الجديدة</label>
+        <input type="password" id="pr-pass" placeholder="8 أحرف على الأقل" autocomplete="new-password" dir="ltr"/>
+      </div>
+      <div class="form-group">
+        <label for="pr-pass2">تأكيد كلمة المرور</label>
+        <input type="password" id="pr-pass2" placeholder="أعد كتابة كلمة المرور" autocomplete="new-password" dir="ltr"
+               onkeydown="if(event.key==='Enter')window.submitPasswordRecovery()"/>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" id="pr-save-btn" onclick="window.submitPasswordRecovery()">💾 حفظ كلمة المرور</button>
+      <button class="btn-secondary" onclick="window.cancelPasswordRecovery()">إلغاء</button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div id="toast" class="toast hidden"></div>
   
  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1"></script>
 <script src="config.js"></script>
-<script src="./script.js?v=20260807-evfix2"></script>
+<script src="./script.js?v=20260807-adminusers2"></script>
   
 </body>
 </html>

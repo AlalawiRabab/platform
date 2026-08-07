@@ -228,6 +228,7 @@ const ALLOWED_EVIDENCE_MIME = [
 let _authListenerBound = false;
 let _authHandling = false;
 let _sessionBootstrapDone = false;
+let _passwordRecoveryActive = false;
 
 function escapeHtml(str) {
   if (str == null) return '';
@@ -324,14 +325,162 @@ async function fetchProfileForAuthUser(authUser) {
 async function denyAccessAndSignOut(message) {
   currentUser = null;
   _sessionBootstrapDone = false;
+  _passwordRecoveryActive = false;
   clearLegacySessionArtifacts();
   try { if (sb) await sb.auth.signOut(); } catch {}
   showLoginShell();
   if (message) showToast(message, 'error');
 }
 
+function clearPasswordRecoveryFields() {
+  const a = document.getElementById('pr-pass');
+  const b = document.getElementById('pr-pass2');
+  if (a) a.value = '';
+  if (b) b.value = '';
+}
+
+function openPasswordRecoveryModal() {
+  clearPasswordRecoveryFields();
+  showLoginShell();
+  openModal('password-recovery-modal');
+}
+
+function closePasswordRecoveryModal() {
+  clearPasswordRecoveryFields();
+  closeModal('password-recovery-modal');
+}
+
+/** رسائل خطأ من hash/query بعد فتح رابط الاستعادة */
+function consumeAuthRedirectError() {
+  try {
+    const hashParams = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
+    const queryParams = new URLSearchParams(window.location.search || '');
+    const err = hashParams.get('error') || queryParams.get('error');
+    const descRaw = hashParams.get('error_description') || queryParams.get('error_description') || '';
+    if (!err) return null;
+    try {
+      const path = window.location.pathname || '/index.html';
+      window.history.replaceState({}, document.title, path);
+    } catch {}
+    const desc = decodeURIComponent(String(descRaw).replace(/\+/g, ' '));
+    if (/expired|otp|invalid|token/i.test(desc) || err === 'access_denied') {
+      return 'رابط استعادة كلمة المرور غير صالح أو منتهٍ. اطلب رابطاً جديداً من المسؤول.';
+    }
+    return 'تعذّر إكمال استعادة كلمة المرور. اطلب رابطاً جديداً من المسؤول.';
+  } catch {
+    return null;
+  }
+}
+
+function isRecoveryRedirectInUrl() {
+  try {
+    const hashParams = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
+    const queryParams = new URLSearchParams(window.location.search || '');
+    return hashParams.get('type') === 'recovery' || queryParams.get('type') === 'recovery';
+  } catch {
+    return false;
+  }
+}
+
+function scrubAuthHashFromUrl() {
+  try {
+    if (!window.location.hash) return;
+    const path = window.location.pathname || '/index.html';
+    const search = window.location.search || '';
+    window.history.replaceState({}, document.title, path + search);
+  } catch {}
+}
+
+async function beginPasswordRecoveryFlow() {
+  _passwordRecoveryActive = true;
+  currentUser = null;
+  _sessionBootstrapDone = false;
+  clearLegacySessionArtifacts();
+  showLoginShell();
+  scrubAuthHashFromUrl();
+  openPasswordRecoveryModal();
+}
+
+async function submitPasswordRecovery() {
+  if (!_passwordRecoveryActive) {
+    showToast('جلسة استعادة كلمة المرور غير صالحة أو منتهية. اطلب رابطاً جديداً.', 'error');
+    closePasswordRecoveryModal();
+    showLoginShell();
+    return;
+  }
+  if (!sb) {
+    showToast('تعذّر الاتصال بخدمة المصادقة', 'error');
+    return;
+  }
+
+  const passEl = document.getElementById('pr-pass');
+  const pass2El = document.getElementById('pr-pass2');
+  const p1 = passEl ? String(passEl.value || '') : '';
+  const p2 = pass2El ? String(pass2El.value || '') : '';
+
+  if (p1.length < 8 || p1.length > 128) {
+    showToast('كلمة المرور يجب أن تكون 8 أحرف على الأقل', 'error');
+    clearPasswordRecoveryFields();
+    return;
+  }
+  if (p1 !== p2) {
+    showToast('كلمتا المرور غير متطابقتين', 'error');
+    clearPasswordRecoveryFields();
+    return;
+  }
+
+  const btn = document.getElementById('pr-save-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'جارٍ الحفظ…';
+  }
+
+  try {
+    const { error } = await sb.auth.updateUser({ password: p1 });
+    clearPasswordRecoveryFields();
+    if (error) {
+      _passwordRecoveryActive = false;
+      closePasswordRecoveryModal();
+      try { await sb.auth.signOut(); } catch {}
+      showLoginShell();
+      showToast('رابط استعادة كلمة المرور غير صالح أو منتهٍ. اطلب رابطاً جديداً من المسؤول.', 'error');
+      return;
+    }
+
+    _passwordRecoveryActive = false;
+    closePasswordRecoveryModal();
+    currentUser = null;
+    _sessionBootstrapDone = false;
+    clearLegacySessionArtifacts();
+    try { await sb.auth.signOut(); } catch {}
+    showLoginShell();
+    showToast('تم تعيين كلمة المرور بنجاح. يمكنك تسجيل الدخول الآن.', 'success');
+  } catch {
+    clearPasswordRecoveryFields();
+    showToast('تعذّر تعيين كلمة المرور. حاول مرة أخرى أو اطلب رابطاً جديداً.', 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '💾 حفظ كلمة المرور';
+    }
+  }
+}
+
+async function cancelPasswordRecovery() {
+  clearPasswordRecoveryFields();
+  closePasswordRecoveryModal();
+  _passwordRecoveryActive = false;
+  currentUser = null;
+  _sessionBootstrapDone = false;
+  clearLegacySessionArtifacts();
+  try { if (sb) await sb.auth.signOut(); } catch {}
+  showLoginShell();
+  showToast('تم إلغاء تعيين كلمة المرور', 'warning');
+}
+
 /** مسار واحد: profile → currentUser → الواجهة → البيانات */
 async function bootstrapAuthenticatedSession(session) {
+  if (_passwordRecoveryActive) return false;
   if (!session?.user) return false;
   if (_authHandling) return false;
   if (_sessionBootstrapDone && currentUser?.id === session.user.id) return true;
@@ -368,6 +517,9 @@ async function handleSignedOut() {
   indicatorsCache = {};
   settingsCache = {};
   activeSchoolYearId = null;
+  if (!_passwordRecoveryActive) {
+    closePasswordRecoveryModal();
+  }
   showLoginShell();
 }
 
@@ -376,6 +528,12 @@ async function handleAuthStateEvent(event, session) {
     await handleSignedOut();
     return;
   }
+  // جلسة استعادة فقط — لا تُفعَّل صلاحيات التطبيق / إدارة المستخدمين
+  if (event === 'PASSWORD_RECOVERY') {
+    await beginPasswordRecoveryFlow();
+    return;
+  }
+  if (_passwordRecoveryActive) return;
   if (!session?.user) return;
   // TOKEN_REFRESHED: لا تعِد تحميل البيانات
   if (event === 'TOKEN_REFRESHED') return;
@@ -454,6 +612,9 @@ function closeModal(id) {
   }
   if (id === 'program-detail-modal') {
     _openProgramDetailId = null;
+  }
+  if (id === 'password-recovery-modal') {
+    clearPasswordRecoveryFields();
   }
 }
 
@@ -3135,11 +3296,34 @@ function drawCompare() {
 /* ─────────────────────────────────────────────────────────────
    §34  USERS MANAGEMENT (admin only)
    ───────────────────────────────────────────────────────────── */
+function adminUsersErrorMessage(code) {
+  const c = String(code || '');
+  if (c === 'forbidden') return 'ليس لديك صلاحية لهذا الإجراء';
+  if (c === 'unauthorized') return 'الجلسة غير صالحة. سجّل الدخول مرة أخرى';
+  if (c === 'invalid_payload') return 'البيانات المدخلة غير صحيحة';
+  if (c === 'username_taken') return 'اسم المستخدم مستخدم مسبقاً';
+  if (c === 'method_not_allowed') return 'الطلب غير مسموح';
+  if (c === 'operation_failed') return 'تعذّر إتمام العملية. حاول مرة أخرى';
+  return 'تعذّر إتمام العملية';
+}
+
 async function invokeAdminUsers(body) {
-  if (!sb) throw new Error('Supabase غير متصل');
+  if (!sb) throw new Error('operation_failed');
   const { data, error } = await sb.functions.invoke('admin-users', { body });
-  if (error) throw error;
   if (data?.error) throw new Error(data.error);
+  if (error) {
+    try {
+      if (error.context && typeof error.context.json === 'function') {
+        const payload = await error.context.json();
+        if (payload?.error) throw new Error(payload.error);
+      }
+    } catch (inner) {
+      if (inner && inner.message && !String(inner.message).includes('Failed to execute')) {
+        throw inner;
+      }
+    }
+    throw new Error('operation_failed');
+  }
   return data;
 }
 
@@ -3149,11 +3333,11 @@ async function renderUsersSection() {
   let users = [];
   if (sb) {
     try {
-      const data = await invokeAdminUsers({ action: 'list' });
+      const data = await invokeAdminUsers({ action: 'list', page: 1, per_page: 50 });
       users = data?.users || [];
     } catch (err) {
-      console.error('[fetchUsers]', err && err.message ? err.message : err);
-      showToast('تعذّر تحميل المستخدمين. تأكد من نشر Edge Function: admin-users', 'error');
+      console.error('[fetchUsers]');
+      showToast(adminUsersErrorMessage(err && err.message), 'error');
       users = [];
     }
   } else {
@@ -3168,18 +3352,25 @@ async function renderUsersSection() {
       <button class="btn-primary" onclick="openAddUserModal()">+ إضافة مستخدم</button>
     </div>
     <div class="table-wrapper"><table class="data-table">
-      <thead><tr><th>#</th><th>الاسم</th><th>البريد / اسم العرض</th><th>الدور</th><th>تاريخ الإضافة</th><th>إجراءات</th></tr></thead>
+      <thead><tr><th>#</th><th>الاسم</th><th>البريد</th><th>اسم المستخدم</th><th>الدور</th><th>تاريخ الإضافة</th><th>إجراءات</th></tr></thead>
       <tbody>
         ${users.map((u,i)=>`<tr><td>${i+1}</td><td style="font-weight:700">${esc(u.name)}</td>
-          <td style="direction:ltr;text-align:right">${esc(u.email || u.username || '—')}</td>
+          <td style="direction:ltr;text-align:right">${esc(u.email || '—')}</td>
+          <td style="direction:ltr;text-align:right">${esc(u.username || '—')}</td>
           <td><span class="badge ${RB[u.role]||'badge-secondary'}">${esc(RL[u.role]||u.role)}</span></td>
           <td>${esc(fmtDate(u.created_at))}</td>
-          <td><div style="display:flex;gap:6px;align-items:center">
+          <td><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
             <select class="task-status-select" onchange="handleChgRole('${esc(u.id)}',this.value)">
               <option value="admin" ${u.role==='admin'?'selected':''}>مدير</option>
               <option value="vice" ${u.role==='vice'?'selected':''}>وكيل</option>
               <option value="teacher" ${u.role==='teacher'?'selected':''}>معلم</option>
             </select>
+            <button class="btn-sm btn-edit" title="تعديل الاسم واسم المستخدم"
+              data-id="${esc(u.id)}" data-name="${esc(u.name||'')}" data-username="${esc(u.username||'')}"
+              onclick="openEditUserModalFromBtn(this)">✏️</button>
+            <button class="btn-sm btn-view" title="إرسال رابط إعادة تعيين كلمة المرور"
+              data-id="${esc(u.id)}"
+              onclick="handleSendPasswordReset(this.dataset.id)">🔑</button>
             ${u.id!==currentUser?.id
               ?`<button class="btn-sm btn-delete" onclick="handleDelUser('${esc(u.id)}')">🗑️</button>`
               :'<span style="font-size:12px;color:var(--text-muted)">أنت</span>'}
@@ -3191,15 +3382,29 @@ async function renderUsersSection() {
       <div class="modal-body">
         <div class="form-group"><label>الاسم الكامل</label><input type="text" id="nu-name" placeholder="الاسم الكامل"/></div>
         <div class="form-group"><label>البريد الإلكتروني</label><input type="email" id="nu-email" placeholder="email@school.sa"/></div>
-        <div class="form-group"><label>اسم العرض (اختياري)</label><input type="text" id="nu-username" placeholder="يظهر في الواجهة فقط"/></div>
-        <div class="form-group"><label>كلمة المرور</label><input type="password" id="nu-pass" placeholder="كلمة المرور (8 أحرف على الأقل)"/></div>
+        <div class="form-group"><label>اسم المستخدم</label><input type="text" id="nu-username" placeholder="اسم عرض فريد"/></div>
+        <div class="form-group"><label>كلمة المرور الأولية</label><input type="password" id="nu-pass" placeholder="8 أحرف على الأقل (حرف ورقم)" autocomplete="new-password"/></div>
         <div class="form-group"><label>الدور</label>
           <select id="nu-role"><option value="teacher">معلم</option><option value="vice">وكيل</option><option value="admin">مدير</option></select>
         </div>
+        <p style="font-size:12px;color:var(--text-muted)">بعد الإنشاء يمكن إرسال رابط إعادة تعيين كلمة المرور للمستخدم.</p>
       </div>
       <div class="modal-footer">
         <button class="btn-primary" onclick="handleAddUser()">💾 إضافة</button>
         <button class="btn-secondary" onclick="closeModal('add-user-modal')">إلغاء</button>
+      </div>
+    </div></div>
+    <div id="edit-user-modal" class="modal-overlay hidden"><div class="modal">
+      <div class="modal-header"><h3>تعديل بيانات المستخدم</h3><button onclick="closeModal('edit-user-modal')" class="modal-close">✕</button></div>
+      <div class="modal-body">
+        <input type="hidden" id="eu-id"/>
+        <div class="form-group"><label>الاسم الكامل</label><input type="text" id="eu-name" placeholder="الاسم الكامل"/></div>
+        <div class="form-group"><label>اسم المستخدم</label><input type="text" id="eu-username" placeholder="اسم مستخدم فريد"/></div>
+        <p style="font-size:12px;color:var(--text-muted)">لا يمكن تعديل البريد أو كلمة المرور من هنا. استخدم إرسال رابط الاستعادة لكلمة المرور.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-primary" onclick="handleUpdateUser()">💾 حفظ</button>
+        <button class="btn-secondary" onclick="closeModal('edit-user-modal')">إلغاء</button>
       </div>
     </div></div>`;
 }
@@ -3209,16 +3414,75 @@ function openAddUserModal() {
   openModal('add-user-modal');
 }
 
+function openEditUserModalFromBtn(btn) {
+  if (!btn) return;
+  openEditUserModal(btn.dataset.id || '', btn.dataset.name || '', btn.dataset.username || '');
+}
+
+function openEditUserModal(id, name, username) {
+  if (!requireAuth('manageUsers')) return;
+  const idEl = document.getElementById('eu-id');
+  const nameEl = document.getElementById('eu-name');
+  const userEl = document.getElementById('eu-username');
+  if (idEl) idEl.value = id || '';
+  if (nameEl) nameEl.value = name || '';
+  if (userEl) userEl.value = username || '';
+  openModal('edit-user-modal');
+}
+
+async function handleUpdateUser() {
+  if (!requireAuth('manageUsers')) return;
+  if (!sb) { showToast('تعذّر الاتصال','error'); return; }
+  const id = (document.getElementById('eu-id')?.value || '').trim();
+  const name = clampInput(document.getElementById('eu-name')?.value || '');
+  const username = clampInput(document.getElementById('eu-username')?.value || '');
+  if (!id || !name || !username) {
+    showToast('يرجى إدخال الاسم واسم المستخدم','error');
+    return;
+  }
+  if (username.length < 3) {
+    showToast('اسم المستخدم يجب أن يكون 3 أحرف على الأقل','error');
+    return;
+  }
+  try {
+    await invokeAdminUsers({ action: 'update', target_id: id, name, username });
+    closeModal('edit-user-modal');
+    showToast('تم تحديث بيانات المستخدم بنجاح','success');
+    await renderUsersSection();
+  } catch (err) {
+    console.error('[handleUpdateUser]');
+    showToast(adminUsersErrorMessage(err && err.message), 'error');
+  }
+}
+
+async function handleSendPasswordReset(id) {
+  if (!requireAuth('manageUsers')) return;
+  if (!sb) { showToast('تعذّر الاتصال','error'); return; }
+  if (!id) return;
+  if (!confirm('إرسال رسالة إعادة تعيين كلمة المرور إلى بريد هذا المستخدم؟')) return;
+  try {
+    await invokeAdminUsers({
+      action: 'send_password_reset',
+      target_id: id,
+      redirect_to: `${window.location.origin}/index.html`,
+    });
+    showToast('تم إرسال رسالة إعادة التعيين إن كان البريد صالحاً','success');
+  } catch (err) {
+    console.error('[handleSendPasswordReset]');
+    showToast(adminUsersErrorMessage(err && err.message), 'error');
+  }
+}
+
 async function handleAddUser() {
   if (!requireAuth('manageUsers')) return;
-  if (!sb) { showToast('Supabase غير متصل','error'); return; }
+  if (!sb) { showToast('تعذّر الاتصال','error'); return; }
   const g = id => (document.getElementById(id)?.value||'').trim();
   const name=clampInput(g('nu-name'));
   const email=g('nu-email').toLowerCase();
-  const username=clampInput(g('nu-username')) || null;
+  const username=clampInput(g('nu-username'));
   const pass=g('nu-pass');
   const role=g('nu-role');
-  if (!name||!email||!pass) { showToast('يرجى تعبئة جميع الحقول','error'); return; }
+  if (!name||!email||!pass||!username) { showToast('يرجى تعبئة جميع الحقول بما فيها اسم المستخدم','error'); return; }
   if (!isValidEmail(email)) { showToast('صيغة البريد غير صحيحة','error'); return; }
   if (pass.length < 8 || pass.length > 128) { showToast('كلمة المرور يجب أن تكون بين 8 و 128 حرفاً','error'); return; }
   if (!VALID_ROLES.includes(role)) { showToast('دور غير صالح','error'); return; }
@@ -3232,36 +3496,46 @@ async function handleAddUser() {
       role,
     });
     closeModal('add-user-modal');
-    showToast('تمت إضافة المستخدم ✅','success');
+    showToast('تمت إضافة المستخدم بنجاح','success');
     await renderUsersSection();
-  } catch(err){ console.error('[handleAddUser]'); showToast('تعذّر إتمام العملية','error'); }
+  } catch(err){
+    console.error('[handleAddUser]');
+    showToast(adminUsersErrorMessage(err && err.message),'error');
+  }
 }
 
 async function handleDelUser(id) {
   if (!requireAuth('manageUsers')) return;
   if (id === currentUser?.id) { showToast('لا يمكنك حذف حسابك الحالي','error'); return; }
-  if (!confirm('حذف هذا المستخدم؟')) return;
-  if (!sb) { showToast('Supabase غير متصل','error'); return; }
+  if (!confirm('حذف هذا المستخدم نهائياً؟')) return;
+  if (!sb) { showToast('تعذّر الاتصال','error'); return; }
   try {
     await invokeAdminUsers({ action: 'delete', target_id: id });
-    showToast('تم الحذف 🗑️','warning');
+    showToast('تم حذف المستخدم','warning');
     await renderUsersSection();
-  } catch(err){ console.error('[handleDelUser]'); showToast('تعذّر إتمام العملية','error'); }
+  } catch(err){
+    console.error('[handleDelUser]');
+    showToast(adminUsersErrorMessage(err && err.message),'error');
+  }
 }
 
 async function handleChgRole(id, role) {
   if (!requireAuth('manageUsers')) return;
   if (!VALID_ROLES.includes(role)) { showToast('دور غير صالح','error'); return; }
-  if (id === currentUser?.id && role !== currentUser.role) {
+  if (id === currentUser?.id) {
     showToast('لا يمكنك تغيير دورك الحالي','error');
     await renderUsersSection();
     return;
   }
-  if (!sb) { showToast('Supabase غير متصل','error'); return; }
+  if (!sb) { showToast('تعذّر الاتصال','error'); return; }
   try {
     await invokeAdminUsers({ action: 'change_role', target_id: id, role });
-    showToast('تم تعديل الدور ✅','success');
-  } catch(err){ console.error('[handleChgRole]'); showToast('تعذّر إتمام العملية','error'); await renderUsersSection(); }
+    showToast('تم تعديل الدور بنجاح','success');
+  } catch(err){
+    console.error('[handleChgRole]');
+    showToast(adminUsersErrorMessage(err && err.message),'error');
+    await renderUsersSection();
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -3280,7 +3554,29 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   clearLegacySessionArtifacts();
+
+  const redirectErr = consumeAuthRedirectError();
+  if (redirectErr) {
+    showLoginShell();
+    showToast(redirectErr, 'error');
+    return;
+  }
+
+  // رابط استعادة: لا تمنح دخول التطبيق / إدارة المستخدمين
+  if (isRecoveryRedirectInUrl()) {
+    _passwordRecoveryActive = true;
+    showLoginShell();
+    try { await sb.auth.getSession(); } catch {}
+    openPasswordRecoveryModal();
+    return;
+  }
+
   const { data, error } = await sb.auth.getSession();
+  if (_passwordRecoveryActive) {
+    showLoginShell();
+    openPasswordRecoveryModal();
+    return;
+  }
   if (error || !data?.session) {
     showLoginShell();
     return;
@@ -3297,9 +3593,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderReports();
   drawDashPie();
 });
-window.doLogin = doLogin; 
+window.doLogin = doLogin;
 window.openAddUserModal = openAddUserModal;
+window.openEditUserModalFromBtn = openEditUserModalFromBtn;
+window.handleUpdateUser = handleUpdateUser;
+window.handleSendPasswordReset = handleSendPasswordReset;
 window.handleAddUser = handleAddUser;
 window.handleDelUser = handleDelUser;
 window.handleChgRole = handleChgRole;
+window.submitPasswordRecovery = submitPasswordRecovery;
+window.cancelPasswordRecovery = cancelPasswordRecovery;
 window.doLogout = doLogout;
