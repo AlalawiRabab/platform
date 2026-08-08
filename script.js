@@ -2125,9 +2125,41 @@ function evidenceTypeFromFileName(name) {
   return 'ملف';
 }
 
-function sanitizeStorageFileName(name) {
-  const base = String(name || 'file').trim() || 'file';
-  return base.replace(/[^\w.\-ء-ي]+/g, '_').replace(/_+/g, '_').slice(0, 120);
+/** امتداد مسموح فقط من اسم الملف الأصلي (للتخزين والعرض). */
+function getAllowedEvidenceExtension(fileName) {
+  const ext = (String(fileName || '').split('.').pop() || '').toLowerCase();
+  return ALLOWED_EVIDENCE_EXT.includes(ext) ? ext : null;
+}
+
+/**
+ * مفتاح Storage آمن وفريد:
+ * {auth.uid()}/{timestamp}-{random}.{ext}
+ * بلا اسم عربي أو اسم مستخدم داخل المسار.
+ */
+function buildEvidenceStorageObjectKey(userId, fileName) {
+  const uid = String(userId || '').trim();
+  if (!uid) throw new Error('يجب تسجيل الدخول أولاً');
+  const ext = getAllowedEvidenceExtension(fileName);
+  if (!ext) throw new Error('نوع الملف غير مسموح');
+  let rand = '';
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      rand = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+    }
+  } catch {}
+  if (!rand) rand = Math.random().toString(36).slice(2, 14);
+  return `${uid}/${Date.now()}-${rand}.${ext}`;
+}
+
+async function removeUploadedEvidenceObject(path) {
+  if (!sb || !path) return;
+  try {
+    const key = String(path).replace(/^\/+/, '').replace(/^evidences\//, '');
+    if (!key || key.includes('..')) return;
+    await sb.storage.from(EVIDENCE_BUCKET).remove([key]);
+  } catch {
+    /* تنظيف أفضل جهد — لا تُفشِل واجهة المستخدم بسبب الحذف */
+  }
 }
 
 function handleEvidenceFileSelect(input, prefix) {
@@ -2183,9 +2215,8 @@ async function uploadEvidenceToStorage(file, meta) {
     throw new Error('نوع الملف غير مسموح');
   }
 
-  const safeName = sanitizeStorageFileName(file.name);
-  // مسار جديد: {auth.uid()}/{اسم فريد}
-  const path = `${currentUser.id}/${Date.now()}-${safeName}`;
+  // مفتاح ASCII آمن فقط — الاسم العربي يبقى في file_name للعرض
+  const path = buildEvidenceStorageObjectKey(currentUser.id, file.name);
 
   const { error: upErr } = await sb.storage
     .from(EVIDENCE_BUCKET)
@@ -2422,6 +2453,7 @@ async function saveEvidence() {
     await refreshEvidenceViews(saved.program_id || progId);
     showToast('تم رفع الشاهد وحفظه بنجاح.','success');
   } catch (err) {
+    if (fileMeta?.path) await removeUploadedEvidenceObject(fileMeta.path);
     console.error('[saveEvidence]');
     showToast('تعذّر حفظ الشاهد', 'error');
   } finally {
@@ -3009,6 +3041,7 @@ async function saveReport() {
     await refreshEvidenceViews(saved.program_id || progId);
     showToast('تم رفع الشاهد وحفظه بنجاح.','success');
   } catch (err) {
+    if (fileMeta?.path) await removeUploadedEvidenceObject(fileMeta.path);
     console.error('[saveReport]');
     showToast('تعذّر حفظ الشاهد', 'error');
   } finally {
