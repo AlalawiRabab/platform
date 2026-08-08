@@ -236,7 +236,17 @@ canvas{display:block;max-width:100%;padding:14px}
 /* ── TOAST ── */
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1c2833;color:white;padding:13px 26px;border-radius:50px;font-size:14px;font-weight:600;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,0.25);animation:toastIn 0.3s ease;white-space:nowrap}
 @keyframes toastIn{from{bottom:0;opacity:0}to{bottom:24px;opacity:1}}
-.toast.success{background:linear-gradient(135deg,#1e8449,#27ae60)}.toast.error{background:linear-gradient(135deg,#c0392b,#e74c3c)}.toast.warning{background:linear-gradient(135deg,#d68910,#f39c12)}
+.toast.success{background:linear-gradient(135deg,#1e8449,#27ae60)}.toast.error{background:linear-gradient(135deg,#c0392b,#e74c3c)}.toast.warning{background:linear-gradient(135deg,#d68910,#f39c12)}.toast.info{background:linear-gradient(135deg,#1a5276,#2e86c1)}
+
+/* ── EVIDENCE SOURCE TOGGLE ── */
+.evidence-source-toggle{display:flex;flex-wrap:wrap;gap:10px}
+.evidence-source-option{flex:1;min-width:180px;display:flex;align-items:center;gap:10px;padding:12px 14px;border:1.5px solid var(--border);border-radius:10px;background:#fafbfc;cursor:pointer;transition:all var(--transition);font-size:13px;font-weight:600;color:var(--text-main)}
+.evidence-source-option:hover{border-color:var(--primary-light);background:#eaf2ff}
+.evidence-source-option:has(input:checked){border-color:var(--primary);background:#eaf2ff;box-shadow:0 0 0 3px rgba(46,134,193,0.12)}
+.evidence-source-option input{accent-color:var(--primary);width:16px;height:16px;flex-shrink:0}
+.field-hint{display:block;margin-top:6px;font-size:12px;color:var(--text-muted);line-height:1.5}
+#ev-file-input,#rep-file-input{display:block;width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;background:#fff;font-family:inherit;font-size:13px}
+.evidence-view-btn{white-space:nowrap}
 
 /* ════════════════════
    RESPONSIVE — TABLET

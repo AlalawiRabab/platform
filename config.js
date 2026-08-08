@@ -1,20 +1,23 @@
 /* ================================================================
-   config.js — إعدادات Supabase
+   config.js — إعدادات Supabase (واجهة فقط)
    ────────────────────────────────────────────────────────────────
-   ⚠️ مهم للأمان:
-   - استخدم مفتاح anon (العام) فقط هنا. وهو آمن للاستخدام في الواجهة الأمامية.
-   - لا تضع أبداً مفتاح service_role في هذا الملف أو في أي كود يصل للمتصفح،
-     لأنه يمنح صلاحيات كاملة على قاعدة البيانات ويتجاوز سياسات RLS.
-   - الحماية الفعلية تأتي من تفعيل Row Level Security (RLS) على الجداول.
-
-   احصل على القيمتين من:
-   Supabase Dashboard → Project Settings → API → Project URL + anon public key
+   - استخدم مفتاح anon / publishable فقط.
+   - لا تضع service_role هنا أبداً.
+   - الحماية الحقيقية: Supabase Auth + RLS + Edge Function Secrets.
    ================================================================ */
 
 window.SUPABASE_URL = 'https://qeabgktifyyyjrzphtpw.supabase.co';
+// anon / publishable key فقط — لا تضع service_role هنا أبداً
 window.SUPABASE_ANON = 'sb_publishable_G3EvrlPIwhYfrnauHQDveA_bW4YpVwl';
 window.supabaseClient = supabase.createClient(
   window.SUPABASE_URL,
-  window.SUPABASE_ANON
+  window.SUPABASE_ANON,
+  {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      storage: window.localStorage,
+    },
+  }
 );
- 
