@@ -1,6 +1,7 @@
 // Supabase Edge Function: admin-users
  // مراجعة — لا تُنشر تلقائياً
- // Secrets: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, ALLOWED_ORIGINS
+ // Secrets: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY,
+ //          ALLOWED_ORIGINS (CORS), PASSWORD_RESET_REDIRECT_URLS (full redirect URLs)
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 
@@ -16,7 +17,7 @@ function parseAllowedOriginsRaw(): string[] {
   return raw.split(',').map((s) => s.trim()).filter(Boolean)
 }
 
-/** يحوّل عناصر ALLOWED_ORIGINS إلى origins فقط (يدعم إدخال أصل أو رابط كامل). */
+/** CORS فقط: origins بلا مسارات (إن وُجد مسار في الإدخال يُؤخذ الأصل فقط). */
 function allowedOriginsList(): string[] {
   const out: string[] = []
   for (const entry of parseAllowedOriginsRaw()) {
@@ -30,8 +31,29 @@ function allowedOriginsList(): string[] {
   return [...new Set(out)]
 }
 
-function recoveryRedirectForOrigin(origin: string): string {
-  return `${origin.replace(/\/$/, '')}/index.html`
+/**
+ * روابط استعادة كاملة مسموحة (بلا query/hash)، مثل:
+ * http://127.0.0.1:5500/index.html
+ * https://alalawirabab.github.io/platform/index.html
+ */
+function passwordResetRedirectAllowlist(): string[] {
+  const raw = Deno.env.get('PASSWORD_RESET_REDIRECT_URLS') ?? ''
+  const out: string[] = []
+  for (const entry of raw.split(',').map((s) => s.trim()).filter(Boolean)) {
+    try {
+      const u = new URL(entry)
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') continue
+      if (u.search || u.hash) continue
+      if (!u.pathname.toLowerCase().endsWith('/index.html') &&
+          u.pathname.toLowerCase() !== '/index.html') {
+        continue
+      }
+      out.push(`${u.origin}${u.pathname}`)
+    } catch {
+      /* تجاهل */
+    }
+  }
+  return [...new Set(out)]
 }
 
 function corsHeadersFor(req: Request): Record<string, string> {
@@ -83,27 +105,38 @@ function normalizeAction(raw: unknown): string {
 }
 
 /**
- * يبني redirectTo كاملاً من أصل مسموح فقط، مثل:
- * http://127.0.0.1:5500/index.html
- * يرفض أي redirect حر خارج ALLOWED_ORIGINS.
+ * يقبل redirect_to فقط بمطابقة تامة لرابط كامل من PASSWORD_RESET_REDIRECT_URLS.
+ * يرفض query/hash وأي مسار غير مُدرَج (مثل /index.html بدل /platform/index.html).
+ * إن لم يُرسل redirect_to: يختار أول رابط مسموح يطابق Origin الطلب.
  */
-function pickRedirectTo(requested: unknown): string | null {
-  const allowed = allowedOriginsList()
+function pickRedirectTo(requested: unknown, requestOrigin: string): string | null {
+  const allowed = passwordResetRedirectAllowlist()
   if (!allowed.length) return null
 
   const req = String(requested || '').trim()
-  if (!req) return recoveryRedirectForOrigin(allowed[0])
-
-  try {
-    const u = new URL(req)
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
-    if (!allowed.includes(u.origin)) return null
-    const path = u.pathname || '/'
-    if (path !== '/' && path !== '/index.html') return null
-    return recoveryRedirectForOrigin(u.origin)
-  } catch {
-    return null
+  if (req) {
+    try {
+      const u = new URL(req)
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
+      if (u.search || u.hash) return null
+      const canonical = `${u.origin}${u.pathname}`
+      if (!allowed.includes(canonical)) return null
+      return canonical
+    } catch {
+      return null
+    }
   }
+
+  const origin = String(requestOrigin || '').trim()
+  if (!origin) return null
+  for (const url of allowed) {
+    try {
+      if (new URL(url).origin === origin) return url
+    } catch {
+      /* تجاهل */
+    }
+  }
+  return null
 }
 
 async function countAdmins(admin: AdminClient): Promise<number | null> {
@@ -347,7 +380,10 @@ Deno.serve(async (req) => {
       const email = authUser?.user?.email || ''
       if (authErr || !email) return json(req, { error: 'operation_failed' }, 400)
 
-      const redirectTo = pickRedirectTo((body as { redirect_to?: string }).redirect_to)
+      const redirectTo = pickRedirectTo(
+        (body as { redirect_to?: string }).redirect_to,
+        req.headers.get('Origin') || '',
+      )
       if (!redirectTo) return json(req, { error: 'invalid_payload' }, 400)
 
       // إرسال رسالة الاستعادة — لا تُعاد الروابط/التوكن في الاستجابة

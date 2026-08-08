@@ -18,32 +18,39 @@
 
 لا تضع قيم هذه المفاتيح في Git أو في هذا الملف.
 
-### سر مخصص — المطلوب ضبطه يدوياً فقط
+### أسرار مخصصة — المطلوب ضبطها يدوياً
 | الاسم | الوصف |
 |------|--------|
-| `ALLOWED_ORIGINS` | قائمة origins مسموحة مفصولة بفواصل لـ CORS وبناء `redirectTo` |
+| `ALLOWED_ORIGINS` | قائمة **origins فقط** (بلا مسارات) مفصولة بفواصل — لـ **CORS فقط** |
+| `PASSWORD_RESET_REDIRECT_URLS` | قائمة **روابط كاملة** مسموحة لـ `redirectTo` مفصولة بفواصل (تحافظ على المسار مثل `/platform/`) |
 
-مثال شكل القيمة (origins فقط، بدون مفاتيح):
+مثال `ALLOWED_ORIGINS` (CORS — أصول بلا مسارات):
 ```text
-http://127.0.0.1:5500,http://localhost:5500
+http://127.0.0.1:5500,http://localhost:5500,https://alalawirabab.github.io
 ```
-أضف لاحقاً أصل بيئة الإنتاج المؤكد (مثل GitHub Pages) دون تخمين.
+
+مثال `PASSWORD_RESET_REDIRECT_URLS` (القيمة التي ستُضبط لاحقاً):
+```text
+http://127.0.0.1:5500/index.html,http://localhost:5500/index.html,https://alalawirabab.github.io/platform/index.html
+```
 
 ```bash
-supabase secrets set ALLOWED_ORIGINS="http://127.0.0.1:5500,http://localhost:5500"
+supabase secrets set ALLOWED_ORIGINS="http://127.0.0.1:5500,http://localhost:5500,https://alalawirabab.github.io"
+supabase secrets set PASSWORD_RESET_REDIRECT_URLS="http://127.0.0.1:5500/index.html,http://localhost:5500/index.html,https://alalawirabab.github.io/platform/index.html"
 ```
 
+⚠️ لا تستخدم `{origin}/index.html` يدوياً للإنتاج — ذلك يحذف مسار `/platform/`.
+
 ## إعداد Authentication → URL Configuration
-في لوحة Supabase → Authentication → URL Configuration أضف إلى Redirect URLs (وربط Site URL حسب الحاجة):
+في لوحة Supabase → Authentication → URL Configuration أضف إلى Redirect URLs:
 
 ```text
 http://127.0.0.1:5500/index.html
 http://localhost:5500/index.html
+https://alalawirabab.github.io/platform/index.html
 ```
 
-ثم أضف رابط الإنتاج الكامل لاحقاً (نفس مسار الصفحة، مثل `.../index.html`).
-
-بدون هذه الروابط قد تفشل رسالة الاستعادة أو يُرفض `redirectTo`.
+Site URL يمكن ضبطه لاحقاً على رابط الإنتاج المؤكد عند النشر.
 
 ## العمليات المدعومة (`action`)
 | action | مرادفات | الوصف |
@@ -63,13 +70,13 @@ http://localhost:5500/index.html
 3. قراءة `profiles.role` للمستدعي — يجب `admin`.
 4. بعدها فقط يُستخدم `service_role`.
 5. CORS من أصول `ALLOWED_ORIGINS` فقط — بلا `*`.
-6. `redirectTo` يُبنى كـ `{origin}/index.html` من أصل مسموح فقط؛ أي redirect حر خارج القائمة يُرفض.
+6. `redirectTo` يطابق تماماً عنصراً من `PASSWORD_RESET_REDIRECT_URLS` (بلا query/hash، بلا wildcard).
 7. لا تُعاد كلمات المرور أو recovery tokens أو action links.
 8. منع حذف الذات وآخر admin، ومنع تغيير دور الحساب الحالي.
 
 ## مسار استعادة كلمة المرور (واجهة + دالة)
-1. Admin يستدعي `send_password_reset` مع `redirect_to` مثل `http://127.0.0.1:5500/index.html`.
-2. المستخدم يفتح رابط البريد → يصل للمنصة بجلسة `PASSWORD_RECOVERY` فقط (بدون دخول لإدارة المستخدمين).
+1. Admin يستدعي `send_password_reset` مع `redirect_to` كامل الصفحة (مثل `.../platform/index.html`).
+2. المستخدم يفتح رابط البريد → جلسة `PASSWORD_RECOVERY` فقط (بدون إدارة المستخدمين).
 3. نافذة «تعيين كلمة مرور جديدة» → `sb.auth.updateUser({ password })`.
 4. بعد النجاح: `signOut` + شاشة الدخول ورسالة نجاح عربية.
 
@@ -77,7 +84,8 @@ http://localhost:5500/index.html
 ```bash
 supabase login
 supabase link --project-ref <PROJECT_REF>
-supabase secrets set ALLOWED_ORIGINS="http://127.0.0.1:5500,http://localhost:5500"
+supabase secrets set ALLOWED_ORIGINS="http://127.0.0.1:5500,http://localhost:5500,https://alalawirabab.github.io"
+supabase secrets set PASSWORD_RESET_REDIRECT_URLS="http://127.0.0.1:5500/index.html,http://localhost:5500/index.html,https://alalawirabab.github.io/platform/index.html"
 supabase functions deploy admin-users
 ```
 
@@ -85,7 +93,7 @@ supabase functions deploy admin-users
 1. دخول admin من واجهة ضمن `ALLOWED_ORIGINS`.
 2. `list` يظهر المستخدمين بلا كلمات مرور.
 3. `update` يغيّر الاسم واسم المستخدم فقط.
-4. مسار الاستعادة الكامل (أدناه).
+4. مسار الاستعادة الكامل (أدناه) — تحقق أن الإنتاج يبقي `/platform/`.
 5. teacher/vice → `forbidden`؛ بلا JWT → `unauthorized`.
 6. خفض آخر admin أو تغيير دور الذات → `forbidden`.
 
@@ -107,14 +115,12 @@ await sb.functions.invoke('admin-users', {
   body: {
     action: 'send_password_reset',
     target_id: '<uuid>',
-    redirect_to: 'http://127.0.0.1:5500/index.html'
+    redirect_to: 'https://alalawirabab.github.io/platform/index.html'
   }
 });
 ```
 - نجاح الدالة: `{ ok: true, message: "password_reset_sent" }` بلا token/link.
-- افتح رابط البريد → تظهر نافذة التعيين (جلسة `PASSWORD_RECOVERY` دون صلاحيات الإدارة).
-- عيّن كلمة مرور ≥ 8 ومتطابقة → تسجيل خروج ورسالة نجاح على شاشة الدخول.
-- رابط منتهٍ/غير صالح → رسالة عربية واضحة.
+- رفض: `https://alalawirabab.github.io/index.html` (يفقد `/platform/`) أو أي رابط بـ query/hash.
 
 ## استدعاء من الواجهة
 ```js

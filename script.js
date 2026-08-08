@@ -3457,16 +3457,34 @@ async function handleUpdateUser() {
   }
 }
 
+/** رابط صفحة كامل بدون query/hash لمسار استعادة كلمة المرور */
+function passwordResetRedirectUrl() {
+  try {
+    const origin = window.location.origin;
+    let path = window.location.pathname || '/';
+    if (path.endsWith('/')) path = `${path}index.html`;
+    else if (!/\.html?$/i.test(path)) path = `${path}/index.html`;
+    return `${origin}${path}`;
+  } catch {
+    return '';
+  }
+}
+
 async function handleSendPasswordReset(id) {
   if (!requireAuth('manageUsers')) return;
   if (!sb) { showToast('تعذّر الاتصال','error'); return; }
   if (!id) return;
   if (!confirm('إرسال رسالة إعادة تعيين كلمة المرور إلى بريد هذا المستخدم؟')) return;
+  const redirectTo = passwordResetRedirectUrl();
+  if (!redirectTo) {
+    showToast('تعذّر تحديد رابط الاستعادة','error');
+    return;
+  }
   try {
     await invokeAdminUsers({
       action: 'send_password_reset',
       target_id: id,
-      redirect_to: `${window.location.origin}/index.html`,
+      redirect_to: redirectTo,
     });
     showToast('تم إرسال رسالة إعادة التعيين إن كان البريد صالحاً','success');
   } catch (err) {
