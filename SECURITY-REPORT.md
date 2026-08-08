@@ -8,7 +8,7 @@
 ## ملخص تنفيذي
 
 تمت مراجعة أمنية كاملة للمشروع وإصلاح الثغرات القابلة للإصلاح في الواجهة دون كسر الوظائف الحالية.  
-تم إنشاء ملف `supabase-security.sql` يجب تنفيذه يدوياً في لوحة Supabase لإغلاق أخطر ثغرة على مستوى قاعدة البيانات (جدول `users` + سياسة `allow_all`).
+> **تحديث (security-hardening):** ملف `supabase-security.sql` نُقل إلى `sql/legacy-disabled/supabase-security.sql.disabled` وهو **معطل — لا يُنفَّذ**. المسار المعتمد الآن: `phase_auth_foundation_review.sql` → `phase_rls_cutover_review.sql` → `phase_storage_private_review.sql` (مراجعة يدوية).
 
 | المستوى | العدد |
 |--------|------|
@@ -25,8 +25,8 @@
 
 | # | الثغرة | الخطورة | الحالة | التفاصيل |
 |---|--------|---------|--------|----------|
-| C1 | سياسة RLS `allow_all` على كل الجداول | Critical | **يحتاج تدخل يدوي** | كانت تسمح لأي شخص يملك anon key بقراءة/تعديل/حذف كل شيء بما فيها كلمات المرور. ملف `supabase-security.sql` يغلق جدول `users` ويستبدل السياسات. |
-| C2 | كلمات مرور بـ plaintext في جدول `users` مع إمكانية `SELECT *` | Critical | **جزئي — يدوي مطلوب** | الواجهة لم تعد تطلب عمود password في الاستعلامات. دوال `authenticate_user` / `admin_*` تمنع الوصول المباشر بعد تنفيذ SQL. |
+| C1 | سياسة RLS `allow_all` على كل الجداول | Critical | **يُعالَج عبر Auth phases** | كانت تسمح لأي شخص يملك anon key بقراءة/تعديل/حذف كل شيء. لا تستخدم الأرشيف المعطل؛ اعتمد ملفات `phase_*_review.sql`. |
+| C2 | كلمات مرور بـ plaintext في جدول `users` مع إمكانية `SELECT *` | Critical | **يُستبدل بـ Supabase Auth** | الواجهة تستخدم Auth فقط. ملفات `authenticate_user` القديمة في `sql/legacy-disabled/` — **لا تُنفَّذ**. |
 | C3 | تصعيد صلاحيات: أي زائر يستطيع إدراج مستخدم بدور `admin` عبر API | Critical | **جزئي — يدوي مطلوب** | بعد تنفيذ SQL يصبح الإنشاء عبر `admin_add_user` فقط (يتحقق من أن المستدعي admin). الواجهة محدّثة لاستخدام RPC. |
 | C4 | تحميل كل بيانات المنصة بدون تسجيل دخول عند `DOMContentLoaded` | Critical | **أُصلح** | لا تُحمَّل البيانات إلا بعد جلسة صالحة. |
 
@@ -72,18 +72,14 @@
 
 ## 3) ما يحتاج تدخلاً يدوياً (مهم جداً)
 
-### أ) تنفيذ ملف الأمان على Supabase (إلزامي)
+### أ) ملفات SQL — ما يُعتمد وما يُمنع
 
-1. افتح **Supabase Dashboard → SQL Editor**.
-2. نفّذ محتوى الملف: `supabase-security.sql`.
-3. غيّر كلمات مرور الحسابات التجريبية يدوياً في Dashboard (لا تضع القيم الحقيقية في المستودع):
-
-```sql
--- استبدل القيم يدوياً في SQL Editor فقط — لا تحفظها في Git
-UPDATE users SET password = '<NEW_STRONG_PASSWORD>' WHERE email = '<ADMIN_LOGIN_ID>';
-UPDATE users SET password = '<NEW_STRONG_PASSWORD>' WHERE email = '<VICE_LOGIN_ID>';
-UPDATE users SET password = '<NEW_STRONG_PASSWORD>' WHERE email = '<TEACHER_LOGIN_ID>';
-```
+1. **لا تنفّذ** أي ملف تحت `sql/legacy-disabled/` (امتداد `.sql.disabled`) بما فيها `supabase-security.sql.disabled`.
+2. للمراجعة/الانتقال إلى Auth راجع بالترتيب فقط:
+   - `sql/phase_auth_foundation_review.sql`
+   - `sql/phase_rls_cutover_review.sql`
+   - `sql/phase_storage_private_review.sql`
+3. إدارة الحسابات عبر **Supabase Auth** + Edge Function `admin-users` — وليس جدول `users` أو كلمات مرور نصية في SQL.
 
 ### ب) مخاطر متبقية بسبب طبيعة المعمارية (Frontend-only)
 
@@ -121,7 +117,7 @@ Permissions-Policy: camera=(), microphone=(), geolocation=()
 |-------|---------|
 | `script.js` | طبقة أمان، جلسات، XSS، تحقق صلاحيات، رفع ملفات، RPC للمستخدمين |
 | `index.html` | CSP، إصلاح HTML، قبول امتدادات صور آمنة، تثبيت إصدار المكتبة |
-| `supabase-security.sql` | **جديد** — دوال مصادقة + إغلاق جدول users |
+| `sql/legacy-disabled/supabase-security.sql.disabled` | **أرشيف معطل** — لا يُنفَّذ (كان دوال دخول نصية) |
 | `README.md` | تحديث كلمات المرور التجريبية وتعليمات الأمان |
 | `SECURITY-REPORT.md` | **جديد** — هذا التقرير |
 
@@ -145,7 +141,7 @@ Permissions-Policy: camera=(), microphone=(), geolocation=()
 | زر حذف مؤشر بدون دالة | أُصلحت بإضافة `handleDelInd` |
 
 **الخلاصة بعد المراجعة الثانية:**  
-الواجهة أكثر أماناً بشكل ملحوظ، لكن **لا يُعتبر المشروع آمناً للإنتاج** حتى يتم تنفيذ `supabase-security.sql` والانتقال لاحقاً إلى Supabase Auth + تشفير كلمات المرور.
+الواجهة أكثر أماناً بشكل ملحوظ. مسار الإنتاج الحالي يعتمد **Supabase Auth** وملفات `phase_*_review.sql` — وليس الأرشيف المعطل تحت `sql/legacy-disabled/`.
 
 ---
 

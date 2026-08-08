@@ -114,8 +114,10 @@
    INSERT INTO settings (id) VALUES (1) ON CONFLICT DO NOTHING;
 
    -- ⑨ RLS — مهم: لا تستخدم allow_all في الإنتاج
-   -- نفّذ ملف supabase-security.sql بعد إنشاء الجداول لتفعيل سياسات آمنة.
-   -- السياسة التالية للتجربة فقط (تسمح للجميع بكل شيء):
+   -- لا تنفّذ supabase-security.sql (نُقل إلى sql/legacy-disabled/*.sql.disabled).
+   -- للمراجعة المعتمدة: phase_auth_foundation_review.sql ثم
+   -- phase_rls_cutover_review.sql ثم phase_storage_private_review.sql.
+   -- السياسة التالية للتجربة فقط (تسمح للجميع بكل شيء) — لا تستخدمها:
    -- DO $$ DECLARE t text;
    -- BEGIN
    --   FOREACH t IN ARRAY ARRAY['users','programs','program_indicators',

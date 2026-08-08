@@ -1,3 +1,17 @@
+﻿-- ============================================================
+-- DISABLED / معطل — DO NOT EXECUTE / لا تُنفِّذ
+-- ============================================================
+-- AR: هذا ملف قديم معطل. لا يُنفَّذ على المشروع الحالي.
+--     يحتوي تصميم الدخول النصي القديم و/أو سياسات Storage عامة.
+--     الملفات المعتمدة حاليًا:
+--       sql/phase_auth_foundation_review.sql
+--       sql/phase_rls_cutover_review.sql
+--       sql/phase_storage_private_review.sql
+-- EN: Legacy disabled archive. Do NOT run on the current project.
+--     Contains plaintext login design and/or public Storage policies.
+--     Current approved review files are the three phase_* paths above.
+-- Location: sql/legacy-disabled/  (extension .sql.disabled)
+-- ============================================================
 -- ============================================================
 -- supabase-security.sql
 -- نفّذ هذا الملف في Supabase SQL Editor بعد إنشاء الجداول.
