@@ -1130,11 +1130,40 @@ body,
     font-size: 14px;
   }
 }
-${ev.link ? `
-<a href="${ev.link.startsWith('http') ? ev.link : 'https://' + ev.link}"
-   target="_blank"
-   rel="noopener noreferrer"
-   class="evidence-link-btn">
-   فتح الشاهد
-</a>
-` : ''}
+
+/* ── Academic year UI + Hijri preview ── */
+.header-year-wrap{display:flex;align-items:center;gap:8px;flex-shrink:0;margin-inline-start:auto}
+.header-year-label{font-size:12px;font-weight:600;color:var(--text-muted);white-space:nowrap}
+.header-year-select{min-width:160px;max-width:280px;padding:7px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:12.5px;background:white;color:var(--text-main);outline:none}
+.header-year-select:focus{border-color:var(--primary-light);box-shadow:0 0 0 3px rgba(15,110,92,0.12)}
+.year-readonly-banner{background:#fef6e8;color:#8a5a00;border-bottom:1px solid #f0d9a8;padding:10px 20px;font-size:13px;font-weight:600;text-align:center}
+.hijri-preview{margin-top:5px;font-size:11.5px;color:var(--text-muted);min-height:1em;line-height:1.4}
+.sy-admin-toolbar{display:flex;justify-content:flex-end;margin-bottom:14px;gap:8px;flex-wrap:wrap}
+.sy-admin-form{background:var(--bg);border:1px solid var(--border-light);border-radius:var(--radius-sm);padding:16px;margin-bottom:16px}
+.sy-admin-form h4{font-size:14px;font-weight:700;color:var(--primary-dark);margin-bottom:12px}
+.sy-admin-table{width:100%;min-width:720px}
+.sy-admin-table-wrap{overflow-x:auto}
+.sy-name-cell,.sy-hijri-cell{font-weight:700;white-space:normal;word-break:break-word;font-variant-numeric:tabular-nums}
+.sy-label-cell,.sy-dates-cell{white-space:normal;word-break:break-word;line-height:1.45;font-size:12px}
+.sy-text-input{width:100%;font-size:14px;font-variant-numeric:tabular-nums;letter-spacing:0.01em}
+.sy-current-values{background:#f7faf9;border:1px solid var(--border-light);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;font-size:13px;line-height:1.6}
+.sy-current-label{color:var(--text-muted);font-weight:600;margin-inline-end:6px}
+.sy-code{font-family:ui-monospace,Consolas,monospace;font-size:13px;background:#eef3f1;padding:2px 6px;border-radius:4px;unicode-bidi:plaintext}
+.field-hint{display:block;margin-top:6px;font-size:11.5px;color:var(--text-muted)}
+.calendar-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+.calendar-mode-toggle{display:inline-flex;border:1.5px solid var(--border);border-radius:8px;overflow:hidden;background:white}
+.cal-mode-btn{border:0;background:transparent;padding:7px 14px;font-size:12.5px;font-weight:700;color:var(--text-muted);cursor:pointer;font-family:inherit}
+.cal-mode-btn.active{background:var(--primary);color:white}
+.cal-today-btn{padding:7px 12px;font-size:12.5px}
+.calendar-date-row{display:flex;align-items:baseline;justify-content:space-between;gap:4px;margin-bottom:4px}
+.calendar-subdate{font-size:10px;color:var(--text-muted);font-weight:600;font-variant-numeric:tabular-nums}
+@media (max-width:768px){
+  .top-header{flex-wrap:wrap;height:auto;padding:10px 14px;gap:8px}
+  .header-title{flex:1 1 100%;order:1}
+  .header-year-wrap{order:2;width:100%;margin-inline-start:0}
+  .header-year-select{flex:1;max-width:none}
+  .header-user{order:3;margin-inline-start:auto}
+  .menu-toggle{order:0}
+  .calendar-toolbar{width:100%;justify-content:stretch}
+  .month-nav{flex:1;justify-content:center}
+}

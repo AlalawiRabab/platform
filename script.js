@@ -136,7 +136,7 @@
 
 'use strict';
 
-console.log('[script.js] BUILD=20260807-auth-teacher-perms');
+console.log('[script.js] BUILD=20260809-hijri2');
 
 /* ─────────────────────────────────────────────────────────────
    §0  SUPABASE
@@ -156,8 +156,13 @@ let evidencesCache   = [];
 let teachersCache    = [];
 let kpiCache         = [];
 let activeSchoolYearId = null;
+let schoolYearsCache = [];
+let selectedSchoolYearId = null;
+let calendarMode     = 'hijri'; // hijri | gregorian
 let calendarMonth    = new Date().getMonth();
 let calendarYear     = new Date().getFullYear();
+let calendarHijriMonth = 1;
+let calendarHijriYear  = 1447;
 let pendingFileData  = null;
 let pendingImageData = null;
 let pendingEvidenceFile = null;
@@ -519,6 +524,8 @@ async function handleSignedOut() {
   indicatorsCache = {};
   settingsCache = {};
   activeSchoolYearId = null;
+  selectedSchoolYearId = null;
+  schoolYearsCache = [];
   if (!_passwordRecoveryActive) {
     closePasswordRecoveryModal();
   }
@@ -681,6 +688,8 @@ async function doLogout() {
   indicatorsCache = {};
   settingsCache = {};
   activeSchoolYearId = null;
+  selectedSchoolYearId = null;
+  schoolYearsCache = [];
   clearLegacySessionArtifacts();
   try { if (sb) await sb.auth.signOut(); } catch {}
   showLoginShell();
@@ -719,6 +728,12 @@ if (nm) {
     if (btn.getAttribute('onclick')?.includes('openTaskModal')) btn.style.display = can('addTask') ? '' : 'none';
     if (btn.getAttribute('onclick')?.includes('openReportModal')) btn.style.display = can('addEvidence') ? '' : 'none';
   });
+
+  const syAdmin = document.getElementById('school-years-admin-wrap');
+  if (syAdmin) syAdmin.style.display = r === 'admin' ? '' : 'none';
+
+  applyYearWriteModeUI();
+  if (r === 'admin') renderSchoolYearsAdmin();
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -728,7 +743,11 @@ async function loadAllData(renderAfter = true) {
   if (!currentUser) return;
   showLoadingOverlay(true);
   try {
+    await fetchSchoolYears();
     await fetchActiveSchoolYear();
+    renderYearSelector();
+    updateYearModeBanner();
+    applyYearWriteModeUI();
     await fetchPrograms();
     await fetchIndicators();
     await fetchEvidences();
@@ -805,7 +824,7 @@ function renderSection(name) {
     teachers: renderTeachers,
     calendar: renderCalendar,
     stats: renderStats,
-    settings: loadSettings,
+    settings: () => { loadSettings(); if (currentUser?.role === 'admin') renderSchoolYearsAdmin(); },
   }[name]?.());
 
   if (name === 'dashboard') {
@@ -857,18 +876,259 @@ function autoCalcProgStatus() {
   const st = calcProgramStatus(f);
   const d = document.getElementById('prog-status-display'); if (d) d.value = SI[st]+' '+SL[st];
   const h = document.getElementById('prog-status');         if (h) h.value = st;
+  refreshHijriPreview('prog-start');
+  refreshHijriPreview('prog-end');
+}
+
+function parseISODateOnly(value) {
+  if (value == null || value === '') return null;
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate(), 12, 0, 0));
+  }
+  const s = String(value).trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (m) {
+    // ظهيرة UTC لتجنّب انزياح اليوم عند العرض بـ Asia/Riyadh
+    return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0));
+  }
+  return null;
+}
+
+function isoKeyFromParsedDate(d) {
+  if (!d || isNaN(d.getTime())) return null;
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function toISODateKey(value) {
+  if (value == null || value === '') return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value).trim());
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  const d = parseISODateOnly(value);
+  return d ? isoKeyFromParsedDate(d) : null;
+}
+
+function supportsIslamicUmalqura() {
+  try {
+    const sample = new Intl.DateTimeFormat('en-u-ca-islamic-umalqura', {
+      timeZone: 'Asia/Riyadh',
+      year: 'numeric', month: 'numeric', day: 'numeric'
+    }).formatToParts(new Date(Date.UTC(2026, 7, 9, 12, 0, 0)));
+    const year = sample.find(p => p.type === 'year')?.value || '';
+    return /\d{3,4}/.test(year);
+  } catch {
+    return false;
+  }
+}
+
+function getTodayISOInRiyadh() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Riyadh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new Date());
+  const get = (t) => parts.find(p => p.type === t)?.value;
+  const y = get('year');
+  const m = get('month');
+  const d = get('day');
+  if (!y || !m || !d) return null;
+  return `${y}-${m}-${d}`;
+}
+
+function getHijriPartsFromDate(date) {
+  if (!date || isNaN(date.getTime())) return null;
+  try {
+    const map = {};
+    new Intl.DateTimeFormat('en-u-ca-islamic-umalqura', {
+      timeZone: 'Asia/Riyadh',
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric'
+    }).formatToParts(date).forEach(p => {
+      if (p.type !== 'literal') map[p.type] = p.value;
+    });
+    const year = Number(String(map.year || '').replace(/[^\d]/g, ''));
+    const month = Number(String(map.month || '').replace(/[^\d]/g, ''));
+    const day = Number(String(map.day || '').replace(/[^\d]/g, ''));
+    if (!year || !month || !day) return null;
+    return { year, month, day };
+  } catch {
+    return null;
+  }
+}
+
+function compareHijriParts(a, b) {
+  if (a.year !== b.year) return a.year - b.year;
+  if (a.month !== b.month) return a.month - b.month;
+  return a.day - b.day;
+}
+
+function findHijriDateUTC(hy, hm, hd) {
+  if (!supportsIslamicUmalqura()) return null;
+  const target = { year: hy, month: hm, day: hd };
+  // تقريب ميلادي معروف: السنة الهجرية ≈ 0.970224× + 621.577
+  const gApprox = Math.round(hy * 0.970224 + 621.577);
+  let lo = Date.UTC(gApprox - 3, 0, 1, 12, 0, 0);
+  let hi = Date.UTC(gApprox + 3, 11, 31, 12, 0, 0);
+
+  // ضبط النطاق إن ابتعد التقريب
+  for (let i = 0; i < 6; i++) {
+    const probe = getHijriPartsFromDate(new Date(Math.floor((lo + hi) / 2)));
+    if (!probe) break;
+    if (probe.year < hy - 1) {
+      lo += 180 * 86400000;
+      hi += 180 * 86400000;
+    } else if (probe.year > hy + 1) {
+      lo -= 180 * 86400000;
+      hi -= 180 * 86400000;
+    } else break;
+  }
+
+  while (lo <= hi) {
+    const midDate = new Date(Math.floor((lo + hi) / 2));
+    const cand = new Date(Date.UTC(
+      midDate.getUTCFullYear(),
+      midDate.getUTCMonth(),
+      midDate.getUTCDate(),
+      12, 0, 0
+    ));
+    const p = getHijriPartsFromDate(cand);
+    if (!p) return null;
+    const cmp = compareHijriParts(p, target);
+    if (cmp === 0) return cand;
+    if (cmp < 0) lo = cand.getTime() + 86400000;
+    else hi = cand.getTime() - 86400000;
+  }
+  return null;
+}
+
+function buildHijriMonthDays(hy, hm) {
+  const start = findHijriDateUTC(hy, hm, 1);
+  if (!start) return [];
+  const days = [];
+  let cur = new Date(start.getTime());
+  for (let i = 0; i < 31; i++) {
+    const hp = getHijriPartsFromDate(cur);
+    if (!hp || hp.year !== hy || hp.month !== hm) break;
+    days.push({
+      hijriDay: hp.day,
+      gregDay: cur.getUTCDate(),
+      gregMonth: cur.getUTCMonth() + 1,
+      gregYear: cur.getUTCFullYear(),
+      isoKey: isoKeyFromParsedDate(cur),
+      weekday: cur.getUTCDay(),
+      date: new Date(cur.getTime()),
+    });
+    cur = new Date(cur.getTime() + 86400000);
+  }
+  return days;
+}
+
+function formatHijriMonthYearLabel(hy, hm) {
+  const start = findHijriDateUTC(hy, hm, 1);
+  if (!start) return `${hm}/${hy} هـ`;
+  try {
+    return new Intl.DateTimeFormat('ar-SA-u-ca-islamic-umalqura', {
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'Asia/Riyadh'
+    }).format(start);
+  } catch {
+    return `${hm}/${hy} هـ`;
+  }
+}
+
+function initCalendarCursorFromToday() {
+  const iso = getTodayISOInRiyadh();
+  const d = parseISODateOnly(iso) || new Date(Date.UTC(new Date().getFullYear(), new Date().getMonth(), new Date().getDate(), 12));
+  calendarYear = d.getUTCFullYear();
+  calendarMonth = d.getUTCMonth();
+  const hp = getHijriPartsFromDate(d);
+  if (hp) {
+    calendarHijriYear = hp.year;
+    calendarHijriMonth = hp.month;
+  }
+  if (!supportsIslamicUmalqura()) calendarMode = 'gregorian';
+}
+
+function formatGregorianDate(value) {
+  const d = parseISODateOnly(value);
+  if (!d) return '—';
+  try {
+    return d.toLocaleDateString('ar-SA', {
+      year: 'numeric', month: 'short', day: 'numeric', timeZone: 'Asia/Riyadh'
+    });
+  } catch {
+    return '—';
+  }
+}
+
+function formatHijriDate(value) {
+  const d = parseISODateOnly(value);
+  if (!d) return '';
+  try {
+    return d.toLocaleDateString('ar-SA-u-ca-islamic-umalqura', {
+      year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Riyadh'
+    });
+  } catch {
+    try {
+      return d.toLocaleDateString('ar-SA-u-ca-islamic', {
+        year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Riyadh'
+      });
+    } catch {
+      return '';
+    }
+  }
+}
+
+function formatDualDate(value) {
+  if (value == null || value === '') return '—';
+  const g = formatGregorianDate(value);
+  if (g === '—') return '—';
+  const h = formatHijriDate(value);
+  return h ? `${g} · ${h}` : g;
 }
 
 function fmtDate(d) {
-  if (!d) return '—';
-  try { return new Date(d).toLocaleDateString('ar-SA',{year:'numeric',month:'short',day:'numeric'}); }
-  catch { return d; }
+  return formatDualDate(d);
 }
 
 /* ─────────────────────────────────────────────────────────────
    §12b  SUPABASE: SCHOOL YEAR
    ───────────────────────────────────────────────────────────── */
 const NO_ACTIVE_YEAR_MSG = 'لا توجد سنة دراسية نشطة. يرجى تفعيل سنة دراسية أولاً.';
+const YEAR_STATUS_AR = {
+  draft: 'مسودة',
+  active: 'نشط',
+  frozen: 'مجمد',
+  archived: 'مؤرشف',
+};
+
+function yearStatusLabel(status) {
+  return YEAR_STATUS_AR[status] || status || '—';
+}
+
+async function fetchSchoolYears() {
+  if (!sb) return schoolYearsCache;
+  try {
+    const { data, error } = await sb
+      .from('school_years')
+      .select('id,name,label_ar,status,is_active,is_archived,start_date,end_date,notes,hijri_year,created_at')
+      .order('created_at');
+    if (error) {
+      console.error('[fetchSchoolYears]', error.message);
+      return schoolYearsCache;
+    }
+    schoolYearsCache = Array.isArray(data) ? data : [];
+    return schoolYearsCache;
+  } catch (err) {
+    console.error('[fetchSchoolYears] exception', err);
+    return schoolYearsCache;
+  }
+}
 
 async function fetchActiveSchoolYear() {
   if (!sb) return activeSchoolYearId;
@@ -879,6 +1139,7 @@ async function fetchActiveSchoolYear() {
       const row = Array.isArray(rpc.data) ? rpc.data[0] : rpc.data;
       if (row?.id) {
         activeSchoolYearId = row.id;
+        if (!selectedSchoolYearId) selectedSchoolYearId = row.id;
         console.log('[fetchActiveSchoolYear] via rpc =', activeSchoolYearId ? '(set)' : '(empty)');
         return activeSchoolYearId;
       }
@@ -897,7 +1158,10 @@ async function fetchActiveSchoolYear() {
       return activeSchoolYearId;
     }
     const id = (Array.isArray(data) && data[0]?.id) ? data[0].id : null;
-    if (id) activeSchoolYearId = id;
+    if (id) {
+      activeSchoolYearId = id;
+      if (!selectedSchoolYearId) selectedSchoolYearId = id;
+    }
     console.log('[fetchActiveSchoolYear] via table =', activeSchoolYearId ? '(set)' : '(empty)');
     return activeSchoolYearId;
   } catch (err) {
@@ -915,6 +1179,475 @@ async function requireActiveSchoolYearId() {
   activeSchoolYearId = id;
   return id;
 }
+
+function getSelectedSchoolYear() {
+  if (!selectedSchoolYearId) return null;
+  return schoolYearsCache.find(y => String(y.id) === String(selectedSchoolYearId)) || null;
+}
+
+function isSelectedYearWritable() {
+  const y = getSelectedSchoolYear();
+  return !!(y && y.status === 'active' && y.is_active);
+}
+
+function isYearReadOnlyMode() {
+  const y = getSelectedSchoolYear();
+  if (!y) return true;
+  return !isSelectedYearWritable();
+}
+
+function assertYearWritable() {
+  if (!isSelectedYearWritable()) {
+    const msg = 'السنة المحددة للقراءة فقط. اختر السنة النشطة للتعديل.';
+    showToast(msg, 'error');
+    throw new Error('year_readonly');
+  }
+}
+
+function arabicDbError(err) {
+  if (!err) return 'تعذّر إتمام العملية';
+  if (typeof err === 'string') {
+    if (err === 'year_readonly') return 'السنة المحددة للقراءة فقط. اختر السنة النشطة للتعديل.';
+    return err;
+  }
+  const msg = String(err.message || '');
+  const code = String(err.code || '');
+  const blob = `${msg} ${code}`.toLowerCase();
+  if (msg === 'year_readonly' || blob.includes('year_readonly')) {
+    return 'السنة المحددة للقراءة فقط. اختر السنة النشطة للتعديل.';
+  }
+  if (/forbidden|permission|rls|row-level|policy|42501|pgrst301|not allowed/.test(blob)) {
+    return 'ليس لديك صلاحية لهذا الإجراء';
+  }
+  if (msg.includes(NO_ACTIVE_YEAR_MSG) || /لا يمكن الكتابة|سنة دراسية/.test(msg)) {
+    return msg;
+  }
+  return msg || 'تعذّر إتمام العملية';
+}
+
+function yearScopedRows(cache, field = 'school_year_id') {
+  const yearId = selectedSchoolYearId;
+  if (yearId == null || yearId === '') return [];
+  const list = Array.isArray(cache) ? cache : [];
+  return list.filter(row => row && String(row[field]) === String(yearId));
+}
+
+async function requireWritableSchoolYearId() {
+  await fetchSchoolYears();
+  if (!selectedSchoolYearId && activeSchoolYearId) {
+    selectedSchoolYearId = activeSchoolYearId;
+  }
+  const y = getSelectedSchoolYear();
+  if (!y || y.status !== 'active' || !y.is_active) {
+    throw new Error('لا يمكن الكتابة إلا على السنة الدراسية النشطة.');
+  }
+  return y.id;
+}
+
+function renderYearSelector() {
+  const sel = document.getElementById('global-year-select');
+  if (!sel) return;
+  const cur = selectedSchoolYearId || activeSchoolYearId || '';
+  if (!schoolYearsCache.length) {
+    sel.innerHTML = '<option value="">لا توجد سنوات</option>';
+    return;
+  }
+  sel.innerHTML = schoolYearsCache.map(y => {
+    const label = y.label_ar || y.name || '—';
+    const st = yearStatusLabel(y.status);
+    const hijri = y.hijri_year ? ` · ${y.hijri_year}` : '';
+    return `<option value="${esc(y.id)}" ${String(y.id) === String(cur) ? 'selected' : ''}>${esc(label)} (${esc(st)})${esc(hijri)}</option>`;
+  }).join('');
+}
+
+function onYearSelected(id) {
+  selectedSchoolYearId = id || null;
+  updateYearModeBanner();
+  if (currentUser) applyRoleUI();
+  else applyYearWriteModeUI();
+  renderYearSelector();
+  if (currentUser?.role === 'admin') renderSchoolYearsAdmin();
+  renderSection(_activeSection);
+}
+window.onYearSelected = onYearSelected;
+
+function updateYearModeBanner() {
+  const banner = document.getElementById('year-readonly-banner');
+  if (!banner) return;
+  const y = getSelectedSchoolYear();
+  if (!y) {
+    banner.classList.add('hidden');
+    banner.textContent = '';
+    return;
+  }
+  if (isSelectedYearWritable()) {
+    banner.classList.add('hidden');
+    banner.textContent = '';
+    return;
+  }
+  const st = yearStatusLabel(y.status);
+  const stKey = String(y.status || '');
+  const modeHint = stKey === 'frozen' || stKey === 'archived'
+    ? `للقراءة فقط — عام ${st}`
+    : `للقراءة فقط — عام غير نشط (${st})`;
+  banner.classList.remove('hidden');
+  banner.textContent = `${modeHint} — «${y.label_ar || y.name || ''}». التعديل متاح على العام النشط فقط.`;
+}
+
+function applyYearWriteModeUI() {
+  const ro = isYearReadOnlyMode();
+  const setWriteControl = (el, allowedVisible) => {
+    if (!el) return;
+    if (ro) {
+      el.style.display = 'none';
+      el.disabled = true;
+      return;
+    }
+    el.disabled = false;
+    if (allowedVisible === true) el.style.display = '';
+    else if (allowedVisible === false) el.style.display = 'none';
+  };
+  setWriteControl(document.getElementById('btn-add-program'), can('addProgram'));
+  setWriteControl(document.getElementById('btn-add-initiative'), can('addInitiative'));
+  setWriteControl(document.getElementById('btn-add-teacher'), can('addTeacher'));
+  setWriteControl(document.getElementById('btn-add-kpi'), isSectionAllowed('kpi'));
+  document.querySelectorAll('#section-tasks .btn-primary, #section-reports .btn-primary').forEach(btn => {
+    const oc = btn.getAttribute('onclick') || '';
+    if (oc.includes('openTaskModal')) setWriteControl(btn, can('addTask'));
+    if (oc.includes('openReportModal')) setWriteControl(btn, can('addEvidence'));
+  });
+}
+
+function bindHijriPreview(inputId, previewId) {
+  const input = document.getElementById(inputId);
+  const preview = document.getElementById(previewId);
+  if (!input || !preview) return;
+  const update = () => {
+    const v = input.value;
+    if (!v) {
+      preview.textContent = '';
+      return;
+    }
+    const h = formatHijriDate(v);
+    preview.textContent = h ? `الموافق هجريًا: ${h}` : '';
+  };
+  if (!input.dataset.hijriBound) {
+    input.addEventListener('change', update);
+    input.addEventListener('input', update);
+    input.dataset.hijriBound = '1';
+  }
+  // خزّن آخر دالة تحديث لإعادة التشغيل بعد تعبئة القيمة برمجيًا
+  input._hijriPreviewUpdate = update;
+  update();
+}
+
+function refreshHijriPreview(inputId) {
+  const input = document.getElementById(inputId);
+  if (input && typeof input._hijriPreviewUpdate === 'function') {
+    input._hijriPreviewUpdate();
+    return;
+  }
+  const map = {
+    'prog-start': 'prog-start-hijri',
+    'prog-end': 'prog-end-hijri',
+    'ini-start': 'ini-start-hijri',
+    'ini-end': 'ini-end-hijri',
+    'task-due': 'task-due-hijri',
+    'tf-last-report': 'tf-last-report-hijri',
+    'sy-start': 'sy-start-hijri',
+    'sy-end': 'sy-end-hijri',
+  };
+  if (map[inputId]) bindHijriPreview(inputId, map[inputId]);
+}
+
+function bindAllHijriPreviews() {
+  [
+    ['prog-start', 'prog-start-hijri'],
+    ['prog-end', 'prog-end-hijri'],
+    ['ini-start', 'ini-start-hijri'],
+    ['ini-end', 'ini-end-hijri'],
+    ['task-due', 'task-due-hijri'],
+    ['tf-last-report', 'tf-last-report-hijri'],
+    ['sy-start', 'sy-start-hijri'],
+    ['sy-end', 'sy-end-hijri'],
+  ].forEach(([a, b]) => bindHijriPreview(a, b));
+}
+
+function formatYearDateCell(value) {
+  if (value == null || value === '') return 'غير محدد';
+  const dual = formatDualDate(value);
+  return dual === '—' ? 'غير محدد' : dual;
+}
+
+function formatYearDateRange(y) {
+  return `${formatYearDateCell(y?.start_date)} → ${formatYearDateCell(y?.end_date)}`;
+}
+
+function displayHijriYearForSchoolYear(y) {
+  const stored = String(y?.hijri_year || y?.hijri_year_display || '').trim();
+  if (stored) return stored;
+  const start = y?.start_date ? getHijriPartsFromDate(parseISODateOnly(y.start_date)) : null;
+  const end = y?.end_date ? getHijriPartsFromDate(parseISODateOnly(y.end_date)) : null;
+  if (start && end) {
+    return start.year === end.year ? String(start.year) : `${start.year}-${end.year}`;
+  }
+  if (start) return String(start.year);
+  if (end) return String(end.year);
+  return 'غير محدد';
+}
+
+function renderSchoolYearsAdmin() {
+  const root = document.getElementById('school-years-admin-root');
+  if (!root) return;
+  if (currentUser?.role !== 'admin') {
+    root.innerHTML = '';
+    return;
+  }
+
+  const rows = schoolYearsCache.length
+    ? schoolYearsCache.map(y => {
+        const st = y.status || (y.is_archived ? 'archived' : (y.is_active ? 'active' : 'draft'));
+        const actions = [];
+        actions.push(`<button class="btn-sm btn-edit" onclick="openSchoolYearEditForm('${esc(y.id)}')">✏️ تعديل</button>`);
+        if (st === 'draft' || st === 'frozen') {
+          actions.push(`<button class="btn-sm btn-view" onclick="adminActivateYear('${esc(y.id)}')">▶️ تفعيل</button>`);
+        }
+        if (st === 'active') {
+          actions.push(`<button class="btn-sm btn-note" onclick="adminFreezeYear('${esc(y.id)}')">❄️ تجميد</button>`);
+        }
+        if (st === 'frozen') {
+          actions.push(`<button class="btn-sm btn-delete" onclick="adminArchiveYear('${esc(y.id)}')">📦 أرشفة</button>`);
+        }
+        return `<tr>
+          <td class="sy-name-cell" dir="ltr">${esc(y.name || '—')}</td>
+          <td class="sy-label-cell">${esc(y.label_ar || '—')}</td>
+          <td><span class="badge badge-info">${esc(yearStatusLabel(st))}</span></td>
+          <td class="sy-hijri-cell" dir="ltr">${esc(displayHijriYearForSchoolYear(y))}</td>
+          <td class="sy-dates-cell">${esc(formatYearDateRange(y))}</td>
+          <td><div style="display:flex;gap:4px;flex-wrap:wrap">${actions.join('')}</div></td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted)">لا توجد سنوات دراسية بعد</td></tr>';
+
+  root.innerHTML = `
+    <div class="sy-admin-toolbar">
+      <button class="btn-primary" onclick="openSchoolYearCreateForm()">+ إنشاء سنة دراسية</button>
+    </div>
+    <div id="sy-admin-form" class="sy-admin-form hidden"></div>
+    <div class="table-wrap sy-admin-table-wrap">
+      <table class="data-table sy-admin-table">
+        <thead>
+          <tr>
+            <th>الاسم</th><th>التسمية</th><th>الحالة</th><th>هجري (عرض)</th><th>الفترة</th><th>إجراءات</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function openSchoolYearCreateForm() {
+  const box = document.getElementById('sy-admin-form');
+  if (!box) return;
+  box.classList.remove('hidden');
+  box.innerHTML = `
+    <h4>إنشاء سنة دراسية (مسودة)</h4>
+    <p class="field-hint">يُحفظ الاسم والتسمية كما تدخلان حرفيًا — بدون تصحيح تلقائي للأرقام.</p>
+    <div class="form-group">
+      <label>الاسم <span class="req">*</span></label>
+      <input type="text" id="sy-name" class="sy-text-input" dir="ltr" autocomplete="off" placeholder="مثال: 1447-1448"/>
+    </div>
+    <div class="form-group">
+      <label>التسمية العربية (label_ar)</label>
+      <input type="text" id="sy-label" class="sy-text-input" autocomplete="off" placeholder="مثال: العام الدراسي 1447–1448هـ"/>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>تاريخ البدء (ميلادي ISO)</label><input type="date" id="sy-start"/><div class="hijri-preview" id="sy-start-hijri"></div></div>
+      <div class="form-group"><label>تاريخ الانتهاء (ميلادي ISO)</label><input type="date" id="sy-end"/><div class="hijri-preview" id="sy-end-hijri"></div></div>
+    </div>
+    <div class="form-group"><label>عرض السنة الهجرية (اختياري — يُحفظ كما هو)</label><input type="text" id="sy-hijri" class="sy-text-input" dir="ltr" placeholder="مثال: 1447-1448"/></div>
+    <div class="form-group"><label>ملاحظات</label><textarea id="sy-notes" placeholder="ملاحظات إدارية..."></textarea></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn-primary" onclick="adminCreateSchoolYear()">💾 حفظ المسودة</button>
+      <button class="btn-secondary" onclick="document.getElementById('sy-admin-form')?.classList.add('hidden')">إلغاء</button>
+    </div>`;
+  bindHijriPreview('sy-start', 'sy-start-hijri');
+  bindHijriPreview('sy-end', 'sy-end-hijri');
+}
+
+function openSchoolYearEditForm(yearId) {
+  const y = schoolYearsCache.find(x => String(x.id) === String(yearId));
+  if (!y) return;
+  const box = document.getElementById('sy-admin-form');
+  if (!box) return;
+  box.classList.remove('hidden');
+  const nameVal = y.name || '';
+  const labelVal = y.label_ar || '';
+  box.innerHTML = `
+    <h4>تعديل بيانات السنة</h4>
+    <input type="hidden" id="sy-edit-id" value="${esc(y.id)}"/>
+    <div class="sy-current-values">
+      <div><span class="sy-current-label">الاسم الحالي:</span> <code class="sy-code" dir="ltr">${esc(nameVal || '—')}</code></div>
+      <div><span class="sy-current-label">التسمية الحالية:</span> <span>${esc(labelVal || '—')}</span></div>
+    </div>
+    <p class="field-hint">عدّل الحقول أدناه يدويًا إن لزم (مثل تصحيح 447-1448 إلى 1447-1448). لا يتم أي تصحيح تلقائي.</p>
+    <div class="form-group">
+      <label>الاسم (name) <span class="req">*</span></label>
+      <input type="text" id="sy-name" class="sy-text-input" dir="ltr" autocomplete="off" value="${esc(nameVal)}"/>
+    </div>
+    <div class="form-group">
+      <label>التسمية العربية (label_ar)</label>
+      <input type="text" id="sy-label" class="sy-text-input" autocomplete="off" value="${esc(labelVal)}"/>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>تاريخ البدء (ميلادي ISO)</label><input type="date" id="sy-start" value="${esc(y.start_date || '')}"/><div class="hijri-preview" id="sy-start-hijri"></div></div>
+      <div class="form-group"><label>تاريخ الانتهاء (ميلادي ISO)</label><input type="date" id="sy-end" value="${esc(y.end_date || '')}"/><div class="hijri-preview" id="sy-end-hijri"></div></div>
+    </div>
+    <div class="form-group"><label>ملاحظات</label><textarea id="sy-notes">${esc(y.notes || '')}</textarea></div>
+    <p class="field-hint">تعديل البيانات الوصفية فقط — تغيير الحالة عبر أزرار التفعيل/التجميد/الأرشفة.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn-primary" onclick="adminUpdateSchoolYearMeta()">💾 حفظ التعديل</button>
+      <button class="btn-secondary" onclick="document.getElementById('sy-admin-form')?.classList.add('hidden')">إلغاء</button>
+    </div>`;
+  bindHijriPreview('sy-start', 'sy-start-hijri');
+  bindHijriPreview('sy-end', 'sy-end-hijri');
+}
+
+async function refreshYearsAfterAdminAction() {
+  await fetchSchoolYears();
+  await fetchActiveSchoolYear();
+  renderYearSelector();
+  updateYearModeBanner();
+  applyYearWriteModeUI();
+  renderSchoolYearsAdmin();
+  renderSection(_activeSection);
+}
+
+async function adminCreateSchoolYear() {
+  if (currentUser?.role !== 'admin') { showToast('للإدارة فقط', 'error'); return; }
+  const name = (document.getElementById('sy-name')?.value || '').trim();
+  if (!name) { showToast('يرجى إدخال اسم السنة', 'error'); return; }
+  const label = (document.getElementById('sy-label')?.value || '').trim() || null;
+  const start = document.getElementById('sy-start')?.value || null;
+  const end = document.getElementById('sy-end')?.value || null;
+  const notes = (document.getElementById('sy-notes')?.value || '').trim() || null;
+  const hijri = (document.getElementById('sy-hijri')?.value || '').trim() || null;
+  try {
+    const { error } = await sb.rpc('create_school_year', {
+      p_name: name,
+      p_label_ar: label,
+      p_start_date: start || null,
+      p_end_date: end || null,
+      p_notes: notes,
+      p_hijri_year_display: hijri,
+    });
+    if (error) throw error;
+    showToast('تم إنشاء السنة كمسودة ✅', 'success');
+    await refreshYearsAfterAdminAction();
+  } catch (err) {
+    console.error('[adminCreateSchoolYear]', err);
+    showToast(arabicDbError(err), 'error');
+  }
+}
+
+async function adminUpdateSchoolYearMeta() {
+  if (currentUser?.role !== 'admin') { showToast('للإدارة فقط', 'error'); return; }
+  const id = document.getElementById('sy-edit-id')?.value;
+  const name = (document.getElementById('sy-name')?.value || '').trim();
+  if (!id || !name) { showToast('يرجى إدخال اسم السنة', 'error'); return; }
+  const label = (document.getElementById('sy-label')?.value || '').trim() || null;
+  const start = document.getElementById('sy-start')?.value || null;
+  const end = document.getElementById('sy-end')?.value || null;
+  const notes = (document.getElementById('sy-notes')?.value || '').trim() || null;
+  try {
+    const { error } = await sb.rpc('update_school_year_meta', {
+      p_year_id: id,
+      p_name: name,
+      p_label_ar: label,
+      p_start_date: start || null,
+      p_end_date: end || null,
+      p_notes: notes,
+    });
+    if (error) throw error;
+    showToast('تم تحديث بيانات السنة ✅', 'success');
+    await refreshYearsAfterAdminAction();
+  } catch (err) {
+    console.error('[adminUpdateSchoolYearMeta]', err);
+    showToast(arabicDbError(err), 'error');
+  }
+}
+
+async function adminActivateYear(yearId) {
+  if (currentUser?.role !== 'admin') { showToast('للإدارة فقط', 'error'); return; }
+  const otherActive = schoolYearsCache.find(y => y.is_active && String(y.id) !== String(yearId));
+  let freezeCurrent = false;
+  if (otherActive) {
+    if (!confirm(`يوجد سنة نشطة أخرى («${otherActive.label_ar || otherActive.name}»). هل تريد تجميدها ثم تفعيل هذه السنة؟`)) return;
+    freezeCurrent = true;
+  } else if (!confirm('تفعيل هذه السنة الدراسية؟')) {
+    return;
+  }
+  try {
+    const { error } = await sb.rpc('activate_school_year', {
+      p_year_id: yearId,
+      p_freeze_current: freezeCurrent,
+    });
+    if (error) throw error;
+    selectedSchoolYearId = yearId;
+    showToast('تم تفعيل السنة الدراسية ✅', 'success');
+    await refreshYearsAfterAdminAction();
+  } catch (err) {
+    console.error('[adminActivateYear]', err);
+    showToast(arabicDbError(err), 'error');
+  }
+}
+
+async function adminFreezeYear(yearId) {
+  if (currentUser?.role !== 'admin') { showToast('للإدارة فقط', 'error'); return; }
+  if (!confirm('تجميد السنة النشطة؟ لن يُسمح بالتعديل بعدها حتى إعادة التفعيل.')) return;
+  try {
+    const { error } = await sb.rpc('freeze_school_year', { p_year_id: yearId });
+    if (error) throw error;
+    showToast('تم تجميد السنة ❄️', 'warning');
+    await refreshYearsAfterAdminAction();
+  } catch (err) {
+    console.error('[adminFreezeYear]', err);
+    showToast(arabicDbError(err), 'error');
+  }
+}
+
+async function adminArchiveYear(yearId) {
+  if (currentUser?.role !== 'admin') { showToast('للإدارة فقط', 'error'); return; }
+  if (!confirm('أرشفة هذه السنة المجمّدة؟ هذا إجراء للسنوات المنتهية.')) return;
+  try {
+    const { error } = await sb.rpc('archive_school_year', { p_year_id: yearId });
+    if (error) throw error;
+    showToast('تم أرشفة السنة 📦', 'warning');
+    await refreshYearsAfterAdminAction();
+  } catch (err) {
+    console.error('[adminArchiveYear]', err);
+    showToast(arabicDbError(err), 'error');
+  }
+}
+
+window.fetchSchoolYears = fetchSchoolYears;
+window.fetchActiveSchoolYear = fetchActiveSchoolYear;
+window.requireActiveSchoolYearId = requireActiveSchoolYearId;
+window.requireWritableSchoolYearId = requireWritableSchoolYearId;
+window.renderSchoolYearsAdmin = renderSchoolYearsAdmin;
+window.openSchoolYearCreateForm = openSchoolYearCreateForm;
+window.openSchoolYearEditForm = openSchoolYearEditForm;
+window.adminCreateSchoolYear = adminCreateSchoolYear;
+window.adminUpdateSchoolYearMeta = adminUpdateSchoolYearMeta;
+window.adminActivateYear = adminActivateYear;
+window.adminFreezeYear = adminFreezeYear;
+window.adminArchiveYear = adminArchiveYear;
+window.formatGregorianDate = formatGregorianDate;
+window.formatHijriDate = formatHijriDate;
+window.formatDualDate = formatDualDate;
+window.parseISODateOnly = parseISODateOnly;
+window.refreshHijriPreview = refreshHijriPreview;
+window.supportsIslamicUmalqura = supportsIslamicUmalqura;
 
 /* ─────────────────────────────────────────────────────────────
    §13  SUPABASE: PROGRAMS
@@ -967,8 +1700,8 @@ async function sbInsertProgram(p) {
     return p;
   }
 
-  // جلب السنة النشطة مباشرة قبل الإدراج (متغير محلي — لا يعتمد على توقيت الكاش العام فقط)
-  const yearId = await requireActiveSchoolYearId();
+  // جلب السنة القابلة للكتابة (المحددة إن كانت نشطة) قبل الإدراج
+  const yearId = await requireWritableSchoolYearId();
   if (yearId == null || yearId === undefined || yearId === '') {
     throw new Error(NO_ACTIVE_YEAR_MSG);
   }
@@ -1116,6 +1849,7 @@ async function sbToggleIndicator(progId, indId) {
     if (error) {
       console.error('[sbToggleIndicator]', error.message);
       ind.is_completed = !nv;
+      showToast(arabicDbError(error), 'error');
       return;
     }
   }
@@ -1127,6 +1861,7 @@ async function sbToggleIndicator(progId, indId) {
 
 async function handleDelInd(progId, indId) {
   if (!requireAuth('deleteIndicator')) return;
+  try { assertYearWritable(); } catch { return; }
   if (!confirm('حذف هذا المؤشر؟')) return;
   try {
     if (sb) {
@@ -1141,7 +1876,7 @@ async function handleDelInd(progId, indId) {
     showToast('تم حذف المؤشر 🗑️', 'warning');
   } catch (err) {
     console.error('[handleDelInd]', err.message);
-    showToast('خطأ: ' + err.message, 'error');
+    showToast(arabicDbError(err), 'error');
   }
 }
 window.handleDelInd = handleDelInd;
@@ -1158,6 +1893,7 @@ async function fetchInitiatives() {
     id:r.id, goal:r.goal||'', name:r.name||'', desc:r.description||'',
     resp:r.resp||'', start:r.start_date||'', end:r.end_date||'',
     status:r.status||'لم تبدأ', progress:r.progress||0, link:r.link||'',
+    school_year_id: r.school_year_id || null,
   }));
   lsSave('initiatives', initiativesCache);
 }
@@ -1166,7 +1902,7 @@ async function sbInsertInitiative(ini) {
   if (!sb) {
     ini.id = 'L'+Date.now(); initiativesCache.push(ini); lsSave('initiatives', initiativesCache); return ini;
   }
-  const schoolYearId = await requireActiveSchoolYearId();
+  const schoolYearId = await requireWritableSchoolYearId();
   const { data, error } = await sb.from('initiatives').insert({
     goal:ini.goal, name:ini.name, description:ini.desc||null, resp:ini.resp||null,
     start_date:ini.start||null, end_date:ini.end||null,
@@ -1174,7 +1910,7 @@ async function sbInsertInitiative(ini) {
     school_year_id: schoolYearId,
   }).select().single();
   if (error) throw error;
-  return { ...ini, id:data.id };
+  return { ...ini, id:data.id, school_year_id: schoolYearId };
 }
 
 async function sbUpdateInitiative(ini) {
@@ -1211,6 +1947,7 @@ async function fetchTasks() {
   tasksCache = (data||[]).map(r => ({
     id:r.id, name:r.name||'', resp:r.resp||'', due:r.due_date||'',
     priority:r.priority||'medium', status:r.status||'pending', notes:r.notes||'',
+    school_year_id: r.school_year_id || null,
   }));
   lsSave('tasks', tasksCache);
 }
@@ -1219,14 +1956,14 @@ async function sbInsertTask(t) {
   if (!sb) {
     t.id = 'L'+Date.now(); tasksCache.push(t); lsSave('tasks', tasksCache); return t;
   }
-  const schoolYearId = await requireActiveSchoolYearId();
+  const schoolYearId = await requireWritableSchoolYearId();
   const { data, error } = await sb.from('tasks').insert({
     name:t.name, resp:t.resp||null, due_date:t.due||null,
     priority:t.priority, status:t.status, notes:t.notes||null,
     school_year_id: schoolYearId,
   }).select().single();
   if (error) throw error;
-  return { ...t, id:data.id };
+  return { ...t, id:data.id, school_year_id: schoolYearId };
 }
 
 async function sbUpdateTask(t) {
@@ -1403,7 +2140,7 @@ async function sbInsertEvidence(ev) {
     return local;
   }
 
-  const schoolYearId = ev.school_year_id || await requireActiveSchoolYearId();
+  const schoolYearId = ev.school_year_id || await requireWritableSchoolYearId();
   if (!schoolYearId) throw new Error(NO_ACTIVE_YEAR_MSG);
 
   const row = {
@@ -1448,6 +2185,7 @@ async function fetchTeachers() {
     id:r.id, name:r.name||'', assigned:r.assigned_tasks||0,
     done:r.done_tasks||0, lastReport:r.last_report||'', notes:r.notes||'',
     driveLink:r.drive_link||'', createdBy:r.created_by||'',
+    school_year_id: r.school_year_id || null,
   }));
   lsSave('teachers', teachersCache);
 }
@@ -1465,14 +2203,16 @@ async function sbInsertTeacher(tf) {
   if (!sb) {
     tf.id = 'L'+Date.now(); teachersCache.push(tf); lsSave('teachers', teachersCache); return tf;
   }
+  const schoolYearId = await requireWritableSchoolYearId();
   const { data, error } = await sb.from('teacher_followups').insert({
     name:tf.name, assigned_tasks:parseInt(tf.assigned)||0,
     done_tasks:parseInt(tf.done)||0, last_report:tf.lastReport||null, notes:tf.notes||null,
     drive_link:tf.driveLink||null, created_by:tf.createdBy||null,
     owner_id: currentUser?.id || null,
+    school_year_id: schoolYearId,
   }).select().single();
   if (error) throw error;
-  return { ...tf, id:data.id };
+  return { ...tf, id:data.id, school_year_id: schoolYearId };
 }
 
 async function sbUpdateTeacher(tf) {
@@ -1613,31 +2353,32 @@ function clearLocalCache() {
 function renderPrograms() {
   const fs = document.getElementById('prog-filter-status')?.value||'all';
   const sq = (document.getElementById('prog-search')?.value||'').toLowerCase();
+  const yearPrograms = yearScopedRows(programsCache);
   const cnt = {planning:0,active:0,done:0,late:0};
-    programsCache.forEach(p => {
-  p.progress = calcProgramProgress(p.id);
-}); 
-   programsCache.forEach(p => { const s=calcProgramStatus(p); cnt[s]=(cnt[s]||0)+1; });
-  const avg = programsCache.length ? Math.round(programsCache.reduce((s,p)=>s+(p.progress||0),0)/programsCache.length) : 0;
+  yearPrograms.forEach(p => {
+    p.progress = calcProgramProgress(p.id);
+  });
+  yearPrograms.forEach(p => { const s=calcProgramStatus(p); cnt[s]=(cnt[s]||0)+1; });
+  const avg = yearPrograms.length ? Math.round(yearPrograms.reduce((s,p)=>s+(p.progress||0),0)/yearPrograms.length) : 0;
   const stEl = document.getElementById('programs-stats');
   if (stEl) stEl.innerHTML = `
-    <div class="stat-card"><span class="stat-icon">🗂️</span><span class="stat-number">${programsCache.length}</span><span class="stat-label">إجمالي البرامج</span></div>
+    <div class="stat-card"><span class="stat-icon">🗂️</span><span class="stat-number">${yearPrograms.length}</span><span class="stat-label">إجمالي البرامج</span></div>
     <div class="stat-card green"><span class="stat-icon">✅</span><span class="stat-number">${cnt.done}</span><span class="stat-label">برامج منتهية</span></div>
     <div class="stat-card"><span class="stat-icon">▶️</span><span class="stat-number">${cnt.active}</span><span class="stat-label">برامج جارية</span></div>
     <div class="stat-card red"><span class="stat-icon">⚠️</span><span class="stat-number">${cnt.late}</span><span class="stat-label">برامج متأخرة</span></div>
     <div class="stat-card gold"><span class="stat-icon">📊</span><span class="stat-number">${avg}%</span><span class="stat-label">متوسط الإنجاز</span></div>`;
 
   const abp = document.getElementById('btn-add-program');
-  if (abp) abp.style.display = can('addProgram') ? '' : 'none';
+  if (abp) abp.style.display = (can('addProgram') && !isYearReadOnlyMode()) ? '' : 'none';
 
-  const filtered = programsCache.filter(p =>
+  const filtered = yearPrograms.filter(p =>
     (fs==='all' || calcProgramStatus(p)===fs) &&
     (!sq || p.name.toLowerCase().includes(sq) || (p.resp||'').toLowerCase().includes(sq))
   );
 
   const grid = document.getElementById('programs-grid'); if (!grid) return;
   if (!filtered.length) {
-    grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">🗂️</div><p>لا توجد برامج</p><small>أضف برنامجاً جديداً أو غيّر الفلتر</small></div>';
+    grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">🗂️</div><p>لا توجد برامج</p><small>أضف برنامجاً جديداً أو غيّر الفلتر / السنة</small></div>';
     return;
   }
   grid.innerHTML = filtered.map(p => buildProgramCard(p)).join('');
@@ -1693,20 +2434,20 @@ function buildProgramCard(p) {
 
         return `
           <div class="indicator-row" id="irow-${ind.id}">
-            <button class="ind-toggle" ${can('toggleIndicator') ? `onclick="handleToggle('${p.id}','${ind.id}')"` : ''}
+            <button class="ind-toggle" ${can('toggleIndicator') && !isYearReadOnlyMode() ? `onclick="handleToggle('${p.id}','${ind.id}')"` : ''}
               title="${d ? 'إلغاء الإنجاز' : 'وضع علامة مكتمل'}">${d ? '✅' : '⬜'}</button>
 
             <span class="ind-text" style="${d ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">
               ${esc(ind.indicator_text)}
             </span>
 
-            ${can('deleteIndicator') ? `<button class="ind-delete" onclick="handleDelInd('${p.id}','${ind.id}')">×</button>` : ''}
+            ${can('deleteIndicator') && !isYearReadOnlyMode() ? `<button class="ind-delete" onclick="handleDelInd('${p.id}','${ind.id}')">×</button>` : ''}
           </div>
         `;
       }).join('')
     : '<div style="font-size:12px;color:var(--text-muted);padding:4px 0">لا توجد مؤشرات بعد</div>';
 
-  const addIndHtml = can('addIndicator')
+  const addIndHtml = can('addIndicator') && !isYearReadOnlyMode()
     ? `<div class="add-indicator-row">
         <input id="iinput-${p.id}" class="ind-input" type="text" placeholder="أضف مؤشر إنجاز…"
                onkeydown="if(event.key==='Enter')handleAddInd('${p.id}')"/>
@@ -1714,11 +2455,11 @@ function buildProgramCard(p) {
       </div>`
     : '';
 
- const editBtn = can('editProgram')
+ const editBtn = can('editProgram') && !isYearReadOnlyMode()
   ? `<button class="btn-sm btn-edit" onclick="event.stopPropagation(); openProgramModal('${p.id}')">✏️ تعديل</button>`
   : '';
 
- const delBtn = can('deleteProgram')
+ const delBtn = can('deleteProgram') && !isYearReadOnlyMode()
   ? `<button class="btn-sm btn-delete" onclick="event.stopPropagation(); deleteProgram('${p.id}')">🗑️ حذف</button>`
   : '';
 
@@ -1769,6 +2510,7 @@ function buildProgramCard(p) {
 function openProgramModal(id) {
   if (id  && !can('editProgram'))  { showToast('ليس لديك صلاحية تعديل البرامج','error'); return; }
   if (!id && !can('addProgram'))   { showToast('ليس لديك صلاحية إضافة برامج','error'); return; }
+  try { assertYearWritable(); } catch { return; }
   ['prog-edit-id','prog-name','prog-resp','prog-desc','prog-target',
    'prog-start','prog-end','prog-progress','prog-status','prog-status-display'].forEach(fid => {
     const e = document.getElementById(fid); if (e) e.value='';
@@ -1787,14 +2529,16 @@ function openProgramModal(id) {
     if (ti) ti.textContent = 'تعديل البرنامج';
     autoCalcProgStatus();
   }
+  refreshHijriPreview('prog-start');
+  refreshHijriPreview('prog-end');
   openModal('program-modal');
 }
 function calcProgramStatus(p) {
   const today = new Date();
   today.setHours(0,0,0,0);
 
-  const s = p.start ? new Date(p.start) : null;
-  const e = p.end ? new Date(p.end) : null;
+  const s = p.start ? parseISODateOnly(p.start) : null;
+  const e = p.end ? parseISODateOnly(p.end) : null;
   const pct = p.id ? calcProgramProgress(p.id) : (parseInt(p.progress) || 0);
 
   if (pct >= 100) return 'done';
@@ -1805,6 +2549,8 @@ function calcProgramStatus(p) {
 }
 window.calcProgramStatus = calcProgramStatus;
 async function saveProgram() {
+  if (!requireAuth(document.getElementById('prog-edit-id')?.value ? 'editProgram' : 'addProgram')) return;
+  try { assertYearWritable(); } catch { return; }
   const editId = document.getElementById('prog-edit-id')?.value;
   if (editId  && !can('editProgram')) { showToast('ليس لديك صلاحية تعديل البرامج','error'); return; }
   if (!editId && !can('addProgram'))  { showToast('ليس لديك صلاحية إضافة برامج','error');   return; }
@@ -1827,7 +2573,7 @@ async function saveProgram() {
       const i = programsCache.findIndex(x => x.id === saved.id);
       if (i !== -1) programsCache[i] = saved;
     } else {
-      const yearId = await requireActiveSchoolYearId();
+      const yearId = await requireWritableSchoolYearId();
       if (yearId == null || yearId === undefined) {
         showToast(NO_ACTIVE_YEAR_MSG, 'error');
         return;
@@ -1842,18 +2588,17 @@ async function saveProgram() {
     showToast(editId?'تم تعديل البرنامج ✅':'تمت إضافة البرنامج ✅','success');
   } catch (err) {
     console.error('[saveProgram]', err.message || err);
-    showToast('خطأ في الحفظ: '+(err.message || err),'error');
+    showToast(arabicDbError(err), 'error');
   } finally {
     if (btn) { btn.disabled=false; btn.textContent='💾 حفظ البرنامج'; }
   }
 }
 window.saveProgram = saveProgram;
 window.sbInsertProgram = sbInsertProgram;
-window.fetchActiveSchoolYear = fetchActiveSchoolYear;
-window.requireActiveSchoolYearId = requireActiveSchoolYearId;
 
 async function deleteProgram(id) {
   if (!can('deleteProgram')) { showToast('ليس لديك صلاحية حذف البرامج','error'); return; }
+  try { assertYearWritable(); } catch { return; }
   if (!confirm('حذف هذا البرنامج وجميع مؤشراته؟')) return;
   try {
     await sbDeleteProgram(id);
@@ -1861,7 +2606,7 @@ async function deleteProgram(id) {
     evidencesCache = evidencesCache.filter(e => e.program_id !== id);
     renderPrograms();
     showToast('تم حذف البرنامج 🗑️','warning');
-  } catch (err) { console.error('[deleteProgram]', err.message); showToast('خطأ في الحذف: '+err.message,'error'); }
+  } catch (err) { console.error('[deleteProgram]', err.message); showToast(arabicDbError(err),'error'); }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -1984,6 +2729,7 @@ function viewProgramDetail(id) {
    ───────────────────────────────────────────────────────────── */
 async function handleAddInd(progId) {
   if (!can('addIndicator')) { showToast('ليس لديك صلاحية إضافة مؤشرات','error'); return; }
+  try { assertYearWritable(); } catch { return; }
   const inp = document.getElementById('iinput-'+progId); if (!inp) return;
   const txt = clampInput(inp.value); if (!txt) { showToast('أدخل نص المؤشر أولاً','error'); return; }
   inp.disabled = true;
@@ -1992,12 +2738,13 @@ async function handleAddInd(progId) {
     inp.value = '';
     repaintCard(progId);
     showToast('تمت إضافة المؤشر ✅','success');
-  } catch (err) { console.error('[handleAddInd]',err.message); showToast('خطأ: '+err.message,'error'); }
+  } catch (err) { console.error('[handleAddInd]',err.message); showToast(arabicDbError(err),'error'); }
   finally { inp.disabled = false; inp.focus(); }
 }
 
 async function handleToggle(progId, indId) {
   if (!requireAuth('toggleIndicator')) return;
+  try { assertYearWritable(); } catch { return; }
   if (currentUser?.role === 'teacher') {
     const prog = programsCache.find(p => String(p.id) === String(progId));
 
@@ -2040,7 +2787,7 @@ async function handleToggle(progId, indId) {
 
   } catch (err) {
     console.error('[handleToggle]', err.message);
-    showToast('خطأ: ' + err.message, 'error');
+    showToast(arabicDbError(err), 'error');
   }
 }
 function repaintCard(progId) {
@@ -2326,6 +3073,9 @@ function openEvidenceModal(progId, evId) {
     showToast('ليس لديك صلاحية رفع الشواهد','error');
     return;
   }
+  if (!evId) {
+    try { assertYearWritable(); } catch { return; }
+  }
 
   pendingEvidenceFile = null;
   pendingFileData = null;
@@ -2340,7 +3090,7 @@ function openEvidenceModal(progId, evId) {
   const ps = document.getElementById('ev-program-select');
   if (ps) {
     ps.innerHTML = '<option value="">اختر البرنامج</option>';
-    programsCache.forEach(p => {
+    yearScopedRows(programsCache).forEach(p => {
       ps.innerHTML += `<option value="${esc(p.id)}">${esc(p.name)}</option>`;
     });
     ps.value = progId || '';
@@ -2375,6 +3125,7 @@ function getFileIcon(name) {
 
 async function saveEvidence() {
   if (!can('addEvidence')) { showToast('ليس لديك صلاحية رفع الشواهد','error'); return; }
+  try { assertYearWritable(); } catch { return; }
   const g = id => (document.getElementById(id)?.value||'');
   const progId = g('ev-program-id') || g('ev-program-select');
   const indicatorId = g('ev-indicator-id');
@@ -2411,7 +3162,7 @@ async function saveEvidence() {
   if (btn) { btn.disabled = true; btn.textContent = source === 'file' ? 'جاري رفع الملف...' : 'جارٍ الحفظ…'; }
 
   try {
-    const schoolYearId = await requireActiveSchoolYearId();
+    const schoolYearId = await requireWritableSchoolYearId();
     if (source === 'file') {
       showToast('جاري رفع الملف...','info');
       fileMeta = await uploadEvidenceToStorage(pendingEvidenceFile, {
@@ -2455,7 +3206,7 @@ async function saveEvidence() {
   } catch (err) {
     if (fileMeta?.path) await removeUploadedEvidenceObject(fileMeta.path);
     console.error('[saveEvidence]');
-    showToast('تعذّر حفظ الشاهد', 'error');
+    showToast(arabicDbError(err) || 'تعذّر حفظ الشاهد', 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '📎 حفظ الشاهد'; }
   }
@@ -2497,6 +3248,7 @@ async function handleDelEv(evId) {
     showToast('ليس لديك صلاحية حذف الشواهد', 'error');
     return;
   }
+  try { assertYearWritable(); } catch { return; }
 
   if (!confirm('حذف هذا الشاهد؟')) return;
 
@@ -2509,7 +3261,7 @@ async function handleDelEv(evId) {
     showToast('تم حذف الشاهد 🗑️', 'warning');
   } catch (err) {
     console.error('[handleDelEv]');
-    showToast('تعذّر حذف الشاهد', 'error');
+    showToast(arabicDbError(err) || 'تعذّر حذف الشاهد', 'error');
   }
 }
 
@@ -2527,10 +3279,11 @@ function filterPlan(v) { _planFilter=v; renderPlan(); }
 function searchPlan(v) { _planSearch=v.toLowerCase(); renderPlan(); }
 
 function renderPlan() {
-  let data = [...initiativesCache];
+  let data = yearScopedRows(initiativesCache);
   if (_planFilter!=='all'&&GOAL_MAP[_planFilter]) data=data.filter(i=>i.goal===GOAL_MAP[_planFilter]);
   if (_planSearch) data=data.filter(i=>(i.name+(i.goal||'')+(i.resp||'')+(i.desc||'')).toLowerCase().includes(_planSearch));
   const tbody = document.getElementById('plan-tbody'); if (!tbody) return;
+  const canWrite = !isYearReadOnlyMode();
   tbody.innerHTML = data.length
     ? data.map((ini,idx) => `
         <tr><td>${idx+1}</td>
@@ -2543,8 +3296,8 @@ function renderPlan() {
           <td><div class="progress-wrap"><div class="progress-bar" style="min-width:70px"><div class="progress-fill" style="width:${ini.progress||0}%"></div></div><span class="progress-text">${ini.progress||0}%</span></div></td>
           <td>${ini.link ? safeLinkHtml(ini.link, '📎 عرض', 'btn-sm btn-view') : '—'}</td>
           <td><div style="display:flex;gap:4px;flex-wrap:nowrap">
-            ${can('editInitiative')?`<button class="btn-sm btn-edit" onclick="openInitiativeModal('${ini.id}')">✏️</button>`:''}
-            ${can('deleteInitiative')?`<button class="btn-sm btn-delete" onclick="deleteInitiative('${ini.id}')">🗑️</button>`:''}
+            ${canWrite && can('editInitiative')?`<button class="btn-sm btn-edit" onclick="openInitiativeModal('${ini.id}')">✏️</button>`:''}
+            ${canWrite && can('deleteInitiative')?`<button class="btn-sm btn-delete" onclick="deleteInitiative('${ini.id}')">🗑️</button>`:''}
           </div></td>
         </tr>`).join('')
     : '<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text-muted)">لا توجد مبادرات</td></tr>';
@@ -2553,6 +3306,7 @@ function renderPlan() {
 function openInitiativeModal(id) {
   if (id  && !can('editInitiative'))  { showToast('ليس لديك صلاحية تعديل المبادرات','error'); return; }
   if (!id && !can('addInitiative'))   { showToast('ليس لديك صلاحية إضافة مبادرات','error');   return; }
+  try { assertYearWritable(); } catch { return; }
   const clr = fid => { const e=document.getElementById(fid); if(e) e.value=''; };
   ['ini-edit-id','ini-name','ini-desc','ini-resp','ini-start','ini-end','ini-link'].forEach(clr);
   const gEl=document.getElementById('ini-goal'); if(gEl) gEl.value='تحسين التحصيل الدراسي';
@@ -2568,10 +3322,13 @@ function openInitiativeModal(id) {
     sv('ini-status',ini.status); sv('ini-progress',ini.progress||0); sv('ini-link',ini.link||'');
     if(ti) ti.textContent='تعديل المبادرة';
   }
+  refreshHijriPreview('ini-start');
+  refreshHijriPreview('ini-end');
   openModal('initiative-modal');
 }
 
 async function saveInitiative() {
+  try { assertYearWritable(); } catch { return; }
   const editId = document.getElementById('ini-edit-id')?.value;
   if (editId  && !can('editInitiative'))  { showToast('ليس لديك صلاحية تعديل المبادرات','error'); return; }
   if (!editId && !can('addInitiative'))   { showToast('ليس لديك صلاحية إضافة مبادرات','error');   return; }
@@ -2599,17 +3356,18 @@ async function saveInitiative() {
     }
     closeModal('initiative-modal'); renderPlan();
     showToast(editId?'تم تعديل المبادرة ✅':'تمت إضافة المبادرة ✅','success');
-  } catch (err) { console.error('[saveInitiative]',err.message); showToast('خطأ: '+err.message,'error'); }
+  } catch (err) { console.error('[saveInitiative]',err.message); showToast(arabicDbError(err),'error'); }
   finally { if(btn){ btn.disabled=false; btn.textContent='💾 حفظ المبادرة'; } }
 }
 
 async function deleteInitiative(id) {
   if (!can('deleteInitiative')) { showToast('ليس لديك صلاحية حذف المبادرات','error'); return; }
+  try { assertYearWritable(); } catch { return; }
   if (!confirm('حذف هذه المبادرة؟')) return;
   try {
     await sbDeleteInitiative(id); renderPlan();
     showToast('تم الحذف 🗑️','warning');
-  } catch (err) { console.error('[deleteInitiative]',err.message); showToast('خطأ: '+err.message,'error'); }
+  } catch (err) { console.error('[deleteInitiative]',err.message); showToast(arabicDbError(err),'error'); }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -2759,14 +3517,19 @@ function filterTasks(v) { _taskFilter=v; renderTasks(); }
 function filterTasksPriority(v) { _taskPriFilter=v; renderTasks(); }
 
 function renderTasks() {
-  let tasks = [...tasksCache];
+  let tasks = yearScopedRows(tasksCache);
+  const today = new Date(); today.setHours(0,0,0,0);
+  const canWrite = !isYearReadOnlyMode();
 
   if (currentUser?.role === 'teacher') {
     tasks = tasks.filter(t => t.resp && t.resp.includes(currentUser.name));
   }
 
   if (_taskFilter === 'late') {
-    tasks = tasks.filter(t => t.status !== 'done' && t.due && new Date(t.due) < new Date());
+    tasks = tasks.filter(t => {
+      const due = t.due ? parseISODateOnly(t.due) : null;
+      return t.status !== 'done' && due && due < today;
+    });
   } else if (_taskFilter !== 'all') {
     tasks = tasks.filter(t => t.status === _taskFilter);
   }
@@ -2788,7 +3551,8 @@ function renderTasks() {
   }
 
   grid.innerHTML = tasks.map(t => {
-    const late = t.status !== 'done' && t.due && new Date(t.due) < new Date();
+    const due = t.due ? parseISODateOnly(t.due) : null;
+    const late = t.status !== 'done' && due && due < today;
 
     return `
       <div class="task-card priority-${t.priority}">
@@ -2807,13 +3571,13 @@ function renderTasks() {
         </div>
 
         <div class="task-actions">
-          ${can('editTask') ? `<select class="task-status-select" onchange="chgTaskStatus('${esc(t.id)}', this.value)">
+          ${canWrite && can('editTask') ? `<select class="task-status-select" onchange="chgTaskStatus('${esc(t.id)}', this.value)">
             <option value="pending" ${t.status === 'pending' ? 'selected' : ''}>معلقة</option>
             <option value="inprogress" ${t.status === 'inprogress' ? 'selected' : ''}>قيد التنفيذ</option>
             <option value="done" ${t.status === 'done' ? 'selected' : ''}>منجزة</option>
           </select>` : `<span class="badge ${SBM[t.status]}">${SL2[t.status]}</span>`}
-          ${can('editTask') ? `<button class="btn-sm btn-edit" onclick="openTaskModal('${esc(t.id)}')">✏️</button>` : ''}
-          ${can('deleteTask') ? `<button class="btn-sm btn-delete" onclick="deleteTask('${esc(t.id)}')">🗑️</button>` : ''}
+          ${canWrite && can('editTask') ? `<button class="btn-sm btn-edit" onclick="openTaskModal('${esc(t.id)}')">✏️</button>` : ''}
+          ${canWrite && can('deleteTask') ? `<button class="btn-sm btn-delete" onclick="deleteTask('${esc(t.id)}')">🗑️</button>` : ''}
         </div>
       </div>
     `;
@@ -2822,19 +3586,25 @@ function renderTasks() {
 
 async function chgTaskStatus(id, status) {
   if (!requireAuth('editTask')) return;
+  try { assertYearWritable(); } catch { return; }
   if (!['pending','inprogress','done'].includes(status)) {
     showToast('حالة غير صالحة','error');
     return;
   }
-  await sbUpdateTaskStatus(id, status);
-  renderTasks(); renderDashboard();
-  showToast('تم تحديث الحالة ✅','success');
+  try {
+    await sbUpdateTaskStatus(id, status);
+    renderTasks(); renderDashboard();
+    showToast('تم تحديث الحالة ✅','success');
+  } catch (err) {
+    showToast(arabicDbError(err), 'error');
+  }
 }
 function changeTaskStatus(id,s){ chgTaskStatus(id,s); }
 
 function openTaskModal(id) {
   if (id  && !can('editTask')) { showToast('ليس لديك صلاحية تعديل المهام','error'); return; }
   if (!id && !can('addTask'))  { showToast('ليس لديك صلاحية إضافة مهام','error');   return; }
+  try { assertYearWritable(); } catch { return; }
   const ti=document.getElementById('task-modal-title'); if(ti) ti.textContent=id?'تعديل المهمة':'إضافة مهمة جديدة';
   ['task-edit-id','task-name','task-resp','task-due','task-notes'].forEach(fid=>{const e=document.getElementById(fid);if(e)e.value='';});
   const pEl=document.getElementById('task-priority'); if(pEl) pEl.value='high';
@@ -2844,10 +3614,12 @@ function openTaskModal(id) {
     const sv=(fid,v)=>{const e=document.getElementById(fid);if(e)e.value=v??'';};
     sv('task-edit-id',t.id);sv('task-name',t.name);sv('task-resp',t.resp||'');sv('task-due',t.due||'');sv('task-priority',t.priority);sv('task-status',t.status);sv('task-notes',t.notes||'');
   }
+  refreshHijriPreview('task-due');
   openModal('task-modal');
 }
 
 async function saveTask() {
+  try { assertYearWritable(); } catch { return; }
   const editId=document.getElementById('task-edit-id')?.value;
   if (editId && !can('editTask')) { showToast('ليس لديك صلاحية تعديل المهام','error'); return; }
   if (!editId && !can('addTask')){ showToast('ليس لديك صلاحية إضافة مهام','error');   return; }
@@ -2870,15 +3642,16 @@ async function saveTask() {
     if(editId){ saved=await sbUpdateTask(t); } else { saved=await sbInsertTask(t); tasksCache.push(saved); }
     closeModal('task-modal'); renderTasks();
     showToast(editId?'تم التعديل ✅':'تمت الإضافة ✅','success');
-  } catch(err){ console.error('[saveTask]',err.message); showToast('خطأ: '+err.message,'error'); }
+  } catch(err){ console.error('[saveTask]',err.message); showToast(arabicDbError(err),'error'); }
   finally{ if(btn){btn.disabled=false;btn.textContent='💾 حفظ المهمة';} }
 }
 
 async function deleteTask(id) {
   if(!can('deleteTask')){showToast('ليس لديك صلاحية حذف المهام','error');return;}
+  try { assertYearWritable(); } catch { return; }
   if(!confirm('حذف هذه المهمة؟'))return;
   try{ await sbDeleteTask(id); renderTasks(); showToast('تم الحذف 🗑️','warning'); }
-  catch(err){ console.error('[deleteTask]',err.message); showToast('خطأ: '+err.message,'error'); }
+  catch(err){ console.error('[deleteTask]',err.message); showToast(arabicDbError(err),'error'); }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -2886,12 +3659,14 @@ async function deleteTask(id) {
    ───────────────────────────────────────────────────────────── */
 function openReportModal() {
   if (!requireAuth('addEvidence')) return;
+  try { assertYearWritable(); } catch { return; }
   pendingEvidenceFile = null;
   const sel = document.getElementById('rep-program-id');
+  const yearPrograms = yearScopedRows(programsCache);
 
   if (sel) {
     sel.innerHTML = '<option value="">— اختر البرنامج —</option>' +
-      programsCache.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+      yearPrograms.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
 
     sel.onchange = function () {
       fillReportIndicators(this.value);
@@ -2938,40 +3713,33 @@ function renderReports() {
   const TI={'صورة':'📷','PDF':'📄','Word':'📝','Excel':'📊','Google Drive':'☁️','ملف':'📎','YouTube':'🎥','رابط خارجي':'🔗'};
   const tbody=document.getElementById('reports-tbody'); if(!tbody)return;
 
-  const yearId = activeSchoolYearId;
-  let rows = Array.isArray(evidencesCache) ? evidencesCache.slice() : [];
-  // السنة النشطة إن وُجدت؛ لا تُسقط الصفوف بسبب NULL في الملف/الرابط/المؤشر
-  if (yearId != null && yearId !== '') {
-    const yearRows = rows.filter(r =>
-      r.school_year_id == null ||
-      r.school_year_id === '' ||
-      String(r.school_year_id) === String(yearId)
-    );
-    // إن وُجدت شواهد للسنة النشطة استخدمها؛ وإلا اعرض الكل لتجنّب شاشة فارغة خاطئة
-    if (yearRows.length) rows = yearRows;
-  }
+  const rows = yearScopedRows(evidencesCache);
+  const yearPrograms = yearScopedRows(programsCache);
+  const canWrite = !isYearReadOnlyMode();
 
   console.info('[UI] renderReports evidencesCache=', evidencesCache.length,
-    'activeYear=', yearId ? '(set)' : '(none)', 'rendered=', rows.length);
+    'selectedYear=', selectedSchoolYearId ? '(set)' : '(none)', 'rendered=', rows.length);
 
   tbody.innerHTML = rows.length
     ? rows.map((r,i)=>{
         const title = r.title || r.file_name || 'شاهد';
         const typeLabel = r.type || (r.file_name ? evidenceTypeFromFileName(r.file_name) : '—');
         const pName = r.program_id != null
-          ? (programsCache.find(p => String(p.id) === String(r.program_id))?.name || '—')
+          ? (yearPrograms.find(p => String(p.id) === String(r.program_id))?.name
+            || programsCache.find(p => String(p.id) === String(r.program_id))?.name || '—')
           : '—';
         return`<tr><td>${i+1}</td><td style="font-weight:600">${esc(title)}</td>
           <td><span class="badge badge-info">${TI[typeLabel]||getEvIcon(typeLabel||r.file_name)} ${esc(typeLabel||'—')}</span></td>
           <td>${esc(pName)}</td><td>${esc(r.person||'—')}</td><td>${esc(fmtDate(r.date || r.created_at))}</td>
           <td>${evidenceViewButtonHtml(r)}</td>
-          <td>${can('deleteEvidence')?`<button class="btn-sm btn-delete" onclick="handleDelEv('${esc(r.id)}')">🗑️</button>`:''}</td></tr>`;
+          <td>${canWrite && can('deleteEvidence')?`<button class="btn-sm btn-delete" onclick="handleDelEv('${esc(r.id)}')">🗑️</button>`:''}</td></tr>`;
       }).join('')
     : '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-muted)">لا توجد شواهد</td></tr>';
 }
 
 async function saveReport() {
   if (!requireAuth('addEvidence')) return;
+  try { assertYearWritable(); } catch { return; }
   const g = id => (document.getElementById(id)?.value || '');
   const title = clampInput(g('rep-title'));
   if (!title) { showToast('يرجى إدخال عنوان الشاهد','error'); return; }
@@ -3009,7 +3777,7 @@ async function saveReport() {
   }
 
   try {
-    const schoolYearId = await requireActiveSchoolYearId();
+    const schoolYearId = await requireWritableSchoolYearId();
     if (source === 'file') {
       showToast('جاري رفع الملف...','info');
       fileMeta = await uploadEvidenceToStorage(pendingEvidenceFile, {
@@ -3043,7 +3811,7 @@ async function saveReport() {
   } catch (err) {
     if (fileMeta?.path) await removeUploadedEvidenceObject(fileMeta.path);
     console.error('[saveReport]');
-    showToast('تعذّر حفظ الشاهد', 'error');
+    showToast(arabicDbError(err) || 'تعذّر حفظ الشاهد', 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '📤 رفع الشاهد'; }
   }
@@ -3087,11 +3855,12 @@ function renderTeachers() {
   }
 
   // ── واجهة المدير/الوكيل: جدول كامل + إدارة الروابط ──
-  const visible = teachersCache.filter(t => t.name && !t.name.toLowerCase().includes('admin'));
+  const canWrite = !isYearReadOnlyMode();
+  const visible = yearScopedRows(teachersCache).filter(t => t.name && !t.name.toLowerCase().includes('admin'));
   sec.innerHTML = `
     <div class="section-top">
       <h2>متابعة المعلمات</h2>
-      ${can('addTeacher')?`<button class="btn-primary" id="btn-add-teacher" onclick="openTeacherModal()">+ إضافة سجل متابعة</button>`:''}
+      ${canWrite && can('addTeacher')?`<button class="btn-primary" id="btn-add-teacher" onclick="openTeacherModal()">+ إضافة سجل متابعة</button>`:''}
     </div>
     <div class="table-wrapper">
       <table class="data-table">
@@ -3117,8 +3886,8 @@ function renderTeachers() {
       <td>${esc(fmtDate(t.lastReport))}</td>
       <td style="font-size:13px">${t.notes ? esc(t.notes) : '<span style="color:#ccc">—</span>'}</td>
       <td><div style="display:flex;gap:4px">
-        ${can('editTeacher')?`<button class="btn-sm btn-edit" onclick="openTeacherModal('${t.id}')">✏️</button>`:''}
-        ${can('deleteTeacher')?`<button class="btn-sm btn-delete" onclick="deleteTeacher('${t.id}')">🗑️</button>`:''}
+        ${canWrite && can('editTeacher')?`<button class="btn-sm btn-edit" onclick="openTeacherModal('${t.id}')">✏️</button>`:''}
+        ${canWrite && can('deleteTeacher')?`<button class="btn-sm btn-delete" onclick="deleteTeacher('${t.id}')">🗑️</button>`:''}
       </div></td></tr>`;
   }).join('') : '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-muted)">لا توجد سجلات متابعة</td></tr>';
 }
@@ -3126,6 +3895,7 @@ function renderTeachers() {
 // إرسال رابط Drive من حساب المعلمة (إضافة فقط)
 async function submitTeacherLink() {
   if (!requireAuth('addTeacherLink')) return;
+  try { assertYearWritable(); } catch { return; }
   const g = id => (document.getElementById(id)?.value||'').trim();
   const title = clampInput(g('tlink-title'));
   const url = g('tlink-url');
@@ -3151,6 +3921,7 @@ async function submitTeacherLink() {
 function openTeacherModal(id) {
   if(id  && !can('editTeacher')){showToast('ليس لديك صلاحية التعديل','error');return;}
   if(!id && !can('addTeacher')) {showToast('ليس لديك صلاحية الإضافة','error');return;}
+  try { assertYearWritable(); } catch { return; }
   const ti=document.getElementById('teacher-modal-title'); if(ti) ti.textContent=id?'تعديل سجل المتابعة':'إضافة سجل متابعة معلمة';
   ['tf-edit-id','tf-name','tf-assigned','tf-done','tf-last-report','tf-notes','tf-link'].forEach(fid=>{const e=document.getElementById(fid);if(e)e.value='';});
   if(id){
@@ -3160,10 +3931,12 @@ function openTeacherModal(id) {
     sv('tf-done',tf.done||0);sv('tf-last-report',tf.lastReport||'');sv('tf-notes',tf.notes||'');
     sv('tf-link',tf.driveLink||'');
   }
+  refreshHijriPreview('tf-last-report');
   openModal('teacher-modal');
 }
 
 async function saveTeacher() {
+  try { assertYearWritable(); } catch { return; }
   const editId=document.getElementById('tf-edit-id')?.value;
   if (editId && !requireAuth('editTeacher')) return;
   if (!editId && !requireAuth('addTeacher')) return;
@@ -3187,18 +3960,19 @@ async function saveTeacher() {
     else{ saved=await sbInsertTeacher(tf); teachersCache.push(saved); }
     closeModal('teacher-modal'); renderTeachers();
     showToast(editId?'تم التعديل ✅':'تمت الإضافة ✅','success');
-  }catch(err){console.error('[saveTeacher]',err.message);showToast('خطأ: '+err.message,'error');}
+  }catch(err){console.error('[saveTeacher]',err.message);showToast(arabicDbError(err),'error');}
   finally{if(btn){btn.disabled=false;btn.textContent='💾 حفظ';}}
 }
 
 async function deleteTeacher(id) {
   if(!can('deleteTeacher')){showToast('ليس لديك صلاحية حذف سجلات المتابعة','error');return;}
+  try { assertYearWritable(); } catch { return; }
   if(!confirm('حذف سجل المتابعة؟ (لن يُحذف حساب المعلمة)'))return;
   try{
     await sbDeleteTeacher(id);
     renderTeachers();
     showToast('تم حذف سجل المتابعة 🗑️','warning');
-  }catch(err){console.error('[deleteTeacher]',err.message);showToast('خطأ: '+err.message,'error');}
+  }catch(err){console.error('[deleteTeacher]',err.message);showToast(arabicDbError(err),'error');}
 }
 
 // Legacy aliases
@@ -3210,16 +3984,23 @@ function saveTeacherNote(){ saveTeacher(); }
    ───────────────────────────────────────────────────────────── */
 function renderDashboard() {
   // §11: إخفاء admin من الإحصائيات
-  const visTeachers = teachersCache.filter(t => t.name && !t.name.toLowerCase().includes('admin'));
-  const total  = programsCache.length;
-  const done   = programsCache.filter(p => calcProgramStatus(p)==='done').length;
- const avg = total
+  const yearPrograms = yearScopedRows(programsCache);
+  const yearTasks = yearScopedRows(tasksCache);
+  const yearEvs = yearScopedRows(evidencesCache);
+  const visTeachers = yearScopedRows(teachersCache).filter(t => t.name && !t.name.toLowerCase().includes('admin'));
+  const today = new Date(); today.setHours(0,0,0,0);
+  const total  = yearPrograms.length;
+  const done   = yearPrograms.filter(p => calcProgramStatus(p)==='done').length;
+  const avg = total
   ? Math.round(
-      programsCache.reduce((s,p)=>s+calcProgramProgress(p.id),0)/total
+      yearPrograms.reduce((s,p)=>s+calcProgramProgress(p.id),0)/total
     )
   : 0;
-  const lateT  = tasksCache.filter(t=>t.status!=='done'&&t.due&&new Date(t.due)<new Date()).length;
-  const totalEv= evidencesCache.length;
+  const lateT  = yearTasks.filter(t=>{
+    const due = t.due ? parseISODateOnly(t.due) : null;
+    return t.status!=='done' && due && due < today;
+  }).length;
+  const totalEv= yearEvs.length;
 
   const dsEl = document.getElementById('dashboard-stats'); if (!dsEl) return;
   dsEl.innerHTML = `
@@ -3234,19 +4015,26 @@ function renderDashboard() {
   const gEl = document.getElementById('dash-greeting');
   if (gEl) gEl.textContent = `${settings.schoolName||'منصة الخطة التشغيلية'}`;
   const subEl = document.getElementById('dash-subtitle');
-  if (subEl) subEl.textContent = `القائدة: ${settings.principal||'—'} · العام الدراسي ${settings.year||''}`;
+  const y = getSelectedSchoolYear();
+  const yearLabel = y ? (y.label_ar || y.name || settings.year || '') : (settings.year || '');
+  if (subEl) subEl.textContent = `القائدة: ${settings.principal||'—'} · العام الدراسي ${yearLabel}`;
 
-  const upcoming = tasksCache.filter(t=>t.status!=='done').sort((a,b)=>new Date(a.due)-new Date(b.due)).slice(0,5);
+  const upcoming = yearTasks.filter(t=>t.status!=='done').sort((a,b)=>{
+    const da = parseISODateOnly(a.due) || new Date(0);
+    const db = parseISODateOnly(b.due) || new Date(0);
+    return da - db;
+  }).slice(0,5);
   const upEl = document.getElementById('upcoming-tasks-list');
   if (upEl) upEl.innerHTML = upcoming.length
     ? '<div class="upcoming-list">'+upcoming.map(t=>{
-        const late=t.due&&new Date(t.due)<new Date();
+        const due = t.due ? parseISODateOnly(t.due) : null;
+        const late = due && due < today;
         return`<div class="upcoming-item"><div class="upcoming-dot ${esc(t.priority)}"></div><div class="upcoming-info"><div class="upcoming-name">${esc(t.name)}</div><div class="upcoming-due">${late?'⚠️ متأخرة — ':''}${esc(fmtDate(t.due))} · ${esc(t.resp||'—')}</div></div></div>`;
       }).join('')+'</div>'
     : '<p style="padding:16px;color:var(--text-muted);text-align:center">لا توجد مهام قادمة</p>';
 
   const ipEl = document.getElementById('initiatives-progress');
-  if (ipEl) ipEl.innerHTML = '<div class="initiatives-progress-list">'+programsCache.map(p=>`
+  if (ipEl) ipEl.innerHTML = '<div class="initiatives-progress-list">'+yearPrograms.map(p=>`
     <div class="ini-progress-item">
       <span class="ini-progress-name">${esc(p.name)}</span>
       <div class="ini-progress-bar"><div class="progress-bar"><div class="progress-fill" style="width:${p.progress||0}%"></div></div></div>
@@ -3258,8 +4046,9 @@ function renderDashboard() {
 function drawDashPie() {
   const c=document.getElementById('initiatives-chart'); if(!c)return;
   const ctx=c.getContext('2d'),W=c.width,H=c.height; ctx.clearRect(0,0,W,H);
+  const yearPrograms = yearScopedRows(programsCache);
   const cnt={'منتهٍ':0,'جارٍ التنفيذ':0,'قيد التخطيط':0,'متأخر':0};
-  programsCache.forEach(p=>{const s=calcProgramStatus(p);if(s==='done')cnt['منتهٍ']++;else if(s==='active')cnt['جارٍ التنفيذ']++;else if(s==='planning')cnt['قيد التخطيط']++;else cnt['متأخر']++;});
+  yearPrograms.forEach(p=>{const s=calcProgramStatus(p);if(s==='done')cnt['منتهٍ']++;else if(s==='active')cnt['جارٍ التنفيذ']++;else if(s==='planning')cnt['قيد التخطيط']++;else cnt['متأخر']++;});
   const colors=['#27ae60','#2e86c1','#95a5a6','#e74c3c'],labels=Object.keys(cnt),values=Object.values(cnt),total=values.reduce((a,b)=>a+b,0);
   if(!total)return;
   const cx=W/2,cy=H/2-15,r=Math.min(W,H)/2-30;let sa=-Math.PI/2;
@@ -3270,40 +4059,227 @@ function drawDashPie() {
 /* ─────────────────────────────────────────────────────────────
    §32  CALENDAR
    ───────────────────────────────────────────────────────────── */
-function prevMonth(){ calendarMonth--; if(calendarMonth<0){calendarMonth=11;calendarYear--;} renderCalendar(); }
-function nextMonth(){ calendarMonth++; if(calendarMonth>11){calendarMonth=0;calendarYear++;} renderCalendar(); }
+function setCalendarMode(mode) {
+  if (mode !== 'hijri' && mode !== 'gregorian') return;
+  if (mode === 'hijri' && !supportsIslamicUmalqura()) {
+    showToast('المتصفح لا يدعم التقويم الهجري أم القرى عبر Intl', 'error');
+    calendarMode = 'gregorian';
+  } else {
+    calendarMode = mode;
+  }
+  // مزامنة المؤشر بين الوضعين حول «اليوم» إن أمكن، وإلا أبقِ المؤشر الحالي
+  syncCalendarCursorAcrossModes();
+  renderCalendar();
+}
+
+function syncCalendarCursorAcrossModes() {
+  if (calendarMode === 'hijri') {
+    const anchor = new Date(Date.UTC(calendarYear, calendarMonth, 15, 12, 0, 0));
+    const hp = getHijriPartsFromDate(anchor);
+    if (hp) {
+      calendarHijriYear = hp.year;
+      calendarHijriMonth = hp.month;
+    }
+  } else {
+    const start = findHijriDateUTC(calendarHijriYear, calendarHijriMonth, 1);
+    if (start) {
+      calendarYear = start.getUTCFullYear();
+      calendarMonth = start.getUTCMonth();
+    }
+  }
+}
+
+function prevMonth() {
+  if (calendarMode === 'hijri') {
+    calendarHijriMonth -= 1;
+    if (calendarHijriMonth < 1) {
+      calendarHijriMonth = 12;
+      calendarHijriYear -= 1;
+    }
+  } else {
+    calendarMonth--;
+    if (calendarMonth < 0) {
+      calendarMonth = 11;
+      calendarYear--;
+    }
+  }
+  renderCalendar();
+}
+
+function nextMonth() {
+  if (calendarMode === 'hijri') {
+    calendarHijriMonth += 1;
+    if (calendarHijriMonth > 12) {
+      calendarHijriMonth = 1;
+      calendarHijriYear += 1;
+    }
+  } else {
+    calendarMonth++;
+    if (calendarMonth > 11) {
+      calendarMonth = 0;
+      calendarYear++;
+    }
+  }
+  renderCalendar();
+}
+
+function goToToday() {
+  initCalendarCursorFromToday();
+  renderCalendar();
+}
+
+function collectCalendarEventsByISO() {
+  const todayIso = getTodayISOInRiyadh();
+  const todayDate = parseISODateOnly(todayIso);
+  const map = {};
+  const push = (iso, item) => {
+    if (!iso) return;
+    if (!map[iso]) map[iso] = [];
+    map[iso].push(item);
+  };
+
+  yearScopedRows(tasksCache).forEach(t => {
+    const iso = toISODateKey(t.due);
+    if (!iso) return;
+    const d = parseISODateOnly(iso);
+    const late = t.status !== 'done' && todayDate && d && d < todayDate;
+    push(iso, { text: t.name, cls: late ? 'late-event' : 'task-event' });
+  });
+
+  yearScopedRows(programsCache).forEach(p => {
+    const iso = toISODateKey(p.end);
+    if (!iso) return;
+    push(iso, { text: '📋 ' + p.name, cls: 'ini-event' });
+  });
+
+  yearScopedRows(initiativesCache).forEach(ini => {
+    const isoEnd = toISODateKey(ini.end);
+    if (isoEnd) push(isoEnd, { text: '🎯 ' + ini.name, cls: 'ini-event' });
+    const isoStart = toISODateKey(ini.start);
+    if (isoStart && isoStart !== isoEnd) {
+      push(isoStart, { text: '🎯 بداية: ' + ini.name, cls: 'ini-event' });
+    }
+  });
+
+  return map;
+}
+
+function renderCalendarCell(opts) {
+  const { primaryNum, secondaryNum, isToday, events } = opts;
+  const de = events || [];
+  const secondary = secondaryNum != null
+    ? `<span class="calendar-subdate">${secondaryNum}</span>`
+    : '';
+  return `<div class="calendar-cell${isToday ? ' today' : ''}">
+    <div class="calendar-date-row">
+      <div class="calendar-date${isToday ? ' today-num' : ''}">${primaryNum}</div>
+      ${secondary}
+    </div>
+    ${de.slice(0, 3).map(e => `<div class="calendar-event ${esc(e.cls)}" title="${esc(e.text)}">${esc(e.text)}</div>`).join('')}
+    ${de.length > 3 ? `<div style="font-size:9px;color:var(--text-muted)">+${de.length - 3}</div>` : ''}
+  </div>`;
+}
+
+function updateCalendarModeButtons() {
+  const hijriBtn = document.getElementById('cal-mode-hijri');
+  const gregBtn = document.getElementById('cal-mode-greg');
+  if (hijriBtn) hijriBtn.classList.toggle('active', calendarMode === 'hijri');
+  if (gregBtn) gregBtn.classList.toggle('active', calendarMode === 'gregorian');
+}
 
 function renderCalendar() {
-  const MN=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
-  const lbl=document.getElementById('calendar-month-label'); if(lbl) lbl.textContent=MN[calendarMonth]+' '+calendarYear;
-  const today=new Date(),fd=new Date(calendarYear,calendarMonth,1).getDay(),dm=new Date(calendarYear,calendarMonth+1,0).getDate();
-  const ev={};
-  tasksCache.forEach(t=>{if(!t.due)return;const d=new Date(t.due);if(d.getFullYear()===calendarYear&&d.getMonth()===calendarMonth){const day=d.getDate();if(!ev[day])ev[day]=[];ev[day].push({text:t.name,cls:t.status!=='done'&&d<today?'late-event':'task-event'});}});
-  programsCache.forEach(p=>{if(p.end){const d=new Date(p.end);if(d.getFullYear()===calendarYear&&d.getMonth()===calendarMonth){const day=d.getDate();if(!ev[day])ev[day]=[];ev[day].push({text:'📋 '+p.name,cls:'ini-event'});}}});
-  const DN=['أحد','اثنين','ثلاثاء','أربعاء','خميس','جمعة','سبت'];
-  let html='<div class="calendar-grid"><div class="calendar-header-row">'+DN.map(d=>`<div class="calendar-day-name">${d}</div>`).join('')+'</div><div class="calendar-body">';
-  let col=0; for(let i=0;i<fd;i++){html+='<div class="calendar-cell empty"></div>';col++;}
-  for(let day=1;day<=dm;day++){const isT=today.getFullYear()===calendarYear&&today.getMonth()===calendarMonth&&today.getDate()===day;const de=ev[day]||[];html+=`<div class="calendar-cell${isT?' today':''}"><div class="calendar-date${isT?' today-num':''}">${day}</div>${de.slice(0,3).map(e=>`<div class="calendar-event ${esc(e.cls)}" title="${esc(e.text)}">${esc(e.text)}</div>`).join('')}${de.length>3?`<div style="font-size:9px;color:var(--text-muted)">+${de.length-3}</div>`:''}</div>`;col++;}
-  const rem=(7-(col%7))%7; for(let i=0;i<rem;i++) html+='<div class="calendar-cell empty"></div>';
-  html+='</div></div>';
-  const ce=document.getElementById('calendar-container'); if(ce) ce.innerHTML=html;
+  updateCalendarModeButtons();
+  const lbl = document.getElementById('calendar-month-label');
+  const DN = ['أحد', 'اثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة', 'سبت'];
+  const eventsByIso = collectCalendarEventsByISO();
+  const todayIso = getTodayISOInRiyadh();
+  let html = '<div class="calendar-grid"><div class="calendar-header-row">' +
+    DN.map(d => `<div class="calendar-day-name">${d}</div>`).join('') +
+    '</div><div class="calendar-body">';
+
+  if (calendarMode === 'hijri' && supportsIslamicUmalqura()) {
+    if (lbl) lbl.textContent = formatHijriMonthYearLabel(calendarHijriYear, calendarHijriMonth);
+    const days = buildHijriMonthDays(calendarHijriYear, calendarHijriMonth);
+    if (!days.length) {
+      if (lbl) lbl.textContent = 'تعذّر بناء الشهر الهجري';
+      const ce = document.getElementById('calendar-container');
+      if (ce) ce.innerHTML = '<p class="field-hint" style="padding:20px">تعذّر بناء شبكة الشهر الهجري عبر Intl في هذا المتصفح.</p>';
+      return;
+    }
+    let col = 0;
+    for (let i = 0; i < days[0].weekday; i++) {
+      html += '<div class="calendar-cell empty"></div>';
+      col++;
+    }
+    days.forEach(day => {
+      html += renderCalendarCell({
+        primaryNum: day.hijriDay,
+        secondaryNum: day.gregDay,
+        isToday: day.isoKey === todayIso,
+        events: eventsByIso[day.isoKey] || [],
+      });
+      col++;
+    });
+    const rem = (7 - (col % 7)) % 7;
+    for (let i = 0; i < rem; i++) html += '<div class="calendar-cell empty"></div>';
+  } else {
+    const MN = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+    if (lbl) lbl.textContent = MN[calendarMonth] + ' ' + calendarYear;
+    const fd = new Date(Date.UTC(calendarYear, calendarMonth, 1, 12, 0, 0)).getUTCDay();
+    const dm = new Date(Date.UTC(calendarYear, calendarMonth + 1, 0, 12, 0, 0)).getUTCDate();
+    let col = 0;
+    for (let i = 0; i < fd; i++) {
+      html += '<div class="calendar-cell empty"></div>';
+      col++;
+    }
+    for (let day = 1; day <= dm; day++) {
+      const isoKey = `${calendarYear}-${String(calendarMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const dObj = parseISODateOnly(isoKey);
+      const hp = dObj ? getHijriPartsFromDate(dObj) : null;
+      html += renderCalendarCell({
+        primaryNum: day,
+        secondaryNum: hp ? hp.day : null,
+        isToday: isoKey === todayIso,
+        events: eventsByIso[isoKey] || [],
+      });
+      col++;
+    }
+    const rem = (7 - (col % 7)) % 7;
+    for (let i = 0; i < rem; i++) html += '<div class="calendar-cell empty"></div>';
+  }
+
+  html += '</div></div>';
+  const ce = document.getElementById('calendar-container');
+  if (ce) ce.innerHTML = html;
 }
+
+window.setCalendarMode = setCalendarMode;
+window.goToToday = goToToday;
+window.prevMonth = prevMonth;
+window.nextMonth = nextMonth;
 
 /* ─────────────────────────────────────────────────────────────
    §33  STATS
    ───────────────────────────────────────────────────────────── */
 function renderStats() {
-  const avg=programsCache.length?Math.round(programsCache.reduce((s,p)=>s+(p.progress||0),0)/programsCache.length):0;
-  const dt=tasksCache.filter(t=>t.status==='done').length;
-  const lt=tasksCache.filter(t=>t.status!=='done'&&t.due&&new Date(t.due)<new Date()).length;
-  const top=[...programsCache].sort((a,b)=>(b.progress||0)-(a.progress||0)).slice(0,3);
+  const yearPrograms = yearScopedRows(programsCache);
+  const yearTasks = yearScopedRows(tasksCache);
+  const yearEvs = yearScopedRows(evidencesCache);
+  const today = new Date(); today.setHours(0,0,0,0);
+  const avg=yearPrograms.length?Math.round(yearPrograms.reduce((s,p)=>s+(p.progress||0),0)/yearPrograms.length):0;
+  const dt=yearTasks.filter(t=>t.status==='done').length;
+  const lt=yearTasks.filter(t=>{
+    const due = t.due ? parseISODateOnly(t.due) : null;
+    return t.status!=='done' && due && due < today;
+  }).length;
+  const top=[...yearPrograms].sort((a,b)=>(b.progress||0)-(a.progress||0)).slice(0,3);
   const sc=document.getElementById('stats-cards'); if(sc) sc.innerHTML=`
     <div class="stat-card"><span class="stat-icon">📊</span><span class="stat-number">${avg}%</span><span class="stat-label">متوسط إنجاز البرامج</span></div>
     <div class="stat-card green"><span class="stat-icon">✅</span><span class="stat-number">${dt}</span><span class="stat-label">مهام منجزة</span></div>
     <div class="stat-card red"><span class="stat-icon">⚠️</span><span class="stat-number">${lt}</span><span class="stat-label">مهام متأخرة</span></div>
-    <div class="stat-card purple"><span class="stat-icon">📎</span><span class="stat-number">${evidencesCache.length}</span><span class="stat-label">شواهد مرفوعة</span></div>
+    <div class="stat-card purple"><span class="stat-icon">📎</span><span class="stat-number">${yearEvs.length}</span><span class="stat-label">شواهد مرفوعة</span></div>
     <div class="stat-card gold"><span class="stat-icon">🎯</span><span class="stat-number">${kpiCache.length}</span><span class="stat-label">مؤشرات الأداء</span></div>
-    <div class="stat-card teal"><span class="stat-icon">📋</span><span class="stat-number">${programsCache.filter(p=>calcProgramStatus(p)==='done').length}</span><span class="stat-label">برامج منتهية</span></div>`;
+    <div class="stat-card teal"><span class="stat-icon">📋</span><span class="stat-number">${yearPrograms.filter(p=>calcProgramStatus(p)==='done').length}</span><span class="stat-label">برامج منتهية</span></div>`;
   const te=document.getElementById('top-initiatives');
   if(te) te.innerHTML=top.map((p,i)=>`<div class="top-initiative-item"><span>${['🥇','🥈','🥉'][i]} ${esc(p.name)}</span><span style="font-weight:700;color:var(--primary)">${p.progress}%</span></div>`).join('');
   setTimeout(()=>{drawStatsPie();drawCompare();},60);
@@ -3312,7 +4288,12 @@ function renderStats() {
 function drawStatsPie() {
   const c=document.getElementById('tasks-pie-chart'); if(!c)return;
   const ctx=c.getContext('2d'),W=c.width,H=c.height; ctx.clearRect(0,0,W,H);
-  const cnt={'منجزة':tasksCache.filter(t=>t.status==='done').length,'قيد التنفيذ':tasksCache.filter(t=>t.status==='inprogress').length,'معلقة':tasksCache.filter(t=>t.status==='pending').length,'متأخرة':tasksCache.filter(t=>t.status!=='done'&&t.due&&new Date(t.due)<new Date()).length};
+  const yearTasks = yearScopedRows(tasksCache);
+  const today = new Date(); today.setHours(0,0,0,0);
+  const cnt={'منجزة':yearTasks.filter(t=>t.status==='done').length,'قيد التنفيذ':yearTasks.filter(t=>t.status==='inprogress').length,'معلقة':yearTasks.filter(t=>t.status==='pending').length,'متأخرة':yearTasks.filter(t=>{
+    const due = t.due ? parseISODateOnly(t.due) : null;
+    return t.status!=='done' && due && due < today;
+  }).length};
   const colors=['#27ae60','#2e86c1','#f39c12','#e74c3c'],L=Object.keys(cnt),V=Object.values(cnt),T=V.reduce((a,b)=>a+b,0);
   if(!T)return; const cx=W/2,cy=H/2-20,r=Math.min(W,H)/2-40;let sa=-Math.PI/2;
   V.forEach((v,i)=>{if(!v)return;const sl=(v/T)*2*Math.PI;ctx.beginPath();ctx.moveTo(cx,cy);ctx.arc(cx,cy,r,sa,sa+sl);ctx.closePath();ctx.fillStyle=colors[i];ctx.fill();ctx.strokeStyle='white';ctx.lineWidth=2;ctx.stroke();const mid=sa+sl/2;ctx.fillStyle='white';ctx.font='bold 12px Tajawal';ctx.textAlign='center';ctx.fillText(v,cx+(r*.65)*Math.cos(mid),cy+(r*.65)*Math.sin(mid)+5);sa+=sl;});
@@ -3320,12 +4301,13 @@ function drawStatsPie() {
 }
 
 function drawCompare() {
-  const c=document.getElementById('compare-chart'); if(!c||!programsCache.length)return;
+  const yearPrograms = yearScopedRows(programsCache);
+  const c=document.getElementById('compare-chart'); if(!c||!yearPrograms.length)return;
   const W=c.parentElement?.offsetWidth||700; c.width=W; c.height=280;
   const ctx=c.getContext('2d'); ctx.clearRect(0,0,W,280);
-  const pL=20,pR=20,pT=20,pB=70,cW=W-pL-pR,cH=280-pT-pB,n=Math.max(programsCache.length,1),gap=cW/n,bW=Math.min(32,gap/3);
+  const pL=20,pR=20,pT=20,pB=70,cW=W-pL-pR,cH=280-pT-pB,n=Math.max(yearPrograms.length,1),gap=cW/n,bW=Math.min(32,gap/3);
   for(let i=0;i<=5;i++){const y=pT+cH-(cH*i/5);ctx.strokeStyle='#eaecee';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(pL,y);ctx.lineTo(W-pR,y);ctx.stroke();ctx.fillStyle='#aaa';ctx.font='11px Tajawal';ctx.textAlign='left';ctx.fillText((i*20)+'%',pL,y-2);}
-  programsCache.forEach((p,i)=>{const pct=p.progress||0,x=pL+i*gap+gap/2,bH=(pct/100)*cH;ctx.fillStyle='#dce8f5';ctx.fillRect(x-bW*1.1,pT,bW*2.2,cH);const clr=pct>=90?'#27ae60':pct>=60?'#2e86c1':pct>=30?'#f39c12':'#e74c3c';ctx.fillStyle=clr;ctx.fillRect(x-bW/2,pT+cH-bH,bW,bH);ctx.fillStyle='#333';ctx.font='bold 11px Tajawal';ctx.textAlign='center';ctx.fillText(pct+'%',x,pT+cH-bH-5);ctx.fillStyle='#666';ctx.font='11px Tajawal';ctx.fillText(p.name.length>7?p.name.slice(0,7)+'..':p.name,x,280-pB+16);});
+  yearPrograms.forEach((p,i)=>{const pct=p.progress||0,x=pL+i*gap+gap/2,bH=(pct/100)*cH;ctx.fillStyle='#dce8f5';ctx.fillRect(x-bW*1.1,pT,bW*2.2,cH);const clr=pct>=90?'#27ae60':pct>=60?'#2e86c1':pct>=30?'#f39c12':'#e74c3c';ctx.fillStyle=clr;ctx.fillRect(x-bW/2,pT+cH-bH,bW,bH);ctx.fillStyle='#333';ctx.font='bold 11px Tajawal';ctx.textAlign='center';ctx.fillText(pct+'%',x,pT+cH-bH-5);ctx.fillStyle='#666';ctx.font='11px Tajawal';ctx.fillText(p.name.length>7?p.name.slice(0,7)+'..':p.name,x,280-pB+16);});
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -3595,8 +4577,8 @@ async function handleChgRole(id, role) {
    §35  ENTRY POINT
    ───────────────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', async () => {
-  calendarMonth = new Date().getMonth();
-  calendarYear = new Date().getFullYear();
+  initCalendarCursorFromToday();
+  bindAllHijriPreviews();
 
   bindAuthStateListener();
   showLoginShell();
