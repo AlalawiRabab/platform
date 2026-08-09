@@ -12,7 +12,7 @@
   <meta http-equiv="X-Content-Type-Options" content="nosniff"/>
   <meta name="referrer" content="strict-origin-when-cross-origin"/>
   <title>منصة الخطة التشغيلية المدرسية</title>
- <link rel="stylesheet" href="style.css?v=8008">
+ <link rel="stylesheet" href="style.css?v=20260809-hijri2">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&family=Cairo:wght@300;400;600;700&display=swap" rel="stylesheet">
   
@@ -114,11 +114,16 @@
     <header class="top-header">
       <button class="menu-toggle" onclick="toggleSidebar()" aria-label="القائمة">☰</button>
       <div class="header-title" id="section-title">لوحة التحكم</div>
+      <div class="header-year-wrap">
+        <label class="header-year-label" for="global-year-select">السنة الدراسية</label>
+        <select id="global-year-select" class="header-year-select" onchange="onYearSelected(this.value)" aria-label="اختيار السنة الدراسية"></select>
+      </div>
       <div class="header-user">
         <span id="header-user-name"></span>
         <div class="avatar" id="header-avatar">م</div>
       </div>
     </header>
+    <div id="year-readonly-banner" class="year-readonly-banner hidden" role="status"></div>
     <div class="content-area">
 
       <!-- DASHBOARD -->
@@ -269,10 +274,17 @@
       <section id="section-calendar" class="section">
         <div class="section-top">
           <h2>التقويم الزمني</h2>
-          <div class="month-nav">
-            <button onclick="prevMonth()">◀</button>
-            <span id="calendar-month-label"></span>
-            <button onclick="nextMonth()">▶</button>
+          <div class="calendar-toolbar">
+            <div class="calendar-mode-toggle" role="group" aria-label="وضع التقويم">
+              <button type="button" id="cal-mode-hijri" class="cal-mode-btn active" onclick="setCalendarMode('hijri')">هجري</button>
+              <button type="button" id="cal-mode-greg" class="cal-mode-btn" onclick="setCalendarMode('gregorian')">ميلادي</button>
+            </div>
+            <button type="button" class="btn-secondary cal-today-btn" onclick="goToToday()">اليوم</button>
+            <div class="month-nav">
+              <button type="button" onclick="prevMonth()" aria-label="الشهر السابق">◀</button>
+              <span id="calendar-month-label"></span>
+              <button type="button" onclick="nextMonth()" aria-label="الشهر التالي">▶</button>
+            </div>
           </div>
         </div>
         <div id="calendar-container"></div>
@@ -320,6 +332,10 @@
               <button class="btn-danger" onclick="clearLocalCache()" style="width:100%">🗑️ مسح الكاش المحلي</button>
             </div>
           </div>
+          <div class="card" id="school-years-admin-wrap" style="display:none;grid-column:1/-1">
+            <div class="card-header"><h3>📅 إدارة الأعوام الدراسية</h3></div>
+            <div style="padding:20px" id="school-years-admin-root"></div>
+          </div>
         </div>
       </section>
 
@@ -350,8 +366,8 @@
       <div class="form-group"><label>وصف البرنامج</label><textarea id="prog-desc" placeholder="وصف مختصر للبرنامج وأهدافه..."></textarea></div>
       <div class="form-row">
         <div class="form-group"><label>الفئة المستهدفة</label><input type="text" id="prog-target" placeholder="مثال: طالبات المرحلة المتوسطة"/></div>
-        <div class="form-group"><label>تاريخ البدء</label><input type="date" id="prog-start" onchange="autoCalcProgStatus()"/></div>
-        <div class="form-group"><label>تاريخ الانتهاء</label><input type="date" id="prog-end" onchange="autoCalcProgStatus()"/></div>
+        <div class="form-group"><label>تاريخ البدء</label><input type="date" id="prog-start" onchange="autoCalcProgStatus()"/><div class="hijri-preview" id="prog-start-hijri"></div></div>
+        <div class="form-group"><label>تاريخ الانتهاء</label><input type="date" id="prog-end" onchange="autoCalcProgStatus()"/><div class="hijri-preview" id="prog-end-hijri"></div></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>نسبة الإنجاز (%)</label><input type="number" id="prog-progress" min="0" max="100" placeholder="0" oninput="autoCalcProgStatus()"/></div>
@@ -465,8 +481,8 @@
       <div class="form-group"><label>وصف المبادرة</label><textarea id="ini-desc" placeholder="وصف مختصر..."></textarea></div>
       <div class="form-row">
         <div class="form-group"><label>المسؤولة</label><input type="text" id="ini-resp" placeholder="اسم المسؤولة"/></div>
-        <div class="form-group"><label>تاريخ البداية</label><input type="date" id="ini-start"/></div>
-        <div class="form-group"><label>تاريخ النهاية</label><input type="date" id="ini-end"/></div>
+        <div class="form-group"><label>تاريخ البداية</label><input type="date" id="ini-start"/><div class="hijri-preview" id="ini-start-hijri"></div></div>
+        <div class="form-group"><label>تاريخ النهاية</label><input type="date" id="ini-end"/><div class="hijri-preview" id="ini-end-hijri"></div></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>حالة التنفيذ</label>
@@ -502,7 +518,7 @@
         <div class="form-group"><label>المسؤولة</label><input type="text" id="task-resp" placeholder="اسم المسؤولة"/></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label>تاريخ الاستحقاق</label><input type="date" id="task-due"/></div>
+        <div class="form-group"><label>تاريخ الاستحقاق</label><input type="date" id="task-due"/><div class="hijri-preview" id="task-due-hijri"></div></div>
         <div class="form-group"><label>الأولوية</label>
           <select id="task-priority"><option value="high">عالية</option><option value="medium">متوسطة</option><option value="low">منخفضة</option></select>
         </div>
@@ -625,7 +641,7 @@
       </div>
       <div class="form-row">
         <div class="form-group"><label>عدد المهام المنجزة</label><input type="number" id="tf-done" min="0" placeholder="0"/></div>
-        <div class="form-group"><label>آخر تاريخ تقرير</label><input type="date" id="tf-last-report"/></div>
+        <div class="form-group"><label>آخر تاريخ تقرير</label><input type="date" id="tf-last-report"/><div class="hijri-preview" id="tf-last-report-hijri"></div></div>
       </div>
       <div class="form-group"><label>رابط Google Drive</label><input type="url" id="tf-link" placeholder="https://drive.google.com/..."/></div>
       <div class="form-group"><label>ملاحظات القائدة</label><textarea id="tf-notes" placeholder="ملاحظاتك على المعلمة..."></textarea></div>
@@ -667,7 +683,7 @@
   
  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1"></script>
 <script src="config.js"></script>
-<script src="./script.js?v=20260809-arfile1"></script>
+<script src="./script.js?v=20260809-hijri2"></script>
   
 </body>
 </html>
