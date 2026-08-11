@@ -1,7 +1,8 @@
 /* ================================================================
    SCHOOL OPERATIONAL PLAN — script.js  v6.0
    ================================================================
-   جميع الجداول مرتبطة بـ Supabase | LocalStorage كـ fallback
+   جميع الجداول التشغيلية مرتبطة بـ Supabase فقط (مصدر الحقيقة).
+   localStorage: جلسة supabase-js + KPI مؤقت + تنظيف مفاتيح قديمة — بلا fallback تشغيلي.
    ================================================================
 
    ══════════════════════════════════════════════════════════════
@@ -577,10 +578,17 @@ function requireAuth(action) {
 
 /* ─────────────────────────────────────────────────────────────
    §3  LS HELPERS
+   ─────────────────────────────────────────────────────────────
+   مخصّصة حاليًا لـ KPI (مؤقت) وتنظيف مفاتيح localStorage القديمة.
+   لا تُستخدم كمصدر حقيقة للبيانات التشغيلية (برامج/شواهد/…).
    ───────────────────────────────────────────────────────────── */
+const SB_UNAVAILABLE_MSG = 'تعذّر الاتصال بـ Supabase';
 const lsSave = (k,v) => { try{ localStorage.setItem('sop_'+k, JSON.stringify(v)); }catch{} };
 const lsLoad = (k,d) => { try{ const v=localStorage.getItem('sop_'+k); return v?JSON.parse(v):d; }catch{ return d; } };
 const lsDel  = k     => { try{ localStorage.removeItem('sop_'+k); }catch{} };
+function requireSb() {
+  if (!sb) throw new Error(SB_UNAVAILABLE_MSG);
+}
 
 /* ─────────────────────────────────────────────────────────────
    §4  LOADING OVERLAY
@@ -1654,9 +1662,8 @@ window.supportsIslamicUmalqura = supportsIslamicUmalqura;
    ───────────────────────────────────────────────────────────── */
 async function fetchPrograms() {
   if (!sb) {
-    programsCache = lsLoad('programs_local',[]);
-    indicatorsCache = {};
-    programsCache.forEach(p => { indicatorsCache[p.id] = p.indicators||[]; });
+    console.error('[fetchPrograms]', SB_UNAVAILABLE_MSG);
+    showToast(SB_UNAVAILABLE_MSG, 'error');
     return;
   }
   try {
@@ -1685,20 +1692,15 @@ async function fetchPrograms() {
   school_year_id: row.school_year_id || null,
 }));
     syncEvidencesToPrograms();
-    lsSave('programs_local', programsCache);
   } catch (err) {
     console.error('[fetchPrograms]', err.message);
     showToast('تعذّر تحميل البرامج', 'error');
-    programsCache = lsLoad('programs_local',[]);
+    // الإبقاء على كاش الجلسة في الذاكرة فقط — بلا localStorage
   }
 }
 
 async function sbInsertProgram(p) {
-  if (!sb) {
-    p.id = 'L'+Date.now();
-    const ls = lsLoad('programs_local',[]); ls.push(p); lsSave('programs_local', ls);
-    return p;
-  }
+  requireSb();
 
   // جلب السنة القابلة للكتابة (المحددة إن كانت نشطة) قبل الإدراج
   const yearId = await requireWritableSchoolYearId();
@@ -1733,12 +1735,7 @@ async function sbInsertProgram(p) {
 }
 
 async function sbUpdateProgram(p) {
-  if (!sb) {
-    const ls = lsLoad('programs_local',[]);
-    const i = ls.findIndex(x => x.id === p.id);
-    if (i !== -1) ls[i] = p;
-    lsSave('programs_local', ls); return p;
-  }
+  requireSb();
   const { error } = await sb.from('programs').update({
     name:p.name, description:p.desc||null, resp:p.resp||null,
     target_group:p.target||null, start_date:p.start||null,
@@ -1750,10 +1747,7 @@ async function sbUpdateProgram(p) {
 }
 
 async function sbDeleteProgram(id) {
-  if (!sb) {
-    lsSave('programs_local', lsLoad('programs_local',[]).filter(p => p.id !== id));
-    delete indicatorsCache[id]; return;
-  }
+  requireSb();
   const { error } = await sb.from('programs').delete().eq('id', id);
   if (error) throw error;
   delete indicatorsCache[id];
@@ -1800,12 +1794,7 @@ async function syncProgress(progId) {
    drawDashPie();
 }
 async function sbAddIndicator(progId, text) {
-  if (!sb) {
-    const ind = {id:'L'+Date.now(),program_id:progId,indicator_text:text,is_completed:false,created_at:new Date().toISOString()};
-    if (!indicatorsCache[progId]) indicatorsCache[progId] = [];
-    indicatorsCache[progId].push(ind);
-    await syncProgress(progId); return ind;
-  }
+  requireSb();
   const { data, error } = await sb.from('program_indicators')
     .insert({program_id:progId, indicator_text:text, is_completed:false})
     .select().single();
@@ -1818,6 +1807,7 @@ async function sbAddIndicator(progId, text) {
 
 async function sbToggleIndicator(progId, indId) {
   if (!requireAuth('toggleIndicator')) return;
+  requireSb();
   const pid = String(progId);
   const iid = String(indId);
 
@@ -1840,18 +1830,16 @@ async function sbToggleIndicator(progId, indId) {
   const nv = !(ind.is_completed === true || ind.is_completed === 'true');
   ind.is_completed = nv;
 
-  if (sb) {
-    const { error } = await sb
-      .from('program_indicators')
-      .update({ is_completed: nv })
-      .eq('id', indId);
+  const { error } = await sb
+    .from('program_indicators')
+    .update({ is_completed: nv })
+    .eq('id', indId);
 
-    if (error) {
-      console.error('[sbToggleIndicator]', error.message);
-      ind.is_completed = !nv;
-      showToast(arabicDbError(error), 'error');
-      return;
-    }
+  if (error) {
+    console.error('[sbToggleIndicator]', error.message);
+    ind.is_completed = !nv;
+    showToast(arabicDbError(error), 'error');
+    return;
   }
 
   await syncProgress(progId);
@@ -1864,10 +1852,9 @@ async function handleDelInd(progId, indId) {
   try { assertYearWritable(); } catch { return; }
   if (!confirm('حذف هذا المؤشر؟')) return;
   try {
-    if (sb) {
-      const { error } = await sb.from('program_indicators').delete().eq('id', indId);
-      if (error) throw error;
-    }
+    requireSb();
+    const { error } = await sb.from('program_indicators').delete().eq('id', indId);
+    if (error) throw error;
     if (indicatorsCache[progId]) {
       indicatorsCache[progId] = indicatorsCache[progId].filter(i => String(i.id) !== String(indId));
     }
@@ -1886,22 +1873,27 @@ window.sbToggleIndicator = sbToggleIndicator;
    §15  SUPABASE: INITIATIVES
    ───────────────────────────────────────────────────────────── */
 async function fetchInitiatives() {
-  if (!sb) { initiativesCache = lsLoad('initiatives',[]); return; }
+  if (!sb) {
+    console.error('[fetchInitiatives]', SB_UNAVAILABLE_MSG);
+    showToast(SB_UNAVAILABLE_MSG, 'error');
+    return;
+  }
   const { data, error } = await sb.from('initiatives').select('*').order('created_at');
-  if (error) { console.error('[fetchInitiatives]', error.message); initiativesCache = lsLoad('initiatives',[]); return; }
+  if (error) {
+    console.error('[fetchInitiatives]', error.message);
+    showToast('تعذّر تحميل المبادرات', 'error');
+    return;
+  }
   initiativesCache = (data||[]).map(r => ({
     id:r.id, goal:r.goal||'', name:r.name||'', desc:r.description||'',
     resp:r.resp||'', start:r.start_date||'', end:r.end_date||'',
     status:r.status||'لم تبدأ', progress:r.progress||0, link:r.link||'',
     school_year_id: r.school_year_id || null,
   }));
-  lsSave('initiatives', initiativesCache);
 }
 
 async function sbInsertInitiative(ini) {
-  if (!sb) {
-    ini.id = 'L'+Date.now(); initiativesCache.push(ini); lsSave('initiatives', initiativesCache); return ini;
-  }
+  requireSb();
   const schoolYearId = await requireWritableSchoolYearId();
   const { data, error } = await sb.from('initiatives').insert({
     goal:ini.goal, name:ini.name, description:ini.desc||null, resp:ini.resp||null,
@@ -1914,11 +1906,7 @@ async function sbInsertInitiative(ini) {
 }
 
 async function sbUpdateInitiative(ini) {
-  if (!sb) {
-    const i = initiativesCache.findIndex(x => x.id === ini.id);
-    if (i !== -1) initiativesCache[i] = ini;
-    lsSave('initiatives', initiativesCache); return ini;
-  }
+  requireSb();
   const { error } = await sb.from('initiatives').update({
     goal:ini.goal, name:ini.name, description:ini.desc||null, resp:ini.resp||null,
     start_date:ini.start||null, end_date:ini.end||null,
@@ -1931,7 +1919,7 @@ async function sbUpdateInitiative(ini) {
 }
 
 async function sbDeleteInitiative(id) {
-  if (!sb) { initiativesCache = initiativesCache.filter(i => i.id !== id); lsSave('initiatives', initiativesCache); return; }
+  requireSb();
   const { error } = await sb.from('initiatives').delete().eq('id', id);
   if (error) throw error;
   initiativesCache = initiativesCache.filter(i => i.id !== id);
@@ -1941,21 +1929,26 @@ async function sbDeleteInitiative(id) {
    §16  SUPABASE: TASKS
    ───────────────────────────────────────────────────────────── */
 async function fetchTasks() {
-  if (!sb) { tasksCache = lsLoad('tasks',[]); return; }
+  if (!sb) {
+    console.error('[fetchTasks]', SB_UNAVAILABLE_MSG);
+    showToast(SB_UNAVAILABLE_MSG, 'error');
+    return;
+  }
   const { data, error } = await sb.from('tasks').select('*').order('created_at');
-  if (error) { console.error('[fetchTasks]', error.message); tasksCache = lsLoad('tasks',[]); return; }
+  if (error) {
+    console.error('[fetchTasks]', error.message);
+    showToast('تعذّر تحميل المهام', 'error');
+    return;
+  }
   tasksCache = (data||[]).map(r => ({
     id:r.id, name:r.name||'', resp:r.resp||'', due:r.due_date||'',
     priority:r.priority||'medium', status:r.status||'pending', notes:r.notes||'',
     school_year_id: r.school_year_id || null,
   }));
-  lsSave('tasks', tasksCache);
 }
 
 async function sbInsertTask(t) {
-  if (!sb) {
-    t.id = 'L'+Date.now(); tasksCache.push(t); lsSave('tasks', tasksCache); return t;
-  }
+  requireSb();
   const schoolYearId = await requireWritableSchoolYearId();
   const { data, error } = await sb.from('tasks').insert({
     name:t.name, resp:t.resp||null, due_date:t.due||null,
@@ -1967,11 +1960,7 @@ async function sbInsertTask(t) {
 }
 
 async function sbUpdateTask(t) {
-  if (!sb) {
-    const i = tasksCache.findIndex(x => x.id === t.id);
-    if (i !== -1) tasksCache[i] = t;
-    lsSave('tasks', tasksCache); return t;
-  }
+  requireSb();
   const { error } = await sb.from('tasks').update({
     name:t.name, resp:t.resp||null, due_date:t.due||null,
     priority:t.priority, status:t.status, notes:t.notes||null,
@@ -1983,18 +1972,23 @@ async function sbUpdateTask(t) {
 }
 
 async function sbDeleteTask(id) {
-  if (!sb) { tasksCache = tasksCache.filter(t => t.id !== id); lsSave('tasks', tasksCache); return; }
+  requireSb();
   const { error } = await sb.from('tasks').delete().eq('id', id);
   if (error) throw error;
   tasksCache = tasksCache.filter(t => t.id !== id);
 }
 
 async function sbUpdateTaskStatus(id, status) {
+  requireSb();
   const t = tasksCache.find(x => x.id === id); if (!t) return;
+  const prev = t.status;
   t.status = status;
-  if (!sb) { lsSave('tasks', tasksCache); return; }
   const { error } = await sb.from('tasks').update({status}).eq('id', id);
-  if (error) console.error('[sbUpdateTaskStatus]', error.message);
+  if (error) {
+    t.status = prev;
+    console.error('[sbUpdateTaskStatus]', error.message);
+    throw error;
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -2075,8 +2069,8 @@ function buildEvidenceItemHtml(ev, opts = {}) {
 
 async function fetchEvidences() {
   if (!sb) {
-    evidencesCache = (lsLoad('evidences', []) || []).map(mapEvidenceRow).filter(Boolean);
-    syncEvidencesToPrograms();
+    console.error('[fetchEvidences]', SB_UNAVAILABLE_MSG);
+    showToast(SB_UNAVAILABLE_MSG, 'error');
     return;
   }
 
@@ -2087,7 +2081,7 @@ async function fetchEvidences() {
     .select('*')
     .order('created_at', { ascending: false }));
 
-  // إن فشل الترتيب على created_at جرّب بدون ترتيب بدل السقوط إلى كاش فارغ
+  // إن فشل الترتيب على created_at جرّب بدون ترتيب بدل مسح كاش الجلسة
   if (error) {
     console.warn('[fetchEvidences] retry without created_at order');
     ({ data, error } = await sb.from('evidences').select('*'));
@@ -2096,12 +2090,11 @@ async function fetchEvidences() {
   if (error) {
     console.error('[fetchEvidences]');
     showToast('تعذّر تحميل الشواهد', 'error');
-    // لا تستبدل كاش الواجهة بـ localStorage قديم يُخفي سجلات موجودة في DB
+    // الإبقاء على كاش الجلسة في الذاكرة فقط — بلا localStorage
     return;
   }
 
   evidencesCache = (data || []).map(mapEvidenceRow).filter(Boolean);
-  lsSave('evidences', evidencesCache);
   syncEvidencesToPrograms();
 }
 
@@ -2132,13 +2125,7 @@ async function refreshEvidenceViews(preferredProgramId) {
 }
 
 async function sbInsertEvidence(ev) {
-  if (!sb) {
-    const local = mapEvidenceRow({ ...ev, id: 'L' + Date.now() });
-    evidencesCache.unshift(local);
-    lsSave('evidences', evidencesCache);
-    syncEvidencesToPrograms();
-    return local;
-  }
+  requireSb();
 
   const schoolYearId = ev.school_year_id || await requireWritableSchoolYearId();
   if (!schoolYearId) throw new Error(NO_ACTIVE_YEAR_MSG);
@@ -2166,10 +2153,36 @@ async function sbInsertEvidence(ev) {
   return mapped;
 }
 
-async function sbDeleteEvidence(id) {
-  if (!sb) { evidencesCache = evidencesCache.filter(e => String(e.id) !== String(id)); lsSave('evidences', evidencesCache); syncEvidencesToPrograms(); return; }
+async function sbDeleteEvidence(id, evidenceRow) {
+  requireSb();
+  const ev = evidenceRow || evidencesCache.find(e => String(e.id) === String(id)) || null;
+  // مسار Storage فقط من file_url المخزّن — لا من file_name المعروض
+  const storagePath = extractEvidenceStoragePath(ev?.file_url);
+
+  // ترتيب: Storage أولاً ثم DB.
+  // إن فشل التخزين لا نمس السجل (لا فقدان لبيانات الشاهد في الواجهة/القاعدة).
+  // روابط Drive/الخارجية: بلا مسار bucket → حذف السجل فقط.
+  if (storagePath) {
+    const key = String(storagePath).replace(/^\/+/, '').replace(/^evidences\//, '');
+    if (!key || key.includes('..')) {
+      throw new Error('مسار ملف الشاهد غير صالح');
+    }
+    const { error: rmErr } = await sb.storage.from(EVIDENCE_BUCKET).remove([key]);
+    if (rmErr) {
+      console.error('[sbDeleteEvidence] storage', rmErr.message || rmErr);
+      throw new Error('تعذّر حذف ملف الشاهد من التخزين. لم يُحذف السجل.');
+    }
+  }
+
   const { error } = await sb.from('evidences').delete().eq('id', id);
-  if (error) throw error;
+  if (error) {
+    console.error('[sbDeleteEvidence] db', error.message || error);
+    if (storagePath) {
+      throw new Error('تم حذف الملف من التخزين لكن تعذّر حذف سجل الشاهد. أعد المحاولة.');
+    }
+    throw error;
+  }
+
   evidencesCache = evidencesCache.filter(e => String(e.id) !== String(id));
   syncEvidencesToPrograms();
 }
@@ -2178,16 +2191,23 @@ async function sbDeleteEvidence(id) {
    §18  SUPABASE: TEACHER FOLLOWUPS (مستقل عن users)
    ───────────────────────────────────────────────────────────── */
 async function fetchTeachers() {
-  if (!sb) { teachersCache = lsLoad('teachers',[]); if (!teachersCache.length) teachersCache = DEMO_TEACHERS_DATA; return; }
+  if (!sb) {
+    console.error('[fetchTeachers]', SB_UNAVAILABLE_MSG);
+    showToast(SB_UNAVAILABLE_MSG, 'error');
+    return;
+  }
   const { data, error } = await sb.from('teacher_followups').select('*').order('created_at');
-  if (error) { console.error('[fetchTeachers]', error.message); teachersCache = lsLoad('teachers',[]); return; }
+  if (error) {
+    console.error('[fetchTeachers]', error.message);
+    showToast('تعذّر تحميل متابعة المعلمات', 'error');
+    return;
+  }
   teachersCache = (data||[]).map(r => ({
     id:r.id, name:r.name||'', assigned:r.assigned_tasks||0,
     done:r.done_tasks||0, lastReport:r.last_report||'', notes:r.notes||'',
     driveLink:r.drive_link||'', createdBy:r.created_by||'',
     school_year_id: r.school_year_id || null,
   }));
-  lsSave('teachers', teachersCache);
 }
 
 const DEMO_TEACHERS_DATA = [
@@ -2200,9 +2220,7 @@ const DEMO_TEACHERS_DATA = [
 ];
 
 async function sbInsertTeacher(tf) {
-  if (!sb) {
-    tf.id = 'L'+Date.now(); teachersCache.push(tf); lsSave('teachers', teachersCache); return tf;
-  }
+  requireSb();
   const schoolYearId = await requireWritableSchoolYearId();
   const { data, error } = await sb.from('teacher_followups').insert({
     name:tf.name, assigned_tasks:parseInt(tf.assigned)||0,
@@ -2216,11 +2234,7 @@ async function sbInsertTeacher(tf) {
 }
 
 async function sbUpdateTeacher(tf) {
-  if (!sb) {
-    const i = teachersCache.findIndex(x => x.id === tf.id);
-    if (i !== -1) teachersCache[i] = tf;
-    lsSave('teachers', teachersCache); return tf;
-  }
+  requireSb();
   const { error } = await sb.from('teacher_followups').update({
     name:tf.name, assigned_tasks:parseInt(tf.assigned)||0,
     done_tasks:parseInt(tf.done)||0, last_report:tf.lastReport||null, notes:tf.notes||null,
@@ -2234,7 +2248,7 @@ async function sbUpdateTeacher(tf) {
 
 async function sbDeleteTeacher(id) {
   // حذف سجل المتابعة فقط — لا يمس جدول users أبداً
-  if (!sb) { teachersCache = teachersCache.filter(t => t.id !== id); lsSave('teachers', teachersCache); return; }
+  requireSb();
   const { error } = await sb.from('teacher_followups').delete().eq('id', id);
   if (error) throw error;
   teachersCache = teachersCache.filter(t => t.id !== id);
@@ -2266,16 +2280,29 @@ const DEFAULT_SETTINGS = {schoolName:'مدرسة 127 الابتدائية',year:
 async function loadSettings() {
   let s = {...DEFAULT_SETTINGS};
 
-  if (sb) {
+  if (!sb) {
+    console.error('[loadSettings]', SB_UNAVAILABLE_MSG);
+    showToast(SB_UNAVAILABLE_MSG, 'error');
+  } else {
     const { data, error } = await sb
       .from('settings')
       .select('*')
       .eq('id',1)
       .maybeSingle();
 
-    if (error) console.error('[loadSettings]', error.message);
-
-    if (data) {
+    if (error) {
+      console.error('[loadSettings]', error.message);
+      showToast('تعذّر تحميل الإعدادات', 'error');
+      // الإبقاء على settingsCache في الذاكرة إن وُجد؛ وإلا قيم افتراضية للعرض فقط
+      if (settingsCache && (settingsCache.school_name || settingsCache.principal_name)) {
+        s = {
+          schoolName: settingsCache.school_name || s.schoolName,
+          year: settingsCache.academic_year || s.year,
+          principal: settingsCache.principal_name || s.principal,
+          region: settingsCache.region || s.region
+        };
+      }
+    } else if (data) {
       s = {
         schoolName: data.school_name || s.schoolName,
         year: data.academic_year || s.year,
@@ -2283,8 +2310,6 @@ async function loadSettings() {
         region: data.region || s.region
       };
     }
-  } else {
-    s = lsLoad('settings', s);
   }
 
   settingsCache = {
@@ -2294,32 +2319,34 @@ async function loadSettings() {
     region: s.region
   };
 
-  lsSave('settings', s);
   applySettingsToUI(s);
 
   if (currentUser) applyRoleUI();
 }
 async function saveSettings() {
   if (!can('editSettings')) { showToast('ليس لديك صلاحية تعديل الإعدادات','error'); return; }
+  if (!sb) { showToast(SB_UNAVAILABLE_MSG, 'error'); return; }
   const g = id => (document.getElementById(id)?.value||'');
   const s = {schoolName:g('setting-school'),year:g('setting-year'),principal:g('setting-principal'),region:g('setting-region')};
-  lsSave('settings', s);
-   settingsCache = {
-  principal_name: s.principal,
-  school_name: s.schoolName,
-  academic_year: s.year,
-  region: s.region
-};
 
-   applySettingsToUI(s);
-applyRoleUI();
-  if (sb) {
-    const { error } = await sb.from('settings').upsert({
-      id:1, school_name:s.schoolName, academic_year:s.year,
-      principal_name:s.principal, region:s.region, updated_at:new Date().toISOString(),
-    });
-    if (error) { console.error('[saveSettings]', error.message); showToast('تعذّر حفظ الإعدادات في Supabase','error'); return; }
+  const { error } = await sb.from('settings').upsert({
+    id:1, school_name:s.schoolName, academic_year:s.year,
+    principal_name:s.principal, region:s.region, updated_at:new Date().toISOString(),
+  });
+  if (error) {
+    console.error('[saveSettings]', error.message);
+    showToast('تعذّر حفظ الإعدادات في Supabase','error');
+    return;
   }
+
+  settingsCache = {
+    principal_name: s.principal,
+    school_name: s.schoolName,
+    academic_year: s.year,
+    region: s.region
+  };
+  applySettingsToUI(s);
+  applyRoleUI();
   if (_activeSection === 'dashboard') renderDashboard();
   showToast('تم حفظ الإعدادات ✅','success');
 }
@@ -2342,6 +2369,7 @@ drawDashPie(); showToast('تم تحديث البيانات ✅','success');
 }
 function clearLocalCache() {
   if (!confirm('مسح الكاش المحلي؟')) return;
+  // تنظيف مفاتيح قديمة + KPI المحلي فقط — ليست مصدر حقيقة تشغيلية
   ['programs_local','initiatives','tasks','evidences','teachers','kpi','settings']
     .forEach(k => lsDel(k));
   showToast('تم مسح الكاش ✅','warning');
@@ -3256,7 +3284,7 @@ async function handleDelEv(evId) {
   const affectedProg = target?.program_id || null;
 
   try {
-    await sbDeleteEvidence(evId);
+    await sbDeleteEvidence(evId, target);
     await refreshEvidenceViews(affectedProg);
     showToast('تم حذف الشاهد 🗑️', 'warning');
   } catch (err) {
@@ -3596,6 +3624,9 @@ async function chgTaskStatus(id, status) {
     renderTasks(); renderDashboard();
     showToast('تم تحديث الحالة ✅','success');
   } catch (err) {
+    // إعادة رسم الواجهة بعد إرجاع tasksCache للحالة السابقة داخل sbUpdateTaskStatus
+    renderTasks();
+    renderDashboard();
     showToast(arabicDbError(err), 'error');
   }
 }
@@ -4011,7 +4042,12 @@ function renderDashboard() {
     <div class="stat-card purple"><span class="stat-icon">📎</span><span class="stat-number">${totalEv}</span><span class="stat-label">شواهد مرفوعة</span></div>
     <div class="stat-card teal"><span class="stat-icon">👩‍🏫</span><span class="stat-number">${visTeachers.length}</span><span class="stat-label">معلمات تحت المتابعة</span></div>`;
 
-  const settings = lsLoad('settings', DEFAULT_SETTINGS);
+  const settings = {
+    schoolName: settingsCache.school_name || DEFAULT_SETTINGS.schoolName,
+    year: settingsCache.academic_year || DEFAULT_SETTINGS.year,
+    principal: settingsCache.principal_name || DEFAULT_SETTINGS.principal,
+    region: settingsCache.region || DEFAULT_SETTINGS.region,
+  };
   const gEl = document.getElementById('dash-greeting');
   if (gEl) gEl.textContent = `${settings.schoolName||'منصة الخطة التشغيلية'}`;
   const subEl = document.getElementById('dash-subtitle');
