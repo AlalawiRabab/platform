@@ -280,11 +280,14 @@ function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-function isValidLoginId(id) {
-  const v = String(id || '').trim();
-  if (!v) return false;
-  if (v.includes('@')) return isValidEmail(v);
-  return /^[a-zA-Z0-9._-]{3,64}$/.test(v);
+/** مطابق normalizeUsername في admin-users / username-login */
+function normalizeLoginUsername(raw) {
+  if (raw == null) return null;
+  const u = String(raw).trim();
+  if (!u) return null;
+  if (u.length < 3 || u.length > 64) return null;
+  if (!/^[a-zA-Z0-9._\u0600-\u06FF-]+$/.test(u)) return null;
+  return u;
 }
 
 function isSectionAllowed(section) {
@@ -639,19 +642,20 @@ function closeModal(id) {
    §7  AUTH
    ───────────────────────────────────────────────────────────── */
 async function doLogin() {
-  const email = (document.getElementById('login-email')?.value || '').trim().toLowerCase();
-  const pass  = (document.getElementById('login-password')?.value || '');
+  const rawUsername = document.getElementById('login-username')?.value || '';
+  const username = normalizeLoginUsername(rawUsername);
+  const pass = document.getElementById('login-password')?.value || '';
 
-  if (!email || !pass) {
-    showToast('يرجى إدخال البريد الإلكتروني وكلمة المرور', 'error');
+  if (!String(rawUsername).trim() || !pass) {
+    showToast('يرجى إدخال اسم المستخدم وكلمة المرور', 'error');
     return;
   }
-  if (!isValidEmail(email)) {
-    showToast('صيغة البريد الإلكتروني غير صحيحة', 'error');
+  if (!username) {
+    showToast('اسم المستخدم غير صالح', 'error');
     return;
   }
-  if (pass.length < 6 || pass.length > 128) {
-    showToast('كلمة المرور غير صحيحة', 'error');
+  if (pass.length < 1 || pass.length > 128) {
+    showToast('اسم المستخدم أو كلمة المرور غير صحيحة', 'error');
     return;
   }
   if (!sb) {
@@ -667,17 +671,43 @@ async function doLogin() {
 
   try {
     showLoadingOverlay?.(true);
-    const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
-    if (error || !data?.session) {
-      showToast('تعذّر تسجيل الدخول. تحقق من البيانات وحاول مرة أخرى.', 'error');
+
+    const { data, error } = await sb.functions.invoke('username-login', {
+      body: { username, password: pass },
+    });
+
+    let payload = data && typeof data === 'object' ? data : null;
+    if ((!payload || payload.error) && error) {
+      try {
+        if (error.context && typeof error.context.json === 'function') {
+          const bodyJson = await error.context.json();
+          if (bodyJson && typeof bodyJson === 'object') payload = bodyJson;
+        }
+      } catch (_) { /* تجاهل */ }
+    }
+
+    const accessToken = payload && typeof payload.access_token === 'string' ? payload.access_token : '';
+    const refreshToken = payload && typeof payload.refresh_token === 'string' ? payload.refresh_token : '';
+    if (!accessToken || !refreshToken || (payload && payload.error)) {
+      showToast('اسم المستخدم أو كلمة المرور غير صحيحة', 'error');
       return;
     }
-    const ok = await bootstrapAuthenticatedSession(data.session);
+
+    const { data: sessData, error: sessErr } = await sb.auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
+    if (sessErr || !sessData?.session) {
+      showToast('تعذّر تجهيز الجلسة. حاول مرة أخرى.', 'error');
+      return;
+    }
+
+    const ok = await bootstrapAuthenticatedSession(sessData.session);
     if (!ok) return;
     showToast('تم تسجيل الدخول بنجاح', 'success');
   } catch (err) {
     console.error('[doLogin]');
-    showToast('تعذّر تسجيل الدخول. حاول مرة أخرى.', 'error');
+    showToast('اسم المستخدم أو كلمة المرور غير صحيحة', 'error');
   } finally {
     clearLoginPasswordField();
     showLoadingOverlay?.(false);
@@ -701,7 +731,7 @@ async function doLogout() {
   clearLegacySessionArtifacts();
   try { if (sb) await sb.auth.signOut(); } catch {}
   showLoginShell();
-  const e = document.getElementById('login-email'); if (e) e.value = '';
+  const e = document.getElementById('login-username'); if (e) e.value = '';
   clearLoginPasswordField();
 }
 window.doLogout = doLogout;
@@ -4414,8 +4444,8 @@ async function renderUsersSection() {
       <div class="modal-header"><h3>إضافة مستخدم جديد</h3><button onclick="closeModal('add-user-modal')" class="modal-close">✕</button></div>
       <div class="modal-body">
         <div class="form-group"><label>الاسم الكامل</label><input type="text" id="nu-name" placeholder="الاسم الكامل"/></div>
-        <div class="form-group"><label>البريد الإلكتروني</label><input type="email" id="nu-email" placeholder="email@school.sa"/></div>
-        <div class="form-group"><label>اسم المستخدم</label><input type="text" id="nu-username" placeholder="اسم عرض فريد"/></div>
+        <div class="form-group"><label>البريد الإلكتروني (للاستعادة فقط)</label><input type="email" id="nu-email" placeholder="email@school.sa"/></div>
+        <div class="form-group"><label>اسم المستخدم (للدخول)</label><input type="text" id="nu-username" placeholder="اسم مستخدم فريد للدخول"/></div>
         <div class="form-group"><label>كلمة المرور الأولية</label><input type="password" id="nu-pass" placeholder="8 أحرف على الأقل (حرف ورقم)" autocomplete="new-password"/></div>
         <div class="form-group"><label>الدور</label>
           <select id="nu-role"><option value="teacher">معلم</option><option value="vice">وكيل</option><option value="admin">مدير</option></select>
