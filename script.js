@@ -2,7 +2,8 @@
    SCHOOL OPERATIONAL PLAN — script.js  v6.0
    ================================================================
    جميع الجداول التشغيلية مرتبطة بـ Supabase فقط (مصدر الحقيقة).
-   localStorage: جلسة supabase-js + KPI مؤقت + تنظيف مفاتيح قديمة — بلا fallback تشغيلي.
+   مؤشرات الأداء: محسوبة تلقائيًا من بيانات المنصة (بلا KPI يدوي).
+   localStorage: جلسة supabase-js + تنظيف مفاتيح قديمة — بلا fallback تشغيلي.
    ================================================================
 
    ══════════════════════════════════════════════════════════════
@@ -155,7 +156,6 @@ let initiativesCache = [];
 let tasksCache       = [];
 let evidencesCache   = [];
 let teachersCache    = [];
-let kpiCache         = [];
 let activeSchoolYearId = null;
 let schoolYearsCache = [];
 let selectedSchoolYearId = null;
@@ -521,7 +521,7 @@ async function handleSignedOut() {
   currentUser = null;
   _sessionBootstrapDone = false;
   clearLegacySessionArtifacts();
-  [programsCache, initiativesCache, tasksCache, evidencesCache, teachersCache, kpiCache] = [[], [], [], [], [], []];
+  [programsCache, initiativesCache, tasksCache, evidencesCache, teachersCache] = [[], [], [], [], []];
   indicatorsCache = {};
   settingsCache = {};
   activeSchoolYearId = null;
@@ -579,8 +579,8 @@ function requireAuth(action) {
 /* ─────────────────────────────────────────────────────────────
    §3  LS HELPERS
    ─────────────────────────────────────────────────────────────
-   مخصّصة حاليًا لـ KPI (مؤقت) وتنظيف مفاتيح localStorage القديمة.
-   لا تُستخدم كمصدر حقيقة للبيانات التشغيلية (برامج/شواهد/…).
+   لتنظيف مفاتيح localStorage القديمة فقط (legacy).
+   لا تُستخدم كمصدر حقيقة لأي بيانات تشغيلية.
    ───────────────────────────────────────────────────────────── */
 const SB_UNAVAILABLE_MSG = 'تعذّر الاتصال بـ Supabase';
 const lsSave = (k,v) => { try{ localStorage.setItem('sop_'+k, JSON.stringify(v)); }catch{} };
@@ -692,7 +692,7 @@ window.doLogin = doLogin;
 async function doLogout() {
   _sessionBootstrapDone = false;
   currentUser = null;
-  [programsCache, initiativesCache, tasksCache, evidencesCache, teachersCache, kpiCache] = [[], [], [], [], [], []];
+  [programsCache, initiativesCache, tasksCache, evidencesCache, teachersCache] = [[], [], [], [], []];
   indicatorsCache = {};
   settingsCache = {};
   activeSchoolYearId = null;
@@ -731,7 +731,6 @@ if (nm) {
   const abp = document.getElementById('btn-add-program'); if (abp) abp.style.display = can('addProgram') ? '' : 'none';
   const abi = document.getElementById('btn-add-initiative'); if (abi) abi.style.display = can('addInitiative') ? '' : 'none';
   const abt = document.getElementById('btn-add-teacher'); if (abt) abt.style.display = can('addTeacher') ? '' : 'none';
-  const abk = document.getElementById('btn-add-kpi'); if (abk) abk.style.display = isSectionAllowed('kpi') ? '' : 'none';
   document.querySelectorAll('#section-tasks .btn-primary, #section-reports .btn-primary').forEach(btn => {
     if (btn.getAttribute('onclick')?.includes('openTaskModal')) btn.style.display = can('addTask') ? '' : 'none';
     if (btn.getAttribute('onclick')?.includes('openReportModal')) btn.style.display = can('addEvidence') ? '' : 'none';
@@ -771,7 +770,6 @@ async function loadAllData(renderAfter = true) {
     } else {
       teachersCache = [];
     }
-    await fetchKPI();
     // settings تُحمَّل في bootstrapAuthenticatedSession بعد نجاح الجلسة فقط
 
     programsCache.forEach(p => {
@@ -1318,7 +1316,6 @@ function applyYearWriteModeUI() {
   setWriteControl(document.getElementById('btn-add-program'), can('addProgram'));
   setWriteControl(document.getElementById('btn-add-initiative'), can('addInitiative'));
   setWriteControl(document.getElementById('btn-add-teacher'), can('addTeacher'));
-  setWriteControl(document.getElementById('btn-add-kpi'), isSectionAllowed('kpi'));
   document.querySelectorAll('#section-tasks .btn-primary, #section-reports .btn-primary').forEach(btn => {
     const oc = btn.getAttribute('onclick') || '';
     if (oc.includes('openTaskModal')) setWriteControl(btn, can('addTask'));
@@ -2255,22 +2252,8 @@ async function sbDeleteTeacher(id) {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   §19  KPI (LocalStorage فقط)
+   §19  (محجوز) — KPI اليدوي أُزيل من التشغيل؛ الجدول public.kpis غير مستخدم في الواجهة
    ───────────────────────────────────────────────────────────── */
-async function fetchKPI() {
-  kpiCache = lsLoad('kpi',[]);
-  if (!kpiCache.length) {
-    kpiCache = [
-      {id:'k1',name:'نسبة النجاح العامة',target:95,achieved:91,unit:'%'},
-      {id:'k2',name:'نسبة الحضور اليومي',target:98,achieved:96.5,unit:'%'},
-      {id:'k3',name:'عدد الاختبارات المنفذة',target:80,achieved:68,unit:'اختبار'},
-      {id:'k4',name:'نسبة رضا أولياء الأمور',target:90,achieved:87,unit:'%'},
-      {id:'k5',name:'عدد الزيارات الصفية',target:120,achieved:105,unit:'زيارة'},
-      {id:'k6',name:'عدد الطالبات المستفيدات',target:50,achieved:43,unit:'طالبة'},
-    ];
-    lsSave('kpi', kpiCache);
-  }
-}
 
 /* ─────────────────────────────────────────────────────────────
    §20  SETTINGS
@@ -2369,7 +2352,7 @@ drawDashPie(); showToast('تم تحديث البيانات ✅','success');
 }
 function clearLocalCache() {
   if (!confirm('مسح الكاش المحلي؟')) return;
-  // تنظيف مفاتيح قديمة + KPI المحلي فقط — ليست مصدر حقيقة تشغيلية
+  // تنظيف مفاتيح قديمة فقط (بما فيها sop_kpi السابق) — ليست مصدر حقيقة تشغيلية
   ['programs_local','initiatives','tasks','evidences','teachers','kpi','settings']
     .forEach(k => lsDel(k));
   showToast('تم مسح الكاش ✅','warning');
@@ -3399,124 +3382,121 @@ async function deleteInitiative(id) {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   §27  KPI SECTION
+   §27  KPI SECTION — محسوب تلقائيًا من بيانات المنصة (السنة المحددة)
    ───────────────────────────────────────────────────────────── */
 function getAllIndicators() {
   if (Array.isArray(indicatorsCache)) return indicatorsCache;
   return Object.values(indicatorsCache || {}).flat();
 }
 
-function calcSchoolKPI() {
-  const programs = programsCache || [];
-  const indicators = getAllIndicators();
-  const evidences = evidencesCache || [];
-  const tasks = tasksCache || [];
-  const initiatives = initiativesCache || [];
+function safePct(numerator, denominator) {
+  const den = Number(denominator) || 0;
+  if (den <= 0) return 0;
+  const num = Number(numerator) || 0;
+  return Math.round((num / den) * 100);
+}
 
+function isIndicatorMarkedComplete(ind) {
+  return ind && (ind.is_completed === true || ind.is_completed === 'true' || ind.is_completed === 1);
+}
+
+/** شاهد مرتبط بنفس program_id و indicator_id — تجاهل indicator_id الفارغ */
+function indicatorHasLinkedEvidence(ind, evidences) {
+  if (!ind || ind.id == null || ind.id === '') return false;
+  const list = Array.isArray(evidences) ? evidences : [];
+  return list.some(ev =>
+    ev &&
+    ev.indicator_id != null && ev.indicator_id !== '' &&
+    String(ev.program_id) === String(ind.program_id) &&
+    String(ev.indicator_id) === String(ind.id)
+  );
+}
+
+/** KPI محسوب من بيانات المنصة للسنة المختارة — لا يستخدم public.kpis */
+function calcSchoolKPI() {
+  const programs = yearScopedRows(programsCache || []);
+  const yearProgramIds = new Set(programs.map(p => String(p.id)));
+  const indicators = getAllIndicators().filter(i => i && yearProgramIds.has(String(i.program_id)));
+  const evidences = yearScopedRows(evidencesCache || []);
+  const tasks = yearScopedRows(tasksCache || []);
+  const initiatives = yearScopedRows(initiativesCache || []);
+
+  // أ) متوسط إنجاز البرامج — عبر calcProgramProgress (مكتمل + شاهد للمؤشر)
+  const progressValues = programs.map(p => calcProgramProgress(p.id));
   const avgProgress = programs.length
-    ? Math.round(programs.reduce((s, p) => s + (Number(p.progress) || 0), 0) / programs.length)
+    ? Math.round(progressValues.reduce((s, v) => s + (Number(v) || 0), 0) / programs.length)
     : 0;
 
-  const completedPrograms = programs.filter(p => (Number(p.progress) || 0) >= 100).length;
-  const programsRate = programs.length ? Math.round((completedPrograms / programs.length) * 100) : 0;
+  // ب) نسبة البرامج المكتملة (progress >= 100)
+  const completedPrograms = progressValues.filter(v => (Number(v) || 0) >= 100).length;
+  const programsRate = safePct(completedPrograms, programs.length);
 
-  const completedIndicators = indicators.filter(i => i.is_completed === true).length;
-  const indicatorsRate = indicators.length ? Math.round((completedIndicators / indicators.length) * 100) : 0;
+  // ج) نسبة تحقق المؤشرات (is_completed)
+  const completedIndicators = indicators.filter(isIndicatorMarkedComplete).length;
+  const indicatorsRate = safePct(completedIndicators, indicators.length);
 
-  const indicatorsWithEvidence = indicators.filter(ind =>
-    evidences.some(ev =>
-      String(ev.program_id) === String(ind.program_id) &&
-      String(ev.indicator_id) === String(ind.id)
-    )
+  // د) نسبة المؤشرات المدعومة بشواهد (indicator_id مطابق)
+  const indicatorsWithEvidence = indicators.filter(ind => indicatorHasLinkedEvidence(ind, evidences)).length;
+  const evidenceRate = safePct(indicatorsWithEvidence, indicators.length);
+
+  // هـ) مؤشرات مكتملة مع وجود شاهد (تحقق فعلي)
+  const verifiedIndicators = indicators.filter(ind =>
+    isIndicatorMarkedComplete(ind) && indicatorHasLinkedEvidence(ind, evidences)
   ).length;
+  const verifiedRate = safePct(verifiedIndicators, indicators.length);
 
-  const evidenceRate = indicators.length ? Math.round((indicatorsWithEvidence / indicators.length) * 100) : 0;
+  // و) إنجاز المهام — status الفعلي في المشروع: pending | inprogress | done
+  const doneTasks = tasks.filter(t => t.status === 'done').length;
+  const tasksRate = safePct(doneTasks, tasks.length);
 
-  const doneTasks = tasks.filter(t => t.status === 'done' || t.status === 'completed').length;
-  const tasksRate = tasks.length ? Math.round((doneTasks / tasks.length) * 100) : 0;
-
-  const doneInitiatives = initiatives.filter(i => i.status === 'done' || i.status === 'completed').length;
-  const initiativesRate = initiatives.length ? Math.round((doneInitiatives / initiatives.length) * 100) : 0;
+  // ز) تنفيذ المبادرات — حالة الواجهة: منجزة | قيد التنفيذ | لم تبدأ | متأخرة
+  const doneInitiatives = initiatives.filter(i => i.status === 'منجزة').length;
+  const initiativesRate = safePct(doneInitiatives, initiatives.length);
 
   return [
-    { name: 'متوسط إنجاز برامج المدرسة', pct: avgProgress, details: `${programs.length} برنامج` },
-    { name: 'البرامج المكتملة', pct: programsRate, details: `${completedPrograms} من ${programs.length}` },
-    { name: 'تحقق مؤشرات البرامج', pct: indicatorsRate, details: `${completedIndicators} من ${indicators.length}` },
-    { name: 'المؤشرات المدعومة بشواهد', pct: evidenceRate, details: `${indicatorsWithEvidence} من ${indicators.length}` },
-    { name: 'إنجاز المهام المدرسية', pct: tasksRate, details: `${doneTasks} من ${tasks.length}` },
+    { name: 'متوسط إنجاز البرامج', pct: avgProgress, details: `${programs.length} برنامج` },
+    { name: 'نسبة البرامج المكتملة', pct: programsRate, details: `${completedPrograms} من ${programs.length}` },
+    { name: 'نسبة تحقق المؤشرات', pct: indicatorsRate, details: `${completedIndicators} من ${indicators.length}` },
+    { name: 'نسبة المؤشرات المدعومة بشواهد', pct: evidenceRate, details: `${indicatorsWithEvidence} من ${indicators.length}` },
+    { name: 'المؤشرات المكتملة مع شاهد', pct: verifiedRate, details: `${verifiedIndicators} من ${indicators.length}` },
+    { name: 'إنجاز المهام', pct: tasksRate, details: `${doneTasks} من ${tasks.length}` },
     { name: 'تنفيذ المبادرات', pct: initiativesRate, details: `${doneInitiatives} من ${initiatives.length}` },
   ];
 }
 
+/** عدد المؤشرات المحققة فعليًا (مكتملة + شاهد) للسنة المحددة — للإحصائيات */
+function countVerifiedIndicatorsForSelectedYear() {
+  const programs = yearScopedRows(programsCache || []);
+  const yearProgramIds = new Set(programs.map(p => String(p.id)));
+  const indicators = getAllIndicators().filter(i => i && yearProgramIds.has(String(i.program_id)));
+  const evidences = yearScopedRows(evidencesCache || []);
+  return indicators.filter(ind =>
+    isIndicatorMarkedComplete(ind) && indicatorHasLinkedEvidence(ind, evidences)
+  ).length;
+}
+
 function renderKPI() {
   const data = calcSchoolKPI();
-
   const kc = document.getElementById('kpi-cards');
-  if (kc) kc.innerHTML = data.map(k => {
-    const clr = k.pct >= 90 ? '#27ae60' : k.pct >= 70 ? '#f39c12' : '#e74c3c';
-    const deg = Math.round(k.pct * 3.6);
-
+  if (!kc) return;
+  if (!data.length) {
+    kc.innerHTML = '<div style="grid-column:1/-1;color:var(--muted,#7f8c8d);padding:8px 0">لا توجد بيانات كافية لحساب المؤشرات لهذه السنة.</div>';
+    return;
+  }
+  kc.innerHTML = data.map(k => {
+    const pct = Math.max(0, Math.min(100, Number(k.pct) || 0));
+    const clr = pct >= 90 ? '#27ae60' : pct >= 70 ? '#f39c12' : '#e74c3c';
+    const deg = Math.round(pct * 3.6);
     return `
       <div class="kpi-card">
-        <div class="kpi-card-name">${k.name}</div>
+        <div class="kpi-card-name">${esc(k.name)}</div>
         <div class="kpi-circle" style="background: conic-gradient(${clr} ${deg}deg,#eaecee 0deg)">
-          <div class="kpi-circle-inner">${k.pct}%</div>
+          <div class="kpi-circle-inner">${pct}%</div>
         </div>
-        <div class="kpi-values">${k.details}</div>
+        <div class="kpi-values">${esc(k.details)}</div>
       </div>
     `;
   }).join('');
-
-  const kt = document.getElementById('kpi-tbody');
-  if (kt) kt.innerHTML = data.map(k => {
-    const bc = k.pct >= 90 ? 'badge-success' : k.pct >= 70 ? 'badge-warning' : 'badge-danger';
-    const bl = k.pct >= 90 ? 'ممتاز' : k.pct >= 70 ? 'يحتاج تحسين' : 'منخفض';
-
-    return `
-      <tr>
-        <td style="font-weight:600">${k.name}</td>
-        <td>${k.details}</td>
-        <td>
-          <div class="progress-wrap">
-            <div class="progress-bar">
-              <div class="progress-fill" style="width:${k.pct}%"></div>
-            </div>
-          </div>
-        </td>
-        <td><span class="badge ${bc}">${bl}</span></td>
-        <td>مرتبط تلقائيًا بالبرامج</td>
-      </tr>
-    `;
-  }).join('');
-  
-}
-function openKpiModal(id) {
-  if (!requireAuth()) return;
-  if (!isSectionAllowed('kpi')) { showToast('ليس لديك صلاحية الوصول لمؤشرات الأداء', 'error'); return; }
-  const ti=document.getElementById('kpi-modal-title'); if(ti) ti.textContent=id?'تعديل المؤشر':'إضافة مؤشر أداء';
-  ['kpi-edit-id','kpi-name','kpi-target','kpi-achieved','kpi-unit'].forEach(fid=>{ const e=document.getElementById(fid); if(e) e.value=''; });
-  if(id){ const k=kpiCache.find(x=>x.id===id); if(!k)return; const sv=(fid,v)=>{const e=document.getElementById(fid);if(e)e.value=v??'';}; sv('kpi-edit-id',k.id);sv('kpi-name',k.name);sv('kpi-target',k.target);sv('kpi-achieved',k.achieved);sv('kpi-unit',k.unit); }
-  openModal('kpi-modal');
-}
-
-async function saveKPI() {
-  if (!requireAuth()) return;
-  if (!isSectionAllowed('kpi')) { showToast('ليس لديك صلاحية تعديل مؤشرات الأداء', 'error'); return; }
-  const g=id=>(document.getElementById(id)?.value||'');
-  const editId=g('kpi-edit-id');
-  const name=clampInput(g('kpi-name')); if(!name){showToast('يرجى إدخال اسم المؤشر','error');return;}
-  const item={id:editId||'k'+Date.now(),name,target:parseFloat(g('kpi-target'))||0,achieved:parseFloat(g('kpi-achieved'))||0,unit:g('kpi-unit').trim()||'%'};
-  if(editId){const i=kpiCache.findIndex(x=>x.id===editId);if(i!==-1)kpiCache[i]=item;} else kpiCache.push(item);
-  lsSave('kpi',kpiCache); closeModal('kpi-modal'); await refreshAll();
-  showToast(editId?'تم التعديل ✅':'تمت الإضافة ✅','success');
-}
-
-function deleteKPI(id) {
-  if (!requireAuth()) return;
-  if (!isSectionAllowed('kpi')) { showToast('ليس لديك صلاحية حذف مؤشرات الأداء', 'error'); return; }
-  if(!confirm('حذف هذا المؤشر؟'))return;
-  kpiCache=kpiCache.filter(k=>k.id!==id); lsSave('kpi',kpiCache);
-  renderKPI(); showToast('تم الحذف 🗑️','warning');
 }
 
 function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
@@ -4314,7 +4294,7 @@ function renderStats() {
     <div class="stat-card green"><span class="stat-icon">✅</span><span class="stat-number">${dt}</span><span class="stat-label">مهام منجزة</span></div>
     <div class="stat-card red"><span class="stat-icon">⚠️</span><span class="stat-number">${lt}</span><span class="stat-label">مهام متأخرة</span></div>
     <div class="stat-card purple"><span class="stat-icon">📎</span><span class="stat-number">${yearEvs.length}</span><span class="stat-label">شواهد مرفوعة</span></div>
-    <div class="stat-card gold"><span class="stat-icon">🎯</span><span class="stat-number">${kpiCache.length}</span><span class="stat-label">مؤشرات الأداء</span></div>
+    <div class="stat-card gold"><span class="stat-icon">🎯</span><span class="stat-number">${countVerifiedIndicatorsForSelectedYear()}</span><span class="stat-label">مؤشرات محققة فعليًا</span></div>
     <div class="stat-card teal"><span class="stat-icon">📋</span><span class="stat-number">${yearPrograms.filter(p=>calcProgramStatus(p)==='done').length}</span><span class="stat-label">برامج منتهية</span></div>`;
   const te=document.getElementById('top-initiatives');
   if(te) te.innerHTML=top.map((p,i)=>`<div class="top-initiative-item"><span>${['🥇','🥈','🥉'][i]} ${esc(p.name)}</span><span style="font-weight:700;color:var(--primary)">${p.progress}%</span></div>`).join('');

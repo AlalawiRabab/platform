@@ -200,16 +200,12 @@
       <!-- KPI -->
       <section id="section-kpi" class="section">
         <div class="section-top">
-          <h2>مؤشرات الأداء KPI</h2>
-          <button class="btn-primary" id="btn-add-kpi" onclick="openKpiModal()">+ إضافة مؤشر</button>
+          <h2>مؤشرات الأداء</h2>
         </div>
+        <p style="margin:0 0 16px;color:var(--muted,#7f8c8d);font-size:0.95rem">
+          تُحسب تلقائيًا من برامج ومؤشرات وشواهد ومهام ومبادرات السنة المحددة — بلا إدخال يدوي.
+        </p>
         <div class="kpi-cards" id="kpi-cards"></div>
-        <div class="table-wrapper mt-20">
-          <table class="data-table">
-            <thead><tr><th>المؤشر</th><th>المستهدف</th><th>المتحقق</th><th>نسبة الإنجاز</th><th>الحالة</th><th>إجراءات</th></tr></thead>
-            <tbody id="kpi-tbody"></tbody>
-          </table>
-        </div>
       </section>
 
       <!-- TASKS -->
@@ -599,29 +595,6 @@
     <div class="modal-footer">
       <button class="btn-primary" id="rep-save-btn" onclick="saveReport()">📤 رفع الشاهد</button>
       <button class="btn-secondary" onclick="closeModal('report-modal')">إلغاء</button>
-    </div>
-  </div>
-</div>
-
-<!-- KPI Modal -->
-<div id="kpi-modal" class="modal-overlay hidden">
-  <div class="modal">
-    <div class="modal-header">
-      <h3 id="kpi-modal-title">إضافة مؤشر أداء</h3>
-      <button onclick="closeModal('kpi-modal')" class="modal-close">✕</button>
-    </div>
-    <div class="modal-body">
-      <input type="hidden" id="kpi-edit-id"/>
-      <div class="form-group"><label>اسم المؤشر <span class="req">*</span></label><input type="text" id="kpi-name" placeholder="اسم مؤشر الأداء"/></div>
-      <div class="form-row">
-        <div class="form-group"><label>القيمة المستهدفة</label><input type="number" id="kpi-target" placeholder="المستهدف"/></div>
-        <div class="form-group"><label>القيمة المتحققة</label><input type="number" id="kpi-achieved" placeholder="المتحقق"/></div>
-      </div>
-      <div class="form-group"><label>وحدة القياس</label><input type="text" id="kpi-unit" placeholder="مثال: %، طالبة، ساعة..."/></div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-primary" id="kpi-save-btn" onclick="saveKPI()">💾 حفظ المؤشر</button>
-      <button class="btn-secondary" onclick="closeModal('kpi-modal')">إلغاء</button>
     </div>
   </div>
 </div>
