@@ -32,10 +32,17 @@ function allowedOriginsList(): string[] {
 }
 
 /**
- * روابط استعادة كاملة مسموحة (بلا query/hash)، مثل:
+ * روابط استعادة كاملة مسموحة، مثل:
  * http://127.0.0.1:5500/index.html
  * https://alalawirabab.github.io/platform/index.html
+ * يُسمح فقط بـ ?recovery=1 كمعامل استعلام اختياري.
  */
+function isAllowedRecoverySearch(searchParams: URLSearchParams): boolean {
+  const keys = [...new Set([...searchParams.keys()])]
+  if (keys.length === 0) return true
+  return keys.length === 1 && keys[0] === 'recovery' && searchParams.get('recovery') === '1'
+}
+
 function passwordResetRedirectAllowlist(): string[] {
   const raw = Deno.env.get('PASSWORD_RESET_REDIRECT_URLS') ?? ''
   const out: string[] = []
@@ -43,7 +50,8 @@ function passwordResetRedirectAllowlist(): string[] {
     try {
       const u = new URL(entry)
       if (u.protocol !== 'http:' && u.protocol !== 'https:') continue
-      if (u.search || u.hash) continue
+      if (u.hash) continue
+      if (!isAllowedRecoverySearch(u.searchParams)) continue
       if (!u.pathname.toLowerCase().endsWith('/index.html') &&
           u.pathname.toLowerCase() !== '/index.html') {
         continue
@@ -105,8 +113,8 @@ function normalizeAction(raw: unknown): string {
 }
 
 /**
- * يقبل redirect_to فقط بمطابقة تامة لرابط كامل من PASSWORD_RESET_REDIRECT_URLS.
- * يرفض query/hash وأي مسار غير مُدرَج (مثل /index.html بدل /platform/index.html).
+ * يقبل redirect_to بمطابقة المسار الكامل من PASSWORD_RESET_REDIRECT_URLS.
+ * يرفض hash وأي query عدا recovery=1. يُرجع دائماً الرابط مع ?recovery=1.
  * إن لم يُرسل redirect_to: يختار أول رابط مسموح يطابق Origin الطلب.
  */
 function pickRedirectTo(requested: unknown, requestOrigin: string): string | null {
@@ -118,10 +126,11 @@ function pickRedirectTo(requested: unknown, requestOrigin: string): string | nul
     try {
       const u = new URL(req)
       if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
-      if (u.search || u.hash) return null
+      if (u.hash) return null
+      if (!isAllowedRecoverySearch(u.searchParams)) return null
       const canonical = `${u.origin}${u.pathname}`
       if (!allowed.includes(canonical)) return null
-      return canonical
+      return `${canonical}?recovery=1`
     } catch {
       return null
     }
@@ -131,7 +140,7 @@ function pickRedirectTo(requested: unknown, requestOrigin: string): string | nul
   if (!origin) return null
   for (const url of allowed) {
     try {
-      if (new URL(url).origin === origin) return url
+      if (new URL(url).origin === origin) return `${url}?recovery=1`
     } catch {
       /* تجاهل */
     }
