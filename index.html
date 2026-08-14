@@ -12,10 +12,22 @@
   <meta http-equiv="X-Content-Type-Options" content="nosniff"/>
   <meta name="referrer" content="strict-origin-when-cross-origin"/>
   <title>منصة الخطة التشغيلية المدرسية</title>
- <link rel="stylesheet" href="style.css?v=20260809-hijri2">
+ <link rel="stylesheet" href="style.css?v=20260814-recovery">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&family=Cairo:wght@300;400;600;700&display=swap" rel="stylesheet">
-  
+  <script>
+    (function () {
+      try {
+        var h = String(location.hash || '');
+        var s = String(location.search || '');
+        var fromUrl = /(?:^|[?&#])type=recovery(?:&|$)/.test(h) || /(?:^|[?&#])type=recovery(?:&|$)/.test(s) || /[?&]recovery=1(?:&|$)/.test(s) || /[?&]code=/.test(s);
+        if (fromUrl) sessionStorage.setItem('sop_pw_recovery', '1');
+        if (fromUrl || sessionStorage.getItem('sop_pw_recovery') === '1') {
+          document.documentElement.classList.add('sop-recovery-pending');
+        }
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
 
@@ -45,6 +57,35 @@
       </div>
      <button id="login-btn" class="btn-login" onclick="window.doLogin()">دخول إلى المنصة</button>
       
+    </div>
+  </div>
+</div>
+
+<!-- PASSWORD RECOVERY: شاشة مستقلة حتى لا تُغطى بتسجيل الدخول أو لوحة التحكم -->
+<div id="password-recovery-page" class="login-page hidden">
+  <div class="login-container">
+    <div class="login-header">
+      <div class="login-logo">
+        <img src="logo.png" alt="شعار المدرسة" class="login-school-logo">
+      </div>
+      <h1>منصة الخطة التشغيلية المدرسية</h1>
+      <p>استعادة الوصول إلى الحساب</p>
+    </div>
+    <div class="login-card">
+      <h2 id="pr-title">تعيين كلمة مرور جديدة</h2>
+      <p class="pr-hint">أدخل كلمة المرور الجديدة ثم أكّدها. الحد الأدنى 6 أحرف.</p>
+      <div id="pr-msg" class="pr-msg hidden" role="alert"></div>
+      <div class="login-field-group">
+        <label for="pr-pass">كلمة المرور الجديدة</label>
+        <input type="password" id="pr-pass" placeholder="6 أحرف على الأقل" autocomplete="new-password" dir="ltr"/>
+      </div>
+      <div class="login-field-group">
+        <label for="pr-pass2">تأكيد كلمة المرور</label>
+        <input type="password" id="pr-pass2" placeholder="أعد كتابة كلمة المرور" autocomplete="new-password" dir="ltr"
+               onkeydown="if(event.key==='Enter')window.submitPasswordRecovery()"/>
+      </div>
+      <button type="button" class="btn-login" id="pr-save-btn" onclick="window.submitPasswordRecovery()">حفظ كلمة المرور الجديدة</button>
+      <button type="button" class="pr-cancel-btn" onclick="window.cancelPasswordRecovery()">إلغاء والعودة لتسجيل الدخول</button>
     </div>
   </div>
 </div>
@@ -626,37 +667,12 @@
   </div>
 </div>
 
-<!-- PASSWORD RECOVERY (جلسة PASSWORD_RECOVERY فقط — بلا دخول للتطبيق) -->
-<div id="password-recovery-modal" class="modal-overlay hidden">
-  <div class="modal">
-    <div class="modal-header">
-      <h3>تعيين كلمة مرور جديدة</h3>
-    </div>
-    <div class="modal-body">
-      <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">أدخل كلمة المرور الجديدة ثم أكّدها. الحد الأدنى 8 أحرف.</p>
-      <div class="form-group">
-        <label for="pr-pass">كلمة المرور الجديدة</label>
-        <input type="password" id="pr-pass" placeholder="8 أحرف على الأقل" autocomplete="new-password" dir="ltr"/>
-      </div>
-      <div class="form-group">
-        <label for="pr-pass2">تأكيد كلمة المرور</label>
-        <input type="password" id="pr-pass2" placeholder="أعد كتابة كلمة المرور" autocomplete="new-password" dir="ltr"
-               onkeydown="if(event.key==='Enter')window.submitPasswordRecovery()"/>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-primary" id="pr-save-btn" onclick="window.submitPasswordRecovery()">💾 حفظ كلمة المرور</button>
-      <button class="btn-secondary" onclick="window.cancelPasswordRecovery()">إلغاء</button>
-    </div>
-  </div>
-</div>
-
 <!-- Toast -->
 <div id="toast" class="toast hidden"></div>
   
  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1"></script>
-<script src="config.js"></script>
-<script src="./script.js?v=20260809-hijri2"></script>
+<script src="config.js?v=20260814-recovery"></script>
+<script src="./script.js?v=20260814-recovery"></script>
   
 </body>
 </html>

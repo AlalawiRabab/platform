@@ -322,6 +322,67 @@ canvas{display:block;max-width:100%;padding:14px}
   display: none !important;
 }
 
+html.sop-recovery-pending #login-page,
+html.sop-recovery-pending #app {
+  display: none !important;
+}
+
+#password-recovery-page {
+  position: fixed !important;
+  inset: 0 !important;
+  display: none;
+  align-items: center !important;
+  justify-content: center !important;
+  background: #fff !important;
+  z-index: 1000000 !important;
+  overflow: auto !important;
+  padding: 20px !important;
+}
+html.sop-recovery-pending #password-recovery-page,
+#password-recovery-page:not(.hidden) {
+  display: flex !important;
+}
+#password-recovery-page.hidden {
+  display: none !important;
+}
+.pr-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+  margin: -8px 0 16px;
+  line-height: 1.6;
+}
+.pr-msg {
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  line-height: 1.6;
+  text-align: center;
+}
+.pr-msg.pr-error {
+  background: #fdecea;
+  color: #922b21;
+  border: 1px solid #f5b7b1;
+}
+.pr-msg.pr-success {
+  background: #e8f8f5;
+  color: #0e6655;
+  border: 1px solid #a9dfbf;
+}
+.pr-cancel-btn {
+  width: 100%;
+  margin-top: 10px;
+  padding: 11px;
+  border: 1.5px solid var(--border);
+  background: #fff !important;
+  color: var(--text-muted) !important;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 700;
+}
+
 .login-bg-shapes {
   display: none !important;
 }
@@ -881,6 +942,7 @@ body,
   color: #fff !important;
   font-weight: 800 !important;
   box-shadow: 0 10px 25px rgba(47,95,143,.18) !important;
+  z-index: 1000001 !important;
 }
 
 /* نجاح */

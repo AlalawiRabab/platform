@@ -138,7 +138,7 @@
 
 'use strict';
 
-console.log('[script.js] BUILD=20260809-hijri2');
+console.log('[script.js] BUILD=20260814-recovery');
 
 /* ─────────────────────────────────────────────────────────────
    §0  SUPABASE
@@ -237,6 +237,9 @@ let _authListenerBound = false;
 let _authHandling = false;
 let _sessionBootstrapDone = false;
 let _passwordRecoveryActive = false;
+let _passwordRecoveryEventSeen = false;
+const RECOVERY_FLAG_KEY = 'sop_pw_recovery';
+const MIN_RECOVERY_PASSWORD_LEN = 6;
 
 function escapeHtml(str) {
   if (str == null) return '';
@@ -302,13 +305,28 @@ function clearLegacySessionArtifacts() {
 }
 
 function showAppShell() {
+  if (_passwordRecoveryActive) return;
+  hideRecoveryShell();
   document.getElementById('login-page')?.classList.add('hidden');
   document.getElementById('app')?.classList.remove('hidden');
 }
 
 function showLoginShell() {
+  hideRecoveryShell();
   document.getElementById('app')?.classList.add('hidden');
   document.getElementById('login-page')?.classList.remove('hidden');
+}
+
+function showRecoveryShell() {
+  document.documentElement.classList.add('sop-recovery-pending');
+  document.getElementById('app')?.classList.add('hidden');
+  document.getElementById('login-page')?.classList.add('hidden');
+  document.getElementById('password-recovery-page')?.classList.remove('hidden');
+}
+
+function hideRecoveryShell() {
+  document.documentElement.classList.remove('sop-recovery-pending');
+  document.getElementById('password-recovery-page')?.classList.add('hidden');
 }
 
 function clearLoginPasswordField() {
@@ -334,13 +352,94 @@ async function fetchProfileForAuthUser(authUser) {
 }
 
 async function denyAccessAndSignOut(message) {
+  if (_passwordRecoveryActive) return;
   currentUser = null;
   _sessionBootstrapDone = false;
-  _passwordRecoveryActive = false;
   clearLegacySessionArtifacts();
   try { if (sb) await sb.auth.signOut(); } catch {}
   showLoginShell();
   if (message) showToast(message, 'error');
+}
+
+function readCapturedAuthRedirect() {
+  const captured = (typeof window !== 'undefined') ? window.__SOP_AUTH_REDIRECT : null;
+  if (captured && typeof captured === 'object') return captured;
+  return { isRecovery: false, hasCode: false, hasAccessToken: false, error: '', errorDescription: '' };
+}
+
+function persistRecoveryFlag() {
+  try { sessionStorage.setItem(RECOVERY_FLAG_KEY, '1'); } catch {}
+}
+
+function clearRecoveryFlag() {
+  try { sessionStorage.removeItem(RECOVERY_FLAG_KEY); } catch {}
+}
+
+function isRecoveryRedirectInUrl() {
+  try {
+    const hashParams = new URLSearchParams(String(window.location.hash || '').replace(/^#/, ''));
+    const queryParams = new URLSearchParams(window.location.search || '');
+    return hashParams.get('type') === 'recovery'
+      || queryParams.get('type') === 'recovery'
+      || queryParams.get('recovery') === '1';
+  } catch {
+    return false;
+  }
+}
+
+function isRecoveryFlowRequested() {
+  const captured = readCapturedAuthRedirect();
+  if (captured.isRecovery) return true;
+  if (isRecoveryRedirectInUrl()) return true;
+  try { return sessionStorage.getItem(RECOVERY_FLAG_KEY) === '1'; } catch { return false; }
+}
+
+function recoveryErrorMessageFromParams(err, descRaw) {
+  if (!err) return null;
+  const desc = decodeURIComponent(String(descRaw || '').replace(/\+/g, ' '));
+  if (/expired|otp|invalid|token/i.test(desc) || err === 'access_denied') {
+    return 'رابط استعادة كلمة المرور غير صالح أو منتهٍ. اطلب رابطاً جديداً من صفحة تسجيل الدخول.';
+  }
+  return 'تعذّر إكمال استعادة كلمة المرور. اطلب رابطاً جديداً.';
+}
+
+/** رسائل خطأ من hash/query بعد فتح رابط الاستعادة — يقرأ اللقطة قبل مسح hash */
+function consumeAuthRedirectError() {
+  try {
+    const captured = readCapturedAuthRedirect();
+    const hashParams = new URLSearchParams(String(window.location.hash || '').replace(/^#/, ''));
+    const queryParams = new URLSearchParams(window.location.search || '');
+    const err = captured.error || hashParams.get('error') || queryParams.get('error');
+    const descRaw = captured.errorDescription
+      || hashParams.get('error_description')
+      || queryParams.get('error_description')
+      || '';
+    const msg = recoveryErrorMessageFromParams(err, descRaw);
+    if (!msg) return null;
+    scrubRecoveryUrl();
+    return msg;
+  } catch {
+    return null;
+  }
+}
+
+function scrubRecoveryUrl() {
+  try {
+    const path = window.location.pathname || '/index.html';
+    window.history.replaceState({}, document.title, path);
+  } catch {}
+}
+
+function setRecoveryMessage(text, type) {
+  const el = document.getElementById('pr-msg');
+  if (!el) return;
+  if (!text) {
+    el.textContent = '';
+    el.className = 'pr-msg hidden';
+    return;
+  }
+  el.textContent = text;
+  el.className = 'pr-msg ' + (type === 'success' ? 'pr-success' : 'pr-error');
 }
 
 function clearPasswordRecoveryFields() {
@@ -350,76 +449,49 @@ function clearPasswordRecoveryFields() {
   if (b) b.value = '';
 }
 
-function openPasswordRecoveryModal() {
+function openPasswordRecoveryUi() {
   clearPasswordRecoveryFields();
-  showLoginShell();
-  openModal('password-recovery-modal');
+  setRecoveryMessage('', '');
+  showRecoveryShell();
 }
 
-function closePasswordRecoveryModal() {
+function closePasswordRecoveryUi() {
   clearPasswordRecoveryFields();
-  closeModal('password-recovery-modal');
-}
-
-/** رسائل خطأ من hash/query بعد فتح رابط الاستعادة */
-function consumeAuthRedirectError() {
-  try {
-    const hashParams = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
-    const queryParams = new URLSearchParams(window.location.search || '');
-    const err = hashParams.get('error') || queryParams.get('error');
-    const descRaw = hashParams.get('error_description') || queryParams.get('error_description') || '';
-    if (!err) return null;
-    try {
-      const path = window.location.pathname || '/index.html';
-      window.history.replaceState({}, document.title, path);
-    } catch {}
-    const desc = decodeURIComponent(String(descRaw).replace(/\+/g, ' '));
-    if (/expired|otp|invalid|token/i.test(desc) || err === 'access_denied') {
-      return 'رابط استعادة كلمة المرور غير صالح أو منتهٍ. اطلب رابطاً جديداً من المسؤول.';
-    }
-    return 'تعذّر إكمال استعادة كلمة المرور. اطلب رابطاً جديداً من المسؤول.';
-  } catch {
-    return null;
-  }
-}
-
-function isRecoveryRedirectInUrl() {
-  try {
-    const hashParams = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
-    const queryParams = new URLSearchParams(window.location.search || '');
-    return hashParams.get('type') === 'recovery' || queryParams.get('type') === 'recovery';
-  } catch {
-    return false;
-  }
-}
-
-function scrubAuthHashFromUrl() {
-  try {
-    if (!window.location.hash) return;
-    const path = window.location.pathname || '/index.html';
-    const search = window.location.search || '';
-    window.history.replaceState({}, document.title, path + search);
-  } catch {}
+  setRecoveryMessage('', '');
+  hideRecoveryShell();
 }
 
 async function beginPasswordRecoveryFlow() {
   _passwordRecoveryActive = true;
   currentUser = null;
   _sessionBootstrapDone = false;
+  persistRecoveryFlag();
   clearLegacySessionArtifacts();
+  openPasswordRecoveryUi();
+}
+
+async function failPasswordRecovery(message, toastType) {
+  clearPasswordRecoveryFields();
+  currentUser = null;
+  _sessionBootstrapDone = false;
+  clearRecoveryFlag();
+  clearLegacySessionArtifacts();
+  try { if (sb) await sb.auth.signOut(); } catch {}
+  _passwordRecoveryActive = false;
+  _passwordRecoveryEventSeen = false;
+  closePasswordRecoveryUi();
+  scrubRecoveryUrl();
   showLoginShell();
-  scrubAuthHashFromUrl();
-  openPasswordRecoveryModal();
+  showToast(message || 'رابط استعادة كلمة المرور غير صالح أو منتهٍ.', toastType || 'error');
 }
 
 async function submitPasswordRecovery() {
   if (!_passwordRecoveryActive) {
-    showToast('جلسة استعادة كلمة المرور غير صالحة أو منتهية. اطلب رابطاً جديداً.', 'error');
-    closePasswordRecoveryModal();
-    showLoginShell();
+    await failPasswordRecovery('لا توجد جلسة استعادة صالحة. اطلب رابطاً جديداً.');
     return;
   }
   if (!sb) {
+    setRecoveryMessage('تعذّر الاتصال بخدمة المصادقة', 'error');
     showToast('تعذّر الاتصال بخدمة المصادقة', 'error');
     return;
   }
@@ -429,14 +501,20 @@ async function submitPasswordRecovery() {
   const p1 = passEl ? String(passEl.value || '') : '';
   const p2 = pass2El ? String(pass2El.value || '') : '';
 
-  if (p1.length < 8 || p1.length > 128) {
-    showToast('كلمة المرور يجب أن تكون 8 أحرف على الأقل', 'error');
-    clearPasswordRecoveryFields();
+  if (p1.length < MIN_RECOVERY_PASSWORD_LEN || p1.length > 128) {
+    setRecoveryMessage('كلمة المرور يجب أن تكون 6 أحرف على الأقل', 'error');
+    showToast('كلمة المرور يجب أن تكون 6 أحرف على الأقل', 'error');
     return;
   }
   if (p1 !== p2) {
+    setRecoveryMessage('كلمتا المرور غير متطابقتين', 'error');
     showToast('كلمتا المرور غير متطابقتين', 'error');
-    clearPasswordRecoveryFields();
+    return;
+  }
+
+  const { data: sessData } = await sb.auth.getSession();
+  if (!sessData?.session?.user) {
+    await failPasswordRecovery('لا توجد جلسة استعادة صالحة. اطلب رابطاً جديداً.');
     return;
   }
 
@@ -450,48 +528,48 @@ async function submitPasswordRecovery() {
     const { error } = await sb.auth.updateUser({ password: p1 });
     clearPasswordRecoveryFields();
     if (error) {
-      _passwordRecoveryActive = false;
-      closePasswordRecoveryModal();
-      try { await sb.auth.signOut(); } catch {}
-      showLoginShell();
-      showToast('رابط استعادة كلمة المرور غير صالح أو منتهٍ. اطلب رابطاً جديداً من المسؤول.', 'error');
+      const msg = /expired|invalid|otp|token|session/i.test(String(error.message || ''))
+        ? 'رابط استعادة كلمة المرور غير صالح أو منتهٍ. اطلب رابطاً جديداً.'
+        : 'فشل تحديث كلمة المرور. حاول مرة أخرى أو اطلب رابطاً جديداً.';
+      setRecoveryMessage(msg, 'error');
+      showToast(msg, 'error');
       return;
     }
 
-    _passwordRecoveryActive = false;
-    closePasswordRecoveryModal();
+    setRecoveryMessage('تم تعيين كلمة المرور بنجاح. سيتم توجيهك لتسجيل الدخول.', 'success');
+    showToast('تم تعيين كلمة المرور بنجاح. يمكنك تسجيل الدخول الآن.', 'success');
     currentUser = null;
     _sessionBootstrapDone = false;
+    clearRecoveryFlag();
     clearLegacySessionArtifacts();
+    await new Promise((r) => setTimeout(r, 1200));
     try { await sb.auth.signOut(); } catch {}
+    _passwordRecoveryActive = false;
+    _passwordRecoveryEventSeen = false;
+    scrubRecoveryUrl();
+    closePasswordRecoveryUi();
     showLoginShell();
-    showToast('تم تعيين كلمة المرور بنجاح. يمكنك تسجيل الدخول الآن.', 'success');
   } catch {
     clearPasswordRecoveryFields();
-    showToast('تعذّر تعيين كلمة المرور. حاول مرة أخرى أو اطلب رابطاً جديداً.', 'error');
+    setRecoveryMessage('فشل تحديث كلمة المرور. حاول مرة أخرى أو اطلب رابطاً جديداً.', 'error');
+    showToast('فشل تحديث كلمة المرور. حاول مرة أخرى أو اطلب رابطاً جديداً.', 'error');
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.textContent = '💾 حفظ كلمة المرور';
+      btn.textContent = 'حفظ كلمة المرور الجديدة';
     }
   }
 }
 
 async function cancelPasswordRecovery() {
-  clearPasswordRecoveryFields();
-  closePasswordRecoveryModal();
-  _passwordRecoveryActive = false;
-  currentUser = null;
-  _sessionBootstrapDone = false;
-  clearLegacySessionArtifacts();
-  try { if (sb) await sb.auth.signOut(); } catch {}
-  showLoginShell();
-  showToast('تم إلغاء تعيين كلمة المرور', 'warning');
+  await failPasswordRecovery('تم إلغاء تعيين كلمة المرور', 'warning');
 }
+
+_passwordRecoveryActive = isRecoveryFlowRequested();
 
 /** مسار واحد: profile → currentUser → الواجهة → البيانات */
 async function bootstrapAuthenticatedSession(session) {
-  if (_passwordRecoveryActive) return false;
+  if (_passwordRecoveryActive || isRecoveryFlowRequested()) return false;
   if (!session?.user) return false;
   if (_authHandling) return false;
   if (_sessionBootstrapDone && currentUser?.id === session.user.id) return true;
@@ -531,25 +609,31 @@ async function handleSignedOut() {
   selectedSchoolYearId = null;
   schoolYearsCache = [];
   if (!_passwordRecoveryActive) {
-    closePasswordRecoveryModal();
+    closePasswordRecoveryUi();
+    showLoginShell();
   }
-  showLoginShell();
 }
 
 async function handleAuthStateEvent(event, session) {
+  // أولوية قصوى: استعادة كلمة المرور قبل أي توجيه للوحة التحكم
+  if (event === 'PASSWORD_RECOVERY') {
+    _passwordRecoveryEventSeen = true;
+    await beginPasswordRecoveryFlow();
+    return;
+  }
   if (event === 'SIGNED_OUT') {
     await handleSignedOut();
     return;
   }
-  // جلسة استعادة فقط — لا تُفعَّل صلاحيات التطبيق / إدارة المستخدمين
-  if (event === 'PASSWORD_RECOVERY') {
-    await beginPasswordRecoveryFlow();
+  if (_passwordRecoveryActive || isRecoveryFlowRequested()) {
+    if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+      _passwordRecoveryActive = true;
+      showRecoveryShell();
+    }
     return;
   }
-  if (_passwordRecoveryActive) return;
   if (!session?.user) return;
-  // TOKEN_REFRESHED: لا تعِد تحميل البيانات
-  if (event === 'TOKEN_REFRESHED') return;
+  if (event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') return;
   // منع التكرار مع doLogin / getSession
   if (_authHandling) return;
   if (_sessionBootstrapDone && currentUser?.id === session.user.id) return;
@@ -633,7 +717,7 @@ function closeModal(id) {
   if (id === 'program-detail-modal') {
     _openProgramDetailId = null;
   }
-  if (id === 'password-recovery-modal') {
+  if (id === 'password-recovery-page') {
     clearPasswordRecoveryFields();
   }
 }
@@ -642,6 +726,12 @@ function closeModal(id) {
    §7  AUTH
    ───────────────────────────────────────────────────────────── */
 async function doLogin() {
+  if (_passwordRecoveryActive) {
+    showRecoveryShell();
+    showToast('أكمل تعيين كلمة المرور الجديدة أولاً، أو ألغِ العملية.', 'warning');
+    return;
+  }
+  clearRecoveryFlag();
   const rawUsername = document.getElementById('login-username')?.value || '';
   const username = normalizeLoginUsername(rawUsername);
   const pass = document.getElementById('login-password')?.value || '';
@@ -729,7 +819,12 @@ async function doLogout() {
   selectedSchoolYearId = null;
   schoolYearsCache = [];
   clearLegacySessionArtifacts();
+  if (!_passwordRecoveryActive) clearRecoveryFlag();
   try { if (sb) await sb.auth.signOut(); } catch {}
+  if (_passwordRecoveryActive) {
+    showRecoveryShell();
+    return;
+  }
   showLoginShell();
   const e = document.getElementById('login-username'); if (e) e.value = '';
   clearLoginPasswordField();
@@ -4518,16 +4613,16 @@ async function handleUpdateUser() {
   }
 }
 
-/** رابط صفحة كامل بدون query/hash لمسار استعادة كلمة المرور */
+/** رابط صفحة الاستعادة — query recovery=1 يبقى بعد أن يمسح العميل الـ hash */
 function passwordResetRedirectUrl() {
   try {
     const origin = window.location.origin;
     let path = window.location.pathname || '/';
     if (path.endsWith('/')) path = `${path}index.html`;
     else if (!/\.html?$/i.test(path)) path = `${path}/index.html`;
-    return `${origin}${path}`;
+    return `${origin}${path}?recovery=1`;
   } catch {
-    return '';
+    return 'https://alalawirabab.github.io/platform/index.html?recovery=1';
   }
 }
 
@@ -4549,6 +4644,22 @@ async function handleSendPasswordReset(id) {
     });
     showToast('تم إرسال رسالة إعادة التعيين إن كان البريد صالحاً','success');
   } catch (err) {
+    const fallback = String(redirectTo || '').replace(/\?recovery=1$/, '');
+    if (fallback && fallback !== redirectTo && String(err && err.message) === 'invalid_payload') {
+      try {
+        await invokeAdminUsers({
+          action: 'send_password_reset',
+          target_id: id,
+          redirect_to: fallback,
+        });
+        showToast('تم إرسال رسالة إعادة التعيين إن كان البريد صالحاً','success');
+        return;
+      } catch (err2) {
+        console.error('[handleSendPasswordReset]');
+        showToast(adminUsersErrorMessage(err2 && err2.message), 'error');
+        return;
+      }
+    }
     console.error('[handleSendPasswordReset]');
     showToast(adminUsersErrorMessage(err && err.message), 'error');
   }
@@ -4627,9 +4738,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   bindAllHijriPreviews();
 
   bindAuthStateListener();
-  showLoginShell();
 
   if (!sb) {
+    showLoginShell();
     showToast('تعذّر الاتصال بخدمة المصادقة', 'error');
     return;
   }
@@ -4638,24 +4749,37 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const redirectErr = consumeAuthRedirectError();
   if (redirectErr) {
-    showLoginShell();
-    showToast(redirectErr, 'error');
+    await failPasswordRecovery(redirectErr);
     return;
   }
 
-  // رابط استعادة: لا تمنح دخول التطبيق / إدارة المستخدمين
-  if (isRecoveryRedirectInUrl()) {
+  if (isRecoveryFlowRequested()) {
     _passwordRecoveryActive = true;
-    showLoginShell();
-    try { await sb.auth.getSession(); } catch {}
-    openPasswordRecoveryModal();
+    persistRecoveryFlag();
+    showRecoveryShell();
+    let session = null;
+    try {
+      const { data } = await sb.auth.getSession();
+      session = data?.session || null;
+    } catch {}
+    if (_passwordRecoveryEventSeen) {
+      await beginPasswordRecoveryFlow();
+      return;
+    }
+    if (!session?.user) {
+      await failPasswordRecovery('رابط استعادة كلمة المرور غير صالح أو منتهٍ. اطلب رابطاً جديداً.');
+      return;
+    }
+    await beginPasswordRecoveryFlow();
     return;
   }
+
+  clearRecoveryFlag();
+  showLoginShell();
 
   const { data, error } = await sb.auth.getSession();
-  if (_passwordRecoveryActive) {
-    showLoginShell();
-    openPasswordRecoveryModal();
+  if (_passwordRecoveryActive || isRecoveryFlowRequested()) {
+    await beginPasswordRecoveryFlow();
     return;
   }
   if (error || !data?.session) {
