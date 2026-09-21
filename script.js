@@ -152,6 +152,8 @@ let currentUser      = null;
 let settingsCache = {};
 let programsCache    = [];
 let indicatorsCache  = {};
+let evidenceRequirementsCache = [];
+let evidenceRequirementsReady = false;
 let initiativesCache = [];
 let tasksCache       = [];
 let evidencesCache   = [];
@@ -181,6 +183,7 @@ const PERMS = {
     addProgram:true,editProgram:true,deleteProgram:true,
     addIndicator:true,deleteIndicator:true,toggleIndicator:true,
     addEvidence:true,editEvidence:true,deleteEvidence:true,
+    manageEvidenceRequirements:true,deleteEvidenceRequirement:true,approveEvidence:true,
     addInitiative:true,editInitiative:true,deleteInitiative:true,
     addTask:true,editTask:true,deleteTask:true,
     addTeacher:true,editTeacher:true,deleteTeacher:true,
@@ -188,21 +191,24 @@ const PERMS = {
     editSettings:true,manageUsers:true,
   },
   // صلاحيات الوكيلة المعتمدة سابقاً في المشروع (بدون إدارة مستخدمين/حذف)
+  // الاعتماد محصور بالمدير (admin) فقط
   vice:{
     addProgram:true,editProgram:true,deleteProgram:false,
     addIndicator:true,deleteIndicator:false,toggleIndicator:true,
     addEvidence:true,editEvidence:true,deleteEvidence:false,
+    manageEvidenceRequirements:true,deleteEvidenceRequirement:false,approveEvidence:false,
     addInitiative:true,editInitiative:true,deleteInitiative:false,
     addTask:true,editTask:true,deleteTask:false,
     addTeacher:true,editTeacher:true,deleteTeacher:true,
     viewTeacherLinks:true,addTeacherLink:true,
     editSettings:false,manageUsers:false,
   },
-  // المعلمة: مشاهدة + إرفاق شاهد فقط
+  // المعلمة: مشاهدة + إرفاق شاهد فقط — بلا اعتماد
   teacher:{
     addProgram:false,editProgram:false,deleteProgram:false,
     addIndicator:false,deleteIndicator:false,toggleIndicator:false,
     addEvidence:true,editEvidence:false,deleteEvidence:false,
+    manageEvidenceRequirements:false,deleteEvidenceRequirement:false,approveEvidence:false,
     addInitiative:false,editInitiative:false,deleteInitiative:false,
     addTask:false,editTask:false,deleteTask:false,
     addTeacher:false,editTeacher:false,deleteTeacher:false,
@@ -725,6 +731,55 @@ function closeModal(id) {
 /* ─────────────────────────────────────────────────────────────
    §7  AUTH
    ───────────────────────────────────────────────────────────── */
+function isSupabaseFrontendMisconfigured() {
+  const url = typeof window !== 'undefined' ? String(window.SUPABASE_URL || '') : '';
+  if (!url || /undefined/i.test(url)) return true;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol !== 'https:' || !parsed.hostname.endsWith('.supabase.co');
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * يفرّق أعطال البنية (شبكة/CORS/500) عن رفض الاعتماد.
+ * لا يميّز أمام المستخدم بين username غير موجود وكلمة مرور خاطئة.
+ */
+function classifyUsernameLoginFailure({ payload, error, caught }) {
+  const code = payload && typeof payload.error === 'string' ? payload.error : '';
+  let status = 0;
+  try {
+    status = Number(error?.context?.status) || 0;
+  } catch (_) { status = 0; }
+  const errText = [caught, error]
+    .filter(Boolean)
+    .map((e) => String((e && (e.name || '')) + ' ' + (e && (e.message || ''))))
+    .join(' ');
+
+  if (caught || /FunctionsFetchError|Failed to fetch|NetworkError|Load failed/i.test(errText)) {
+    return 'unavailable';
+  }
+  if (status === 403 || code === 'forbidden') return 'origin';
+  if (status === 404 || status === 405 || code === 'method_not_allowed') return 'unavailable';
+  if (status >= 500 || code === 'operation_failed') return 'internal';
+  if (status === 401 || code === 'invalid_credentials') return 'credentials';
+  if (status === 400 || code === 'invalid_payload') return 'credentials';
+  return 'credentials';
+}
+
+function showLoginFailure(kind) {
+  const messages = {
+    credentials: 'اسم المستخدم أو كلمة المرور غير صحيحة',
+    origin: 'تعذر إكمال تسجيل الدخول من هذا المصدر.',
+    unavailable: 'تعذر الاتصال بخدمة المصادقة.',
+    internal: 'تعذر إتمام العملية حالياً. حاول مرة أخرى لاحقاً.',
+    config: 'تعذر الاتصال بخدمة المصادقة.',
+  };
+  try { console.warn('[doLogin]', kind); } catch (_) { /* تجاهل */ }
+  showToast(messages[kind] || messages.unavailable, 'error');
+}
+
 async function doLogin() {
   if (_passwordRecoveryActive) {
     showRecoveryShell();
@@ -748,8 +803,8 @@ async function doLogin() {
     showToast('اسم المستخدم أو كلمة المرور غير صحيحة', 'error');
     return;
   }
-  if (!sb) {
-    showToast('تعذّر الاتصال بخدمة المصادقة', 'error');
+  if (!sb || isSupabaseFrontendMisconfigured()) {
+    showLoginFailure('config');
     return;
   }
 
@@ -778,8 +833,8 @@ async function doLogin() {
 
     const accessToken = payload && typeof payload.access_token === 'string' ? payload.access_token : '';
     const refreshToken = payload && typeof payload.refresh_token === 'string' ? payload.refresh_token : '';
-    if (!accessToken || !refreshToken || (payload && payload.error)) {
-      showToast('اسم المستخدم أو كلمة المرور غير صحيحة', 'error');
+    if (!accessToken || !refreshToken || (payload && payload.error) || error) {
+      showLoginFailure(classifyUsernameLoginFailure({ payload, error, caught: null }));
       return;
     }
 
@@ -796,8 +851,7 @@ async function doLogin() {
     if (!ok) return;
     showToast('تم تسجيل الدخول بنجاح', 'success');
   } catch (err) {
-    console.error('[doLogin]');
-    showToast('اسم المستخدم أو كلمة المرور غير صحيحة', 'error');
+    showLoginFailure(classifyUsernameLoginFailure({ payload: null, error: null, caught: err }));
   } finally {
     clearLoginPasswordField();
     showLoadingOverlay?.(false);
@@ -882,6 +936,7 @@ async function loadAllData(renderAfter = true) {
     applyYearWriteModeUI();
     await fetchPrograms();
     await fetchIndicators();
+    await fetchEvidenceRequirements();
     await fetchEvidences();
     if (isSectionAllowed('plan') || isSectionAllowed('tasks')) {
       await fetchTasks();
@@ -979,20 +1034,110 @@ function closeSidebar() {
 /* ─────────────────────────────────────────────────────────────
    §12  STATUS HELPERS
    ───────────────────────────────────────────────────────────── */
+/** شواهد مطلوبة لمؤشر واحد من الكاش الموحّد */
+function getRequirementsForIndicator(indicatorId) {
+  if (indicatorId == null || indicatorId === '') return [];
+  return (evidenceRequirementsCache || [])
+    .filter(r => String(r.indicator_id) === String(indicatorId))
+    .slice()
+    .sort((a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0)
+      || String(a.created_at || '').localeCompare(String(b.created_at || '')));
+}
+
+/** المرفق المرتبط باسم شاهد مطلوب (أحدث سجل إن تعدد) */
+function getEvidenceForRequirement(requirementId) {
+  if (requirementId == null || requirementId === '') return null;
+  const list = (evidencesCache || []).filter(ev =>
+    ev && ev.requirement_id != null && String(ev.requirement_id) === String(requirementId)
+  );
+  if (!list.length) return null;
+  return list.slice().sort((a, b) =>
+    String(b.created_at || b.date || '').localeCompare(String(a.created_at || a.date || ''))
+  )[0];
+}
+
+function evidenceHasAttachment(ev) {
+  if (!ev) return false;
+  const fileUrl = ev.file_url != null && String(ev.file_url).trim() !== '';
+  const link = evidenceDriveLink(ev);
+  return !!(fileUrl || link);
+}
+
+/** حالات الشاهد المطلوب: missing | pending | approved */
+function getRequirementStatus(req) {
+  if (!req) return 'missing';
+  if (req.is_approved === true || req.is_approved === 'true' || req.is_approved === 1) {
+    return 'approved';
+  }
+  const ev = getEvidenceForRequirement(req.id);
+  if (evidenceHasAttachment(ev)) return 'pending';
+  return 'missing';
+}
+
+const REQ_STATUS_META = {
+  missing:  { label: 'غير مرفق', className: 'req-status-missing' },
+  pending:  { label: 'قيد المراجعة', className: 'req-status-pending' },
+  approved: { label: 'معتمد', className: 'req-status-approved' },
+};
+
+/**
+ * نسبة إنجاز المؤشر = الشواهد المعتمدة ÷ إجمالي أسماء الشواهد المطلوبة × 100
+ * بلا شواهد مطلوبة → 0٪ (بدون قسمة على صفر)
+ * لا تعتمد على is_completed
+ */
+function calcIndicatorProgress(indicatorId) {
+  if (!evidenceRequirementsReady) {
+    // قبل تطبيق Migration: لا تُصفّر النسب — أسقط إلى المنطق القديم مؤقتاً
+    return calcIndicatorProgressLegacy(indicatorId);
+  }
+  const reqs = getRequirementsForIndicator(indicatorId);
+  if (!reqs.length) return 0;
+  const approved = reqs.filter(r => getRequirementStatus(r) === 'approved').length;
+  return Math.round((approved / reqs.length) * 100);
+}
+
+/** منطق قديم للمؤشر: is_completed + وجود شاهد مرتبط */
+function calcIndicatorProgressLegacy(indicatorId) {
+  const inds = getAllIndicators();
+  const ind = inds.find(i => String(i.id) === String(indicatorId));
+  if (!ind) return 0;
+  const completed = ind.is_completed === true || ind.is_completed === 'true' || ind.is_completed === 1;
+  const hasEvidence = evidencesCache.some(ev =>
+    String(ev.program_id) === String(ind.program_id) &&
+    String(ev.indicator_id) === String(ind.id)
+  );
+  return completed && hasEvidence ? 100 : 0;
+}
+
+function getIndicatorRequirementStats(indicatorId) {
+  if (!evidenceRequirementsReady) {
+    const pct = calcIndicatorProgressLegacy(indicatorId);
+    return { total: pct === 100 ? 1 : 0, approved: pct === 100 ? 1 : 0, attached: pct === 100 ? 1 : 0, pct };
+  }
+  const reqs = getRequirementsForIndicator(indicatorId);
+  const total = reqs.length;
+  const approved = reqs.filter(r => getRequirementStatus(r) === 'approved').length;
+  const attached = reqs.filter(r => {
+    const st = getRequirementStatus(r);
+    return st === 'pending' || st === 'approved';
+  }).length;
+  const pct = total > 0 ? Math.round((approved / total) * 100) : 0;
+  return { total, approved, attached, pct };
+}
+
+/**
+ * نسبة البرنامج = متوسط نسب مؤشراته (Math.round كما في المنصة)
+ * مصدر موحّد — لا تكرر معادلة مختلفة في الصفحات
+ */
 function calcProgramProgress(programId) {
   const inds = indicatorsCache[programId] || indicatorsCache[String(programId)] || [];
   if (!inds.length) return 0;
-
-  const done = inds.filter(ind => {
-    const completed = ind.is_completed === true || ind.is_completed === 'true' || ind.is_completed === 1;
-    const hasEvidence = evidencesCache.some(ev =>
-      String(ev.program_id) === String(programId) &&
-      String(ev.indicator_id) === String(ind.id)
-    );
-    return completed && hasEvidence;
-  }).length;
-
-  return Math.round((done / inds.length) * 100);
+  if (!evidenceRequirementsReady) {
+    const done = inds.filter(ind => calcIndicatorProgressLegacy(ind.id) >= 100).length;
+    return Math.round((done / inds.length) * 100);
+  }
+  const sum = inds.reduce((s, ind) => s + calcIndicatorProgress(ind.id), 0);
+  return Math.round(sum / inds.length);
 }
 const SL = {planning:'قيد التخطيط',active:'جارٍ التنفيذ',done:'منتهٍ',late:'متأخر'};
 const SB = {planning:'badge-secondary',active:'badge-info',done:'badge-success',late:'badge-danger'};
@@ -1881,21 +2026,7 @@ async function sbDeleteProgram(id) {
 async function syncProgress(progId) {
   if (!progId) return;
 
-  const inds = indicatorsCache[progId] || indicatorsCache[String(progId)] || [];
-  const total = inds.length;
-
-  const done = inds.filter(ind => {
-    const completed = ind.is_completed === true || ind.is_completed === 'true';
-
-    const hasEvidence = evidencesCache.some(ev =>
-      String(ev.program_id) === String(progId) &&
-      String(ev.indicator_id) === String(ind.id)
-    );
-
-    return completed && hasEvidence;
-  }).length;
-
-  const progress = total > 0 ? Math.round((done / total) * 100) : 0;
+  const progress = calcProgramProgress(progId);
 
   const pIdx = programsCache.findIndex(p => String(p.id) === String(progId));
   if (pIdx !== -1) {
@@ -1989,6 +2120,268 @@ async function handleDelInd(progId, indId) {
   }
 }
 window.handleDelInd = handleDelInd;
+
+/* ─────────────────────────────────────────────────────────────
+   §16b SUPABASE: EVIDENCE REQUIREMENTS (أسماء الشواهد المطلوبة)
+   ───────────────────────────────────────────────────────────── */
+function mapRequirementRow(r) {
+  if (!r || typeof r !== 'object') return null;
+  return {
+    id: r.id,
+    indicator_id: r.indicator_id != null ? r.indicator_id : null,
+    name: r.name || '',
+    sort_order: r.sort_order != null ? Number(r.sort_order) : 0,
+    is_approved: r.is_approved === true || r.is_approved === 'true' || r.is_approved === 1,
+    approved_by: r.approved_by || null,
+    approved_at: r.approved_at || null,
+    created_by: r.created_by || null,
+    created_at: r.created_at || null,
+    updated_at: r.updated_at || null,
+  };
+}
+
+async function fetchEvidenceRequirements() {
+  if (!sb) return;
+  const { data, error } = await sb
+    .from('evidence_requirements')
+    .select('*')
+    .order('sort_order', { ascending: true });
+
+  if (error) {
+    console.warn('[fetchEvidenceRequirements]', error.message || error);
+    if (/relation|does not exist|42P01/i.test(String(error.message || ''))) {
+      evidenceRequirementsCache = [];
+      evidenceRequirementsReady = false;
+    }
+    return;
+  }
+  evidenceRequirementsCache = (data || []).map(mapRequirementRow).filter(Boolean);
+  evidenceRequirementsReady = true;
+}
+
+async function sbAddEvidenceRequirement(indicatorId, name) {
+  requireSb();
+  const trimmed = clampInput(name);
+  if (!trimmed) throw new Error('أدخل اسم الشاهد المطلوب');
+  const existing = getRequirementsForIndicator(indicatorId);
+  const sortOrder = existing.reduce((m, r) => Math.max(m, Number(r.sort_order) || 0), 0) + 1;
+  const { data, error } = await sb.from('evidence_requirements').insert({
+    indicator_id: indicatorId,
+    name: trimmed,
+    sort_order: sortOrder,
+    is_approved: false,
+    created_by: currentUser?.id || null,
+  }).select('*').single();
+  if (error) throw error;
+  const mapped = mapRequirementRow(data);
+  if (mapped) evidenceRequirementsCache.push(mapped);
+  return mapped;
+}
+
+async function sbRenameEvidenceRequirement(requirementId, name) {
+  requireSb();
+  const trimmed = clampInput(name);
+  if (!trimmed) throw new Error('أدخل اسم الشاهد');
+  const { data, error } = await sb.from('evidence_requirements')
+    .update({ name: trimmed })
+    .eq('id', requirementId)
+    .select('*')
+    .single();
+  if (error) throw error;
+  const mapped = mapRequirementRow(data);
+  const idx = evidenceRequirementsCache.findIndex(r => String(r.id) === String(requirementId));
+  if (idx !== -1 && mapped) evidenceRequirementsCache[idx] = mapped;
+  return mapped;
+}
+
+async function sbDeleteEvidenceRequirement(requirementId) {
+  requireSb();
+  const { error } = await sb.from('evidence_requirements').delete().eq('id', requirementId);
+  if (error) throw error;
+  evidenceRequirementsCache = evidenceRequirementsCache.filter(r => String(r.id) !== String(requirementId));
+  // المرفقات تبقى في evidences مع requirement_id = NULL بسبب ON DELETE SET NULL
+}
+
+async function sbSetRequirementApproval(requirementId, approved) {
+  requireSb();
+  if (!can('approveEvidence')) throw new Error('فقط المدير يمكنه اعتماد الشواهد');
+  const { data, error } = await sb.from('evidence_requirements')
+    .update({ is_approved: !!approved })
+    .eq('id', requirementId)
+    .select('*')
+    .single();
+  if (error) throw error;
+  const mapped = mapRequirementRow(data);
+  const idx = evidenceRequirementsCache.findIndex(r => String(r.id) === String(requirementId));
+  if (idx !== -1 && mapped) evidenceRequirementsCache[idx] = mapped;
+  return mapped;
+}
+
+async function handleAddRequirement(progId, indId) {
+  if (!can('manageEvidenceRequirements')) {
+    showToast('ليس لديك صلاحية إضافة أسماء الشواهد', 'error');
+    return;
+  }
+  try { assertYearWritable(); } catch { return; }
+  const name = prompt('اسم الشاهد المطلوب:');
+  if (name == null) return;
+  const trimmed = clampInput(name);
+  if (!trimmed) { showToast('أدخل اسم الشاهد', 'error'); return; }
+  try {
+    await sbAddEvidenceRequirement(indId, trimmed);
+    await syncProgress(progId);
+    await refreshEvidenceViews(progId);
+    showToast('تمت إضافة اسم الشاهد', 'success');
+  } catch (err) {
+    console.error('[handleAddRequirement]', err.message || err);
+    showToast(arabicDbError(err), 'error');
+  }
+}
+
+async function handleRenameRequirement(progId, requirementId) {
+  if (!can('manageEvidenceRequirements')) {
+    showToast('ليس لديك صلاحية تعديل أسماء الشواهد', 'error');
+    return;
+  }
+  try { assertYearWritable(); } catch { return; }
+  const req = evidenceRequirementsCache.find(r => String(r.id) === String(requirementId));
+  const name = prompt('تعديل اسم الشاهد:', req?.name || '');
+  if (name == null) return;
+  try {
+    await sbRenameEvidenceRequirement(requirementId, name);
+    await refreshEvidenceViews(progId);
+    showToast('تم تعديل اسم الشاهد', 'success');
+  } catch (err) {
+    console.error('[handleRenameRequirement]', err.message || err);
+    showToast(arabicDbError(err), 'error');
+  }
+}
+
+async function handleDeleteRequirement(progId, requirementId) {
+  if (!can('deleteEvidenceRequirement')) {
+    showToast('فقط المدير يمكنه حذف أسماء الشواهد', 'error');
+    return;
+  }
+  try { assertYearWritable(); } catch { return; }
+  const req = evidenceRequirementsCache.find(r => String(r.id) === String(requirementId));
+  const label = req?.name || 'هذا الشاهد';
+  if (!confirm(`تأكيد حذف اسم الشاهد المطلوب؟\n\n«${label}»\n\nلن يُحذف الملف أو الرابط المرفق من التخزين، لكن سيُفك الربط مع هذا الاسم.`)) {
+    return;
+  }
+  try {
+    if (req && getRequirementStatus(req) === 'approved') {
+      showToast('ألغِ اعتماد الشاهد أولاً قبل الحذف', 'error');
+      return;
+    }
+    await sbDeleteEvidenceRequirement(requirementId);
+    await syncProgress(progId);
+    await refreshEvidenceViews(progId);
+    showToast('تم حذف اسم الشاهد', 'warning');
+  } catch (err) {
+    console.error('[handleDeleteRequirement]', err.message || err);
+    showToast(arabicDbError(err), 'error');
+  }
+}
+
+async function handleToggleRequirementApproval(progId, requirementId) {
+  if (!can('approveEvidence')) {
+    showToast('فقط المدير يمكنه اعتماد الشواهد', 'error');
+    return;
+  }
+  try { assertYearWritable(); } catch { return; }
+  const req = evidenceRequirementsCache.find(r => String(r.id) === String(requirementId));
+  if (!req) { showToast('لم يتم العثور على الشاهد المطلوب', 'error'); return; }
+  const currentlyApproved = getRequirementStatus(req) === 'approved';
+  if (!currentlyApproved) {
+    const ev = getEvidenceForRequirement(requirementId);
+    if (!evidenceHasAttachment(ev)) {
+      showToast('لا يمكن الاعتماد قبل إرفاق ملف أو رابط', 'error');
+      return;
+    }
+  }
+  try {
+    await sbSetRequirementApproval(requirementId, !currentlyApproved);
+    await syncProgress(progId);
+    await refreshEvidenceViews(progId);
+    showToast(currentlyApproved ? 'تم إلغاء الاعتماد — الشاهد قيد المراجعة' : 'تم اعتماد الشاهد ✓', 'success');
+  } catch (err) {
+    console.error('[handleToggleRequirementApproval]', err.message || err);
+    showToast(arabicDbError(err), 'error');
+  }
+}
+
+function buildRequirementRowHtml(req, progId, indId) {
+  const status = getRequirementStatus(req);
+  const meta = REQ_STATUS_META[status] || REQ_STATUS_META.missing;
+  const ev = getEvidenceForRequirement(req.id);
+  const attachmentLabel = ev
+    ? (ev.file_name || (evidenceDriveLink(ev) ? 'رابط مرفق' : '') || ev.title || 'مرفق')
+    : '—';
+  const viewBtn = ev && evidenceHasViewTarget(ev)
+    ? evidenceViewButtonHtml(ev)
+    : '';
+  const attachBtn = can('addEvidence') && !isYearReadOnlyMode() && status !== 'approved'
+    ? `<button type="button" class="btn-sm btn-evidence" onclick="openEvidenceModalForRequirement('${esc(progId)}','${esc(indId)}','${esc(req.id)}')">📎 إرفاق</button>`
+    : (status === 'approved'
+      ? `<span class="req-attach-locked" title="ألغِ الاعتماد قبل استبدال المرفق">مرفق معتمد</span>`
+      : '');
+  const approveBtn = can('approveEvidence') && !isYearReadOnlyMode()
+    ? `<button type="button" class="btn-sm req-approve-btn ${status === 'approved' ? 'is-approved' : ''}"
+         onclick="handleToggleRequirementApproval('${esc(progId)}','${esc(req.id)}')"
+         title="${status === 'approved' ? 'إلغاء الاعتماد' : 'اعتماد الشاهد'}">${status === 'approved' ? '✓' : '✓'}</button>`
+    : '';
+  const renameBtn = can('manageEvidenceRequirements') && !isYearReadOnlyMode()
+    ? `<button type="button" class="btn-sm btn-edit" onclick="handleRenameRequirement('${esc(progId)}','${esc(req.id)}')">✏️</button>`
+    : '';
+  const delBtn = can('deleteEvidenceRequirement') && !isYearReadOnlyMode()
+    ? `<button type="button" class="btn-sm btn-delete" onclick="handleDeleteRequirement('${esc(progId)}','${esc(req.id)}')">🗑️</button>`
+    : '';
+
+  return `<div class="req-row ${meta.className}" data-req-id="${esc(req.id)}">
+    <div class="req-main">
+      <div class="req-name">${esc(req.name)}</div>
+      <div class="req-meta">
+        <span class="req-status-badge ${meta.className}">${esc(meta.label)}</span>
+        <span class="req-attachment">${esc(attachmentLabel)}</span>
+      </div>
+    </div>
+    <div class="req-actions">
+      ${viewBtn}${attachBtn}${approveBtn}${renameBtn}${delBtn}
+    </div>
+  </div>`;
+}
+
+function buildRequirementsSectionHtml(progId, indId) {
+  if (!evidenceRequirementsReady) {
+    return `<div class="requirements-block">
+      <div class="requirements-header"><h5>الشواهد المطلوبة</h5></div>
+      <div class="req-empty">يتطلب تفعيل الميزة تطبيق Migration الشواهد المطلوبة على قاعدة البيانات أولاً.</div>
+    </div>`;
+  }
+  const stats = getIndicatorRequirementStats(indId);
+  const reqs = getRequirementsForIndicator(indId);
+  const addBtn = can('manageEvidenceRequirements') && !isYearReadOnlyMode()
+    ? `<button type="button" class="btn-sm btn-evidence" onclick="handleAddRequirement('${esc(progId)}','${esc(indId)}')">＋ إضافة اسم شاهد</button>`
+    : '';
+  return `<div class="requirements-block">
+    <div class="requirements-header">
+      <h5>الشواهد المطلوبة</h5>
+      <div class="requirements-counter">الشواهد المعتمدة: ${stats.approved} من ${stats.total} — نسبة الإنجاز: ${stats.pct}٪</div>
+    </div>
+    <div class="requirements-list">
+      ${reqs.length
+        ? reqs.map(r => buildRequirementRowHtml(r, progId, indId)).join('')
+        : '<div class="req-empty">لا توجد أسماء شواهد مطلوبة لهذا المؤشر</div>'}
+    </div>
+    <div class="requirements-footer">${addBtn}</div>
+  </div>`;
+}
+
+window.handleAddRequirement = handleAddRequirement;
+window.handleRenameRequirement = handleRenameRequirement;
+window.handleDeleteRequirement = handleDeleteRequirement;
+window.handleToggleRequirementApproval = handleToggleRequirementApproval;
+
 window.sbToggleIndicator = sbToggleIndicator;
 
 /* ─────────────────────────────────────────────────────────────
@@ -2125,6 +2518,9 @@ function mapEvidenceRow(r) {
     ? r.indicator_id
     : (r.indicatorId != null && r.indicatorId !== '' ? r.indicatorId : null);
   const schoolYearId = r.school_year_id != null ? r.school_year_id : (r.schoolYearId != null ? r.schoolYearId : null);
+  const requirementId = r.requirement_id != null && r.requirement_id !== ''
+    ? r.requirement_id
+    : (r.requirementId != null && r.requirementId !== '' ? r.requirementId : null);
   const fileUrl = r.file_url != null && r.file_url !== ''
     ? r.file_url
     : (r.fileUrl != null && r.fileUrl !== '' ? r.fileUrl : null);
@@ -2140,6 +2536,7 @@ function mapEvidenceRow(r) {
     type: r.type || '',
     program_id: programId,
     indicator_id: indicatorId,
+    requirement_id: requirementId,
     initiative_label: r.initiative_label || '',
     person: r.person || '',
     date: uploadDate,
@@ -2229,6 +2626,7 @@ function syncEvidencesToPrograms() {
 }
 
 async function refreshEvidenceViews(preferredProgramId) {
+  await fetchEvidenceRequirements();
   await fetchEvidences();
   await fetchIndicators();
   syncEvidencesToPrograms();
@@ -2267,6 +2665,7 @@ async function sbInsertEvidence(ev) {
     upload_date: ev.date || new Date().toISOString().split('T')[0],
     created_by: currentUser?.id || null,
   };
+  if (ev.requirement_id) row.requirement_id = ev.requirement_id;
 
   const { data, error } = await sb.from('evidences').insert(row).select('*').single();
   if (error) throw error;
@@ -2554,28 +2953,22 @@ function buildProgramCard(p) {
                 '#C9D9EA';    // أزرق فاتح
 
   const total = inds.length;
-
-  const done = inds.filter(ind => {
-    const completed = ind.is_completed === true || ind.is_completed === 'true';
-    const hasEvidence = evidencesCache.some(ev =>
-      String(ev.program_id) === String(p.id) &&
-      String(ev.indicator_id) === String(ind.id)
-    );
-    return completed && hasEvidence;
-  }).length;
+  const approvedInds = inds.filter(ind => calcIndicatorProgress(ind.id) >= 100).length;
 
   const indsHtml = total
     ? inds.map(ind => {
-        const d = ind.is_completed === true || ind.is_completed === 'true';
+        const indPct = calcIndicatorProgress(ind.id);
+        const stats = getIndicatorRequirementStats(ind.id);
+        const d = indPct >= 100;
 
         return `
           <div class="indicator-row" id="irow-${ind.id}">
-            <button class="ind-toggle" ${can('toggleIndicator') && !isYearReadOnlyMode() ? `onclick="handleToggle('${p.id}','${ind.id}')"` : ''}
-              title="${d ? 'إلغاء الإنجاز' : 'وضع علامة مكتمل'}">${d ? '✅' : '⬜'}</button>
+            <span class="ind-pct-chip" title="نسبة إنجاز المؤشر حسب الشواهد المعتمدة">${indPct}%</span>
 
             <span class="ind-text" style="${d ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">
               ${esc(ind.indicator_text)}
             </span>
+            <span class="ind-req-mini">${stats.approved}/${stats.total}</span>
 
             ${can('deleteIndicator') && !isYearReadOnlyMode() ? `<button class="ind-delete" onclick="handleDelInd('${p.id}','${ind.id}')">×</button>` : ''}
           </div>
@@ -2618,7 +3011,7 @@ function buildProgramCard(p) {
 
       <div class="program-progress-section">
         <div class="program-progress-label">
-          <span id="plbl-${p.id}">نسبة الإنجاز${total ? ` (${done}/${total} مؤشر)` : ''}</span>
+          <span id="plbl-${p.id}">نسبة الإنجاز${total ? ` (متوسط ${approvedInds}/${total} مؤشر مكتمل بالشواهد)` : ''}</span>
           <span id="ppct-${p.id}" style="font-weight:800;color:${clr}">${pct}%</span>
         </div>
         <div class="progress-bar" style="height:10px">
@@ -2785,23 +3178,27 @@ function viewProgramDetail(id) {
 
   const indicatorsBlock = inds.length
     ? inds.map(ind => {
-        const linked = evs.filter(ev =>
+        const linkedOrphans = evs.filter(ev =>
           ev.indicator_id != null &&
           ev.indicator_id !== '' &&
-          String(ev.indicator_id) === String(ind.id)
+          String(ev.indicator_id) === String(ind.id) &&
+          (ev.requirement_id == null || ev.requirement_id === '')
         );
+        const stats = getIndicatorRequirementStats(ind.id);
         return `
       <div class="indicator-detail-box">
         <div style="font-weight:700;margin-bottom:8px">
           ${esc(ind.indicator_text || ind.text || ind.name || ind.id)}
-          ${ind.is_completed === true || ind.is_completed === 'true' ? ' ✅' : ' ◻️'}
+          <span class="ind-detail-pct">${stats.pct}٪</span>
         </div>
-        <div class="evidence-list-detail" style="display:flex;flex-direction:column;gap:8px">
-          ${linked.length
-            ? linked.map(ev => buildEvidenceItemHtml(ev, { showDelete: true, programId: p.id })).join('')
-            : `<div style="color:#888;font-size:13px">لا توجد شواهد مرتبطة بهذا المؤشر</div>`
-          }
-        </div>
+        ${buildRequirementsSectionHtml(p.id, ind.id)}
+        ${linkedOrphans.length ? `
+        <div class="orphan-evidences" style="margin-top:10px">
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">شواهد أخرى مرتبطة بالمؤشر (بدون اسم مطلوب)</div>
+          <div class="evidence-list-detail" style="display:flex;flex-direction:column;gap:8px">
+            ${linkedOrphans.map(ev => buildEvidenceItemHtml(ev, { showDelete: true, programId: p.id })).join('')}
+          </div>
+        </div>` : ''}
       </div>`;
       }).join('')
     : '<p style="color:var(--text-muted);font-size:13px;padding:8px 0">لا توجد مؤشرات</p>';
@@ -2851,7 +3248,7 @@ function viewProgramDetail(id) {
       ${p.desc ? `<div style="margin-top:12px;padding:12px 14px;background:var(--bg);border-radius:8px;font-size:13px;line-height:1.7">${esc(p.desc)}</div>` : ''}
     </div>
     <div class="detail-section">
-      <h4>📌 المؤشرات مع الشواهد المرتبطة</h4>
+      <h4>📌 المؤشرات والشواهد المطلوبة</h4>
       ${indicatorsBlock}
     </div>
     ${generalBlock}
@@ -2929,8 +3326,10 @@ async function handleToggle(progId, indId) {
 function repaintCard(progId) {
   const p = programsCache.find(x => x.id === progId); if (!p) return;
   const inds = indicatorsCache[progId]||[]; p.indicators = inds;
-  const pct  = parseInt(p.progress)||0;
-  const total = inds.length, done = inds.filter(i=>i.is_completed).length;
+  const pct  = calcProgramProgress(progId);
+  p.progress = pct;
+  const total = inds.length;
+  const done = inds.filter(i => calcIndicatorProgress(i.id) >= 100).length;
   const clr  = pct>=90?'#27ae60':pct>=60?'#2e86c1':pct>=30?'#f39c12':'#e74c3c';
   const pctEl  = document.getElementById('ppct-'+progId);
   const barEl  = document.getElementById('pbar-'+progId);
@@ -2942,7 +3341,7 @@ if (barEl) {
 }
  if (lblEl) {
   lblEl.textContent = total
-    ? 'نسبة الإنجاز (' + done + '/' + total + ' مؤشر)'
+    ? 'نسبة الإنجاز (متوسط ' + done + '/' + total + ' مؤشر مكتمل بالشواهد)'
     : 'نسبة الإنجاز';
 }
   const card = document.getElementById('pcard-'+progId);
@@ -2953,11 +3352,20 @@ if (barEl) {
   }
   const listEl = document.getElementById('ilist-'+progId); if (!listEl) return;
   if (!inds.length) { listEl.innerHTML='<div style="font-size:12px;color:var(--text-muted);padding:4px 0">لا توجد مؤشرات بعد</div>'; return; }
- listEl.innerHTML = inds.map(ind =>
-  '<div class="indicator-row">' +
-  '<span>' + esc(ind.indicator_text || ind.text || '') + '</span>' +
-  '</div>'
-).join('');
+  listEl.innerHTML = inds.map(ind => {
+    const indPct = calcIndicatorProgress(ind.id);
+    const stats = getIndicatorRequirementStats(ind.id);
+    const d = indPct >= 100;
+    return `
+      <div class="indicator-row" id="irow-${ind.id}">
+        <span class="ind-pct-chip" title="نسبة إنجاز المؤشر حسب الشواهد المعتمدة">${indPct}%</span>
+        <span class="ind-text" style="${d ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">
+          ${esc(ind.indicator_text || ind.text || '')}
+        </span>
+        <span class="ind-req-mini">${stats.approved}/${stats.total}</span>
+        ${can('deleteIndicator') && !isYearReadOnlyMode() ? `<button class="ind-delete" onclick="handleDelInd('${p.id}','${ind.id}')">×</button>` : ''}
+      </div>`;
+  }).join('');
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -3223,6 +3631,9 @@ function openEvidenceModal(progId, evId) {
   const evEdit = document.getElementById('ev-edit-id');
   if (evEdit) evEdit.value = evId || '';
 
+  const evReq = document.getElementById('ev-requirement-id');
+  if (evReq) evReq.value = '';
+
   const ps = document.getElementById('ev-program-select');
   if (ps) {
     ps.innerHTML = '<option value="">اختر البرنامج</option>';
@@ -3230,6 +3641,7 @@ function openEvidenceModal(progId, evId) {
       ps.innerHTML += `<option value="${esc(p.id)}">${esc(p.name)}</option>`;
     });
     ps.value = progId || '';
+    ps.disabled = false;
     ps.onchange = function () {
       const evProg2 = document.getElementById('ev-program-id');
       if (evProg2) evProg2.value = this.value;
@@ -3238,6 +3650,8 @@ function openEvidenceModal(progId, evId) {
   }
 
   fillEvidenceIndicators(progId);
+  const indSel = document.getElementById('ev-indicator-id');
+  if (indSel) indSel.disabled = false;
 
   const ti = document.getElementById('evidence-modal-title');
   if (ti) ti.textContent = evId ? 'تعديل شاهد' : 'إضافة شاهد';
@@ -3254,6 +3668,55 @@ function openEvidenceModal(progId, evId) {
   openModal('evidence-modal');
 }
 
+function openEvidenceModalForRequirement(progId, indicatorId, requirementId) {
+  if (!can('addEvidence')) {
+    showToast('ليس لديك صلاحية رفع الشواهد', 'error');
+    return;
+  }
+  try { assertYearWritable(); } catch { return; }
+
+  const req = evidenceRequirementsCache.find(r => String(r.id) === String(requirementId));
+  if (!req) {
+    showToast('لم يتم العثور على اسم الشاهد المطلوب', 'error');
+    return;
+  }
+  if (getRequirementStatus(req) === 'approved') {
+    showToast('الشاهد معتمد — ألغِ الاعتماد قبل استبدال المرفق', 'error');
+    return;
+  }
+
+  openEvidenceModal(progId, null);
+
+  const evReq = document.getElementById('ev-requirement-id');
+  if (evReq) evReq.value = requirementId || '';
+
+  const ps = document.getElementById('ev-program-select');
+  if (ps) {
+    ps.value = progId || '';
+    ps.disabled = true;
+  }
+  const evProg = document.getElementById('ev-program-id');
+  if (evProg) evProg.value = progId || '';
+
+  fillEvidenceIndicators(progId);
+  const indSel = document.getElementById('ev-indicator-id');
+  if (indSel) {
+    indSel.value = indicatorId || '';
+    indSel.disabled = true;
+  }
+
+  const titleEl = document.getElementById('ev-title');
+  if (titleEl) titleEl.value = req.name || '';
+
+  const existing = getEvidenceForRequirement(requirementId);
+  const evEdit = document.getElementById('ev-edit-id');
+  if (evEdit) evEdit.value = (existing && can('editEvidence')) ? existing.id : '';
+
+  const ti = document.getElementById('evidence-modal-title');
+  if (ti) ti.textContent = 'إرفاق شاهد: ' + (req.name || '');
+}
+window.openEvidenceModalForRequirement = openEvidenceModalForRequirement;
+
 function getFileIcon(name) {
   const ext = name.split('.').pop().toLowerCase();
   return ext==='pdf'?'📄':ext==='doc'||ext==='docx'?'📝':ext==='xls'||ext==='xlsx'?'📊':['jpg','jpeg','png'].includes(ext)?'🖼️':'📎';
@@ -3265,12 +3728,22 @@ async function saveEvidence() {
   const g = id => (document.getElementById(id)?.value||'');
   const progId = g('ev-program-id') || g('ev-program-select');
   const indicatorId = g('ev-indicator-id');
+  const requirementId = g('ev-requirement-id') || null;
+  const editId = g('ev-edit-id') || null;
   if (!indicatorId) {
     showToast('يرجى اختيار المؤشر المرتبط بالشاهد','error');
     return;
   }
   const title = clampInput(g('ev-title'));
   if (!title) { showToast('يرجى إدخال عنوان الشاهد','error'); return; }
+
+  if (requirementId) {
+    const req = evidenceRequirementsCache.find(r => String(r.id) === String(requirementId));
+    if (req && getRequirementStatus(req) === 'approved') {
+      showToast('الشاهد معتمد — ألغِ الاعتماد قبل استبدال المرفق', 'error');
+      return;
+    }
+  }
 
   const source = getEvidenceSource('ev');
   let link = null;
@@ -3308,37 +3781,70 @@ async function saveEvidence() {
       });
     }
 
-    const ev = {
-      id: null,
+    const existingForReq = requirementId ? getEvidenceForRequirement(requirementId) : null;
+    const canReplace = !!(editId || (existingForReq && can('editEvidence')));
+
+    // المعلمة: إدراج مرفق جديد فقط؛ إن وُجد مرفق سابق لنفس الاسم المطلوب تطلب تعديلاً من الإدارة
+    if (requirementId && existingForReq && !canReplace && !editId) {
+      if (fileMeta?.path) await removeUploadedEvidenceObject(fileMeta.path);
+      showToast('يوجد مرفق لهذا الشاهد بالفعل. استبداله متاح للإدارة فقط.', 'error');
+      return;
+    }
+
+    const payload = {
       title,
       type,
       program_id: progId || null,
       indicator_id: indicatorId,
+      requirement_id: requirementId || null,
       person: clampInput(g('ev-person')),
       date: new Date().toISOString().split('T')[0],
-      link,
+      link: source === 'drive' ? link : null,
       notes: clampInput(g('ev-notes'), 1000),
       school_year_id: schoolYearId,
-      file_url: fileMeta?.file_url || null,
-      file_name: fileMeta?.file_name || null,
-      file_size: fileMeta?.file_size ?? null,
+      file_url: source === 'file' ? (fileMeta?.file_url || null) : null,
+      file_name: source === 'file' ? (fileMeta?.file_name || null) : null,
+      file_size: source === 'file' ? (fileMeta?.file_size ?? null) : null,
     };
 
-    const saved = await sbInsertEvidence(ev);
-    // لا تغيّر is_completed للمعلمة؛ فقط admin/vice عبر toggleIndicator
-    if (indicatorId && can('toggleIndicator')) {
-      const list = indicatorsCache[progId] || indicatorsCache[String(progId)] || [];
-      const ind = list.find(i => String(i.id) === String(indicatorId));
-      if (ind) ind.is_completed = true;
-      if (sb && ind) {
-        await sb.from('program_indicators').update({ is_completed: true }).eq('id', indicatorId);
-      }
+    let saved = null;
+    const targetId = editId || (canReplace && existingForReq ? existingForReq.id : null);
+    if (targetId && can('editEvidence')) {
+      requireSb();
+      const { data, error } = await sb.from('evidences')
+        .update({
+          title: payload.title,
+          type: payload.type,
+          link: payload.link,
+          notes: payload.notes,
+          person: payload.person,
+          file_url: payload.file_url,
+          file_name: payload.file_name,
+          file_size: payload.file_size,
+          requirement_id: payload.requirement_id,
+          indicator_id: payload.indicator_id,
+          program_id: payload.program_id,
+          upload_date: payload.date,
+        })
+        .eq('id', targetId)
+        .select('*')
+        .single();
+      if (error) throw error;
+      saved = mapEvidenceRow(data);
+    } else {
+      saved = await sbInsertEvidence(payload);
     }
+
+    // الإرفاق لا يعني الاعتماد ولا يغيّر نسبة الإنجاز عبر is_completed
     pendingEvidenceFile = null;
     closeModal('evidence-modal');
-    // المصدر الموثوق بعد الحفظ: إعادة الجلب ثم الرندر
-    await refreshEvidenceViews(saved.program_id || progId);
-    showToast('تم رفع الشاهد وحفظه بنجاح.','success');
+    const ps = document.getElementById('ev-program-select');
+    if (ps) ps.disabled = false;
+    const indSel = document.getElementById('ev-indicator-id');
+    if (indSel) indSel.disabled = false;
+    await refreshEvidenceViews(saved?.program_id || progId);
+    if (progId) await syncProgress(progId);
+    showToast('تم حفظ المرفق. الاعتماد يتم فقط بعلامة ✓ من المدير.', 'success');
   } catch (err) {
     if (fileMeta?.path) await removeUploadedEvidenceObject(fileMeta.path);
     console.error('[saveEvidence]');
@@ -3542,11 +4048,10 @@ function calcSchoolKPI() {
   const programs = yearScopedRows(programsCache || []);
   const yearProgramIds = new Set(programs.map(p => String(p.id)));
   const indicators = getAllIndicators().filter(i => i && yearProgramIds.has(String(i.program_id)));
-  const evidences = yearScopedRows(evidencesCache || []);
   const tasks = yearScopedRows(tasksCache || []);
   const initiatives = yearScopedRows(initiativesCache || []);
 
-  // أ) متوسط إنجاز البرامج — عبر calcProgramProgress (مكتمل + شاهد للمؤشر)
+  // أ) متوسط إنجاز البرامج — عبر calcProgramProgress (شواهد معتمدة)
   const progressValues = programs.map(p => calcProgramProgress(p.id));
   const avgProgress = programs.length
     ? Math.round(progressValues.reduce((s, v) => s + (Number(v) || 0), 0) / programs.length)
@@ -3556,25 +4061,26 @@ function calcSchoolKPI() {
   const completedPrograms = progressValues.filter(v => (Number(v) || 0) >= 100).length;
   const programsRate = safePct(completedPrograms, programs.length);
 
-  // ج) نسبة تحقق المؤشرات (is_completed)
-  const completedIndicators = indicators.filter(isIndicatorMarkedComplete).length;
+  // ج) نسبة تحقق المؤشرات = 100٪ شواهد معتمدة
+  const completedIndicators = indicators.filter(ind => calcIndicatorProgress(ind.id) >= 100).length;
   const indicatorsRate = safePct(completedIndicators, indicators.length);
 
-  // د) نسبة المؤشرات المدعومة بشواهد (indicator_id مطابق)
-  const indicatorsWithEvidence = indicators.filter(ind => indicatorHasLinkedEvidence(ind, evidences)).length;
+  // د) مؤشرات لديها شواهد مطلوبة مرفقة (قيد المراجعة أو معتمدة)
+  const indicatorsWithEvidence = indicators.filter(ind => {
+    const st = getIndicatorRequirementStats(ind.id);
+    return st.attached > 0;
+  }).length;
   const evidenceRate = safePct(indicatorsWithEvidence, indicators.length);
 
-  // هـ) مؤشرات مكتملة مع وجود شاهد (تحقق فعلي)
-  const verifiedIndicators = indicators.filter(ind =>
-    isIndicatorMarkedComplete(ind) && indicatorHasLinkedEvidence(ind, evidences)
-  ).length;
-  const verifiedRate = safePct(verifiedIndicators, indicators.length);
+  // هـ) مؤشرات محققة فعليًا = نسبة الإنجاز 100٪ بالشواهد المعتمدة
+  const verifiedIndicators = completedIndicators;
+  const verifiedRate = indicatorsRate;
 
-  // و) إنجاز المهام — status الفعلي في المشروع: pending | inprogress | done
+  // و) إنجاز المهام
   const doneTasks = tasks.filter(t => t.status === 'done').length;
   const tasksRate = safePct(doneTasks, tasks.length);
 
-  // ز) تنفيذ المبادرات — حالة الواجهة: منجزة | قيد التنفيذ | لم تبدأ | متأخرة
+  // ز) تنفيذ المبادرات
   const doneInitiatives = initiatives.filter(i => i.status === 'منجزة').length;
   const initiativesRate = safePct(doneInitiatives, initiatives.length);
 
@@ -3583,21 +4089,18 @@ function calcSchoolKPI() {
     { name: 'نسبة البرامج المكتملة', pct: programsRate, details: `${completedPrograms} من ${programs.length}` },
     { name: 'نسبة تحقق المؤشرات', pct: indicatorsRate, details: `${completedIndicators} من ${indicators.length}` },
     { name: 'نسبة المؤشرات المدعومة بشواهد', pct: evidenceRate, details: `${indicatorsWithEvidence} من ${indicators.length}` },
-    { name: 'المؤشرات المكتملة مع شاهد', pct: verifiedRate, details: `${verifiedIndicators} من ${indicators.length}` },
+    { name: 'المؤشرات المكتملة بالشواهد المعتمدة', pct: verifiedRate, details: `${verifiedIndicators} من ${indicators.length}` },
     { name: 'إنجاز المهام', pct: tasksRate, details: `${doneTasks} من ${tasks.length}` },
     { name: 'تنفيذ المبادرات', pct: initiativesRate, details: `${doneInitiatives} من ${initiatives.length}` },
   ];
 }
 
-/** عدد المؤشرات المحققة فعليًا (مكتملة + شاهد) للسنة المحددة — للإحصائيات */
+/** عدد المؤشرات المحققة فعليًا (100٪ شواهد معتمدة) للسنة المحددة */
 function countVerifiedIndicatorsForSelectedYear() {
   const programs = yearScopedRows(programsCache || []);
   const yearProgramIds = new Set(programs.map(p => String(p.id)));
   const indicators = getAllIndicators().filter(i => i && yearProgramIds.has(String(i.program_id)));
-  const evidences = yearScopedRows(evidencesCache || []);
-  return indicators.filter(ind =>
-    isIndicatorMarkedComplete(ind) && indicatorHasLinkedEvidence(ind, evidences)
-  ).length;
+  return indicators.filter(ind => calcIndicatorProgress(ind.id) >= 100).length;
 }
 
 function renderKPI() {
