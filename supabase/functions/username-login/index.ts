@@ -1,6 +1,6 @@
 // Supabase Edge Function: username-login
 // مراجعة — لا تُنشر تلقائياً
-// Secrets (أسماء فقط): SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, ALLOWED_ORIGINS
+// Secrets (أسماء فقط): SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, ALLOWED_ORIGINS (اختياري؛ يُدمَج مع الافتراضي)
 // ملاحظة نشر لاحقاً: شاشة الدخول بلا JWT → يلزم verify_jwt=false لهذه الدالة فقط (لا يُضبط في هذا الملف).
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
@@ -8,6 +8,17 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 const ALLOWED_METHODS = new Set(['POST', 'OPTIONS'])
 /** حد أقصى معقول لجسم طلب الدخول (بايت) */
 const MAX_BODY_BYTES = 4096
+
+/**
+ * Origins مسموحة دائمًا (إنتاج + تطوير محلي).
+ * تُدمَج مع ALLOWED_ORIGINS من Secrets إن وُجدت إضافات.
+ * لا يُستخدم *.
+ */
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://alalawirabab.github.io',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+] as const
 
 /** مطابق admin-users normalizeUsername */
 function normalizeUsername(raw: unknown): string | null {
@@ -24,9 +35,9 @@ function parseAllowedOriginsRaw(): string[] {
   return raw.split(',').map((s) => s.trim()).filter(Boolean)
 }
 
-/** CORS فقط: origins بلا مسارات (نفس سياسة admin-users). */
+/** CORS فقط: origins بلا مسارات — الافتراضي + Secrets. */
 function allowedOriginsList(): string[] {
-  const out: string[] = []
+  const out: string[] = [...DEFAULT_ALLOWED_ORIGINS]
   for (const entry of parseAllowedOriginsRaw()) {
     try {
       const u = new URL(entry)
@@ -55,15 +66,19 @@ function corsHeadersFor(req: Request): Record<string, string> {
 /**
  * لهذه الدالة العامة (verify_jwt=false): ارفض Origin غير المسموح أو الغائب
  * حتى لا تُسلَّم tokens لطلب من أصل غير مدرج (أو بدون Origin).
- * إن كانت ALLOWED_ORIGINS فارغة → fail closed.
  */
 function originAllowedOrReject(req: Request): Response | null {
   const allowed = allowedOriginsList()
   const origin = req.headers.get('Origin') || ''
-  if (!allowed.length || !origin || !allowed.includes(origin)) {
+  if (!origin || !allowed.includes(origin)) {
     return new Response(JSON.stringify({ error: 'forbidden' }), {
       status: 403,
-      headers: { ...corsHeadersFor(req), 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        Vary: 'Origin',
+      },
     })
   }
   return null
@@ -98,6 +113,26 @@ function isJsonContentType(req: Request): boolean {
 }
 
 Deno.serve(async (req) => {
+  // Preflight أولاً — بدون الدخول لمنطق المصادقة
+  if (req.method === 'OPTIONS') {
+    const origin = req.headers.get('Origin') || ''
+    const allowed = allowedOriginsList()
+    if (!origin || !allowed.includes(origin)) {
+      return new Response(null, {
+        status: 403,
+        headers: {
+          'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          Vary: 'Origin',
+        },
+      })
+    }
+    return new Response(null, {
+      status: 204,
+      headers: corsHeadersFor(req),
+    })
+  }
+
   const headers = corsHeadersFor(req)
 
   if (!ALLOWED_METHODS.has(req.method)) {
@@ -110,10 +145,6 @@ Deno.serve(async (req) => {
   // CORS / Origin gate قبل أي منطق حساس
   const originReject = originAllowedOrReject(req)
   if (originReject) return originReject
-
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { status: 200, headers: corsHeadersFor(req) })
-  }
 
   try {
     if (!isJsonContentType(req)) {

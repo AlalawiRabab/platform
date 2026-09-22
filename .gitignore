@@ -1,2 +1,5 @@
 # Supabase CLI local temp (no secrets in git)
 supabase/.temp/
+
+# Local DB dump attempts / manual backups (never commit)
+backups/

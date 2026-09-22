@@ -210,6 +210,41 @@ canvas{display:block;max-width:100%;padding:14px}
 .evidence-detail-item{display:flex;align-items:center;gap:10px;padding:10px 13px;background:var(--bg);border-radius:8px;border:1px solid var(--border-light)}
 .ev-det-icon{font-size:20px;flex-shrink:0}.ev-det-info{flex:1;overflow:hidden}.ev-det-title{font-size:13px;font-weight:700}.ev-det-meta{font-size:11.5px;color:var(--text-muted);margin-top:2px}.ev-det-actions{display:flex;gap:5px;flex-shrink:0}
 
+/* ── EVIDENCE REQUIREMENTS ── */
+.requirements-block{margin-top:10px;padding:12px;background:#f7f9fc;border:1px solid var(--border-light);border-radius:10px}
+.requirements-header{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}
+.requirements-header h5{margin:0;font-size:13px;font-weight:800;color:var(--primary-dark)}
+.requirements-counter{font-size:12px;font-weight:600;color:var(--text-muted)}
+.requirements-list{display:flex;flex-direction:column;gap:8px}
+.req-empty{font-size:12.5px;color:var(--text-muted);padding:6px 0}
+.req-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:8px;border:1px solid var(--border-light);background:#fff}
+.req-main{flex:1;min-width:160px}
+.req-name{font-size:13px;font-weight:700;color:var(--text-main);margin-bottom:4px}
+.req-meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px;color:var(--text-muted)}
+.req-status-badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700}
+.req-status-missing .req-status-badge,.req-status-badge.req-status-missing{background:#eef1f4;color:#5d6d7e}
+.req-status-pending .req-status-badge,.req-status-badge.req-status-pending{background:#fff4e5;color:#b9770e}
+.req-status-approved .req-status-badge,.req-status-badge.req-status-approved{background:#e8f8f0;color:#1e8449}
+.req-row.req-status-missing{border-color:#d5d8dc}
+.req-row.req-status-pending{border-color:#f5cba7}
+.req-row.req-status-approved{border-color:#a9dfbf}
+.req-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.req-approve-btn{min-width:34px;font-size:16px;font-weight:800;background:#eef1f4;color:#7f8c8d;border:1.5px solid #cfd4d9}
+.req-approve-btn.is-approved{background:#27ae60;color:#fff;border-color:#1e8449}
+.req-approve-btn:hover{filter:brightness(0.97)}
+.req-attach-locked{font-size:11px;color:#1e8449;font-weight:700}
+.requirements-footer{margin-top:10px}
+.ind-pct-chip{flex-shrink:0;min-width:40px;text-align:center;font-size:11px;font-weight:800;color:var(--primary-dark);background:#eaf2ff;border-radius:6px;padding:3px 6px}
+.ind-req-mini{flex-shrink:0;font-size:11px;color:var(--text-muted);font-weight:600}
+.ind-detail-pct{margin-inline-start:8px;font-size:12px;font-weight:700;color:var(--primary)}
+.indicator-detail-box{padding:12px;margin-bottom:12px;border:1px solid var(--border-light);border-radius:10px;background:#fff}
+
+@media (max-width: 768px) {
+  .req-row{flex-direction:column;align-items:stretch}
+  .req-actions{justify-content:flex-start}
+  .requirements-header{flex-direction:column;align-items:flex-start}
+}
+
 /* ── MODALS ── */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:999;padding:16px;backdrop-filter:blur(4px);overflow-y:auto}
 .modal{background:white;border-radius:16px;width:100%;max-width:560px;max-height:calc(100vh - 32px);overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3);animation:modalIn 0.2s ease;position:relative}

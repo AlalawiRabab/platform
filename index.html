@@ -438,7 +438,7 @@
       <button onclick="closeModal('evidence-modal')" class="modal-close">✕</button>
     </div>
     <div class="modal-body">
-      <input type="hidden" id="ev-program-id"/><input type="hidden" id="ev-edit-id"/>
+      <input type="hidden" id="ev-program-id"/><input type="hidden" id="ev-edit-id"/><input type="hidden" id="ev-requirement-id"/>
       <div class="form-group">
         <label>البرنامج المرتبط</label>
         <select id="ev-program-select" onchange="document.getElementById('ev-program-id').value=this.value; fillEvidenceIndicators(this.value)">
