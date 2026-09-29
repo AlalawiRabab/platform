@@ -61,11 +61,12 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated, service_
 CREATE TABLE public.tasks (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL, resp text,
   due_date date, priority text DEFAULT 'medium' CHECK (priority IN ('high','medium','low')),
   status text DEFAULT 'pending' CHECK (status IN ('pending','inprogress','done')), notes text,
-  created_at timestamptz DEFAULT now(), created_by uuid DEFAULT auth.uid(), school_year_id uuid REFERENCES public.school_years(id));
-INSERT INTO public.tasks (name, resp, due_date, notes, school_year_id, created_by) VALUES
-  ('مهمة قديمة 1','أ. سارة','2026-09-10','رابط قديم في الملاحظات https://example.com/a','${Y_ACTIVE}','${U.vice}'),
-  ('مهمة قديمة 2', NULL, NULL, NULL,'${Y_ACTIVE}', NULL),
-  ('مهمة سنة مؤرشفة','أ. هند','2025-05-01', NULL,'${Y_ARCH}','${U.admin}');
+  created_at timestamptz DEFAULT now(), school_year_id uuid REFERENCES public.school_years(id));
+-- production has no tasks.created_by (PRECHECK: tasks_has_created_by = false)
+INSERT INTO public.tasks (name, resp, due_date, notes, school_year_id) VALUES
+  ('مهمة قديمة 1','أ. سارة','2026-09-10','رابط قديم في الملاحظات https://example.com/a','${Y_ACTIVE}'),
+  ('مهمة قديمة 2', NULL, NULL, NULL,'${Y_ACTIVE}'),
+  ('مهمة سنة مؤرشفة','أ. هند','2025-05-01', NULL,'${Y_ARCH}');
 ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tasks_select ON public.tasks FOR SELECT TO authenticated
   USING (public.current_app_role() IN ('admin','vice') AND public.school_year_allows_read(school_year_id));
@@ -153,7 +154,7 @@ async function outOfScopeSnapshot(db) {
   };
 }
 
-const LEGACY_COLS = ['id','name','resp','due_date','priority','status','notes','created_at','created_by','school_year_id'];
+const LEGACY_COLS = ['id','name','resp','due_date','priority','status','notes','created_at','school_year_id'];
 const legacyTasks = async (db) => JSON.stringify((await db.query(
   `SELECT ${LEGACY_COLS.join(',')} FROM public.tasks WHERE name LIKE 'مهمة قديمة%' OR name='مهمة سنة مؤرشفة' ORDER BY name`)).rows);
 
@@ -174,6 +175,10 @@ console.log('\n== Read-only precheck ==');
   ok('precheck: new columns not present yet, helpers present', rep.new_columns_already_present.length === 0
     && rep.missing_helpers.length === 0, JSON.stringify(rep));
   ok('precheck output has no names/emails', !JSON.stringify(rep).includes('سارة') && !JSON.stringify(rep).includes('@x'));
+  ok('precheck: tasks_has_created_by = false (as in production)', rep.tasks_has_created_by === false);
+  ok('precheck: shows actual policy conditions and grants', rep.tasks_policies.length === 4
+    && rep.tasks_policies.every(p => 'using' in p && 'with_check' in p && p.permissive === 'PERMISSIVE')
+    && rep.tasks_table_grants.includes('authenticated:UPDATE'), JSON.stringify(rep.tasks_policies));
 }
 
 const before = await outOfScopeSnapshot(db);
@@ -193,8 +198,9 @@ console.log('\n== Scope: nothing outside tasks changed ==');
 {
   const after = await outOfScopeSnapshot(db);
   for (const k of Object.keys(before)) ok(`unchanged: ${k}`, before[k] === after[k], k);
-  ok('existing tasks rows unchanged (all original columns incl. resp, notes, created_by)', legacyBefore === await legacyTasks(db));
+  ok('existing tasks rows unchanged (all original columns incl. resp, notes)', legacyBefore === await legacyTasks(db));
   const cols = (await db.query(`SELECT column_name FROM information_schema.columns WHERE table_name='tasks' ORDER BY 1`)).rows.map(r => r.column_name);
+  ok('no created_by column added to tasks', !cols.includes('created_by'), JSON.stringify(cols));
   ok('single Drive link column, no evidence name / file / multi-link columns',
     cols.includes('evidence_drive_url') && !cols.some(c => /title|file|links|assignee/.test(c)), JSON.stringify(cols));
   const ty = (await db.query(`SELECT data_type FROM information_schema.columns WHERE table_name='tasks' AND column_name='evidence_drive_url'`)).rows[0];
@@ -206,7 +212,7 @@ const S = '2026-10-01T06:00:00Z', E = '2026-10-01T09:30:00Z';
 let taskId;
 await as('vice', async () => {
   let r = await tryQ(`INSERT INTO public.tasks (name, resp, school_year_id, start_at, end_at, due_date, evidence_drive_url)
-    VALUES ('مهمة جديدة','أ. نورة',$1,$2,$3,'2026-10-01','https://drive.google.com/file/d/abc/view') RETURNING id, evidence_added_by, evidence_approved, created_by`,
+    VALUES ('مهمة جديدة','أ. نورة',$1,$2,$3,'2026-10-01','https://drive.google.com/file/d/abc/view') RETURNING id, evidence_added_by, evidence_approved`,
     [Y_ACTIVE, S, E]);
   ok('vice adds task with start/end + Drive link', !r.error && r.rows[0].evidence_added_by === U.vice && r.rows[0].evidence_approved === false, JSON.stringify(r));
   taskId = r.rows?.[0]?.id;
@@ -263,7 +269,7 @@ await as('admin', async () => {
     for (const [col, val] of [['status', `'done'`], ['name', `'x'`], ['start_at', `start_at + interval '1 hour'`],
                               ['end_at', `end_at + interval '1 hour'`], ['resp', `'x'`], ['priority', `'low'`],
                               ['notes', `'x'`], ['due_date', `'2030-01-01'`], ['school_year_id', `'${Y_ARCH}'`],
-                              ['created_by', `'${U.teacher}'`],
+                              ['created_at', `now()`],
                               ['evidence_approved', 'true'], ['evidence_approved_by', `'${U.teacher}'`]]) {
       r = await tryQ(`UPDATE public.tasks SET ${col}=${val} WHERE id=$1`, [taskId]);
       ok(`shared account cannot change ${col}`, !!r.error, JSON.stringify(r));
@@ -347,6 +353,35 @@ const rollbackOf = (file) => {
   ok('after rollback: tasks policies exactly as before', pol === before.tasks_existing_policies, pol);
   const after = await outOfScopeSnapshot(db);
   ok('after rollback: nothing outside tasks changed', Object.keys(before).every(k => before[k] === after[k]));
+}
+
+console.log('\n== Step 1 gate: verifies actual tasks policy conditions (fresh DBs) ==');
+const gateCases = [
+  ['repo v2 tasks_select (role only, no year filter) → allowed', null,
+   `DROP POLICY tasks_select ON public.tasks; CREATE POLICY tasks_select ON public.tasks FOR SELECT TO authenticated
+    USING (public.current_app_role() IN ('admin','vice'));`],
+  ['tasks_select USING (true) → STOP', 'tasks_select',
+   `DROP POLICY tasks_select ON public.tasks; CREATE POLICY tasks_select ON public.tasks FOR SELECT TO authenticated USING (true);`],
+  ['tasks_update open to teacher → STOP', 'tasks_update',
+   `DROP POLICY tasks_update ON public.tasks; CREATE POLICY tasks_update ON public.tasks FOR UPDATE TO authenticated
+    USING (public.current_app_role() IN ('admin','vice','teacher')) WITH CHECK (public.current_app_role() IN ('admin','vice','teacher'));`],
+  ['extra unknown policy → STOP', 'سياسة غير متوقعة',
+   `CREATE POLICY app_read ON public.tasks FOR SELECT TO authenticated USING (true);`],
+  ['policy granted to public role → STOP', 'tasks_delete',
+   `DROP POLICY tasks_delete ON public.tasks; CREATE POLICY tasks_delete ON public.tasks FOR DELETE
+    USING (public.is_admin() AND public.school_year_allows_write(school_year_id));`],
+  ['RLS disabled → STOP', 'RLS', `ALTER TABLE public.tasks DISABLE ROW LEVEL SECURITY;`],
+];
+for (const [name, expectErr, setup] of gateCases) {
+  const g = new PGlite();
+  await buildBaseline(g);
+  await g.exec(setup);
+  const h = makeHelpers(g);
+  let err = null;
+  try { await h.runMigration('phase_task_schedule_evidence_review.sql'); } catch (e) { err = e.message; await g.exec('ROLLBACK'); }
+  const cols = (await g.query(`SELECT count(*)::int c FROM information_schema.columns WHERE table_name='tasks' AND column_name='start_at'`)).rows[0].c;
+  if (expectErr === null) ok(`gate: ${name}`, !err && cols === 1, err);
+  else ok(`gate: ${name} (nothing changed)`, !!err && err.includes('STOP') && err.includes(expectErr) && cols === 0, err);
 }
 
 console.log(`\nRESULT: ${pass} passed, ${fail} failed`);

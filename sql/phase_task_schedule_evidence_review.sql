@@ -28,6 +28,75 @@
 BEGIN;
 
 -- ------------------------------------------------------------
+-- 0) بوابة: تحقق من الشروط الفعلية لسياسات tasks الحالية قبل أي تعديل.
+--    المتوقع (sql/academic_year_archive_foundation_v2_review.sql + phase_year_read_isolation_review.sql):
+--    tasks_select / tasks_insert / tasks_update / tasks_delete فقط، كلها PERMISSIVE لـ authenticated،
+--    ومقصورة على admin/vice (current_app_role() IN ('admin','vice') أو is_admin()) بلا أي ذكر لـ teacher.
+--    أي اختلاف ← إجهاض المعاملة كاملة دون تغيير شيء، لمراجعة السياسات أولًا.
+--    لا تعتمد على وجود عمود created_by في tasks.
+-- ------------------------------------------------------------
+DO $gate$
+DECLARE
+  r record;
+  v_problems text[] := ARRAY[]::text[];
+  v_role_only text := '^\(?(public\.)?current_app_role\(\) = ANY \(ARRAY\[''admin''::text, ''vice''::text\]\)\)?$';
+  v_role_and  text := '^\(\(?(public\.)?current_app_role\(\) = ANY \(ARRAY\[''admin''::text, ''vice''::text\]\)\)? AND (public\.)?school_year_allows_(read|write)\(school_year_id\)\)$';
+  v_admin_and text := '^\((public\.)?is_admin\(\) AND (public\.)?school_year_allows_write\(school_year_id\)\)$';
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.tasks'::regclass) THEN
+    v_problems := array_append(v_problems, 'RLS غير مفعّل على tasks');
+  END IF;
+
+  FOR r IN
+    SELECT policyname, permissive, roles, cmd,
+           regexp_replace(COALESCE(qual, ''), '\s+', ' ', 'g')       AS q,
+           regexp_replace(COALESCE(with_check, ''), '\s+', ' ', 'g') AS c
+    FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'tasks'
+      AND policyname NOT IN ('tasks_select_teacher', 'tasks_update_teacher_evidence')
+  LOOP
+    IF r.policyname NOT IN ('tasks_select', 'tasks_insert', 'tasks_update', 'tasks_delete') THEN
+      v_problems := array_append(v_problems, format('سياسة غير متوقعة: %s', r.policyname));
+      CONTINUE;
+    END IF;
+    IF r.permissive <> 'PERMISSIVE' OR r.roles <> ARRAY['authenticated']::name[] THEN
+      v_problems := array_append(v_problems, format('%s: permissive=%s roles=%s', r.policyname, r.permissive, r.roles));
+    END IF;
+    IF r.q ILIKE '%teacher%' OR r.c ILIKE '%teacher%' THEN
+      v_problems := array_append(v_problems, format('%s يذكر teacher', r.policyname));
+    END IF;
+
+    IF r.policyname = 'tasks_select' THEN
+      IF r.cmd <> 'SELECT' OR r.c <> '' OR NOT (r.q ~ v_role_only OR r.q ~ v_role_and) THEN
+        v_problems := array_append(v_problems, format('tasks_select: cmd=%s USING=%s', r.cmd, r.q));
+      END IF;
+    ELSIF r.policyname = 'tasks_insert' THEN
+      IF r.cmd <> 'INSERT' OR r.q <> '' OR r.c !~ v_role_and THEN
+        v_problems := array_append(v_problems, format('tasks_insert: cmd=%s CHECK=%s', r.cmd, r.c));
+      END IF;
+    ELSIF r.policyname = 'tasks_update' THEN
+      IF r.cmd <> 'UPDATE' OR r.q !~ v_role_and OR r.c !~ v_role_and THEN
+        v_problems := array_append(v_problems, format('tasks_update: cmd=%s USING=%s CHECK=%s', r.cmd, r.q, r.c));
+      END IF;
+    ELSIF r.policyname = 'tasks_delete' THEN
+      IF r.cmd <> 'DELETE' OR r.c <> '' OR r.q !~ v_admin_and THEN
+        v_problems := array_append(v_problems, format('tasks_delete: cmd=%s USING=%s', r.cmd, r.q));
+      END IF;
+    END IF;
+  END LOOP;
+
+  IF NOT has_table_privilege('authenticated', 'public.tasks', 'SELECT')
+     OR NOT has_table_privilege('authenticated', 'public.tasks', 'UPDATE') THEN
+    v_problems := array_append(v_problems, 'authenticated لا يملك SELECT/UPDATE على tasks');
+  END IF;
+
+  IF array_length(v_problems, 1) > 0 THEN
+    RAISE EXCEPTION 'STOP: سياسات tasks لا تطابق المتوقع — لم يُغيَّر شيء: %', array_to_string(v_problems, ' | ');
+  END IF;
+END
+$gate$;
+
+-- ------------------------------------------------------------
 -- 1) أعمدة جديدة (nullable أو بقيمة افتراضية آمنة)
 -- ------------------------------------------------------------
 ALTER TABLE public.tasks

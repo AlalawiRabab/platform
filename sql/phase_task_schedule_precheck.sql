@@ -23,9 +23,16 @@ SELECT jsonb_pretty(jsonb_build_object(
                                   WHERE NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
                                     WHERE n.nspname='public' AND p.proname=h)), '[]'::jsonb),
   'tasks_rls_enabled',         (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.tasks'::regclass),
-  'tasks_policies',            COALESCE((SELECT jsonb_agg(jsonb_build_object('name', policyname, 'cmd', cmd, 'roles', roles)
+  'tasks_policies',            COALESCE((SELECT jsonb_agg(jsonb_build_object('name', policyname, 'cmd', cmd, 'roles', roles,
+                                  'permissive', permissive, 'using', qual, 'with_check', with_check)
                                   ORDER BY policyname) FROM pg_policies WHERE schemaname='public' AND tablename='tasks'), '[]'::jsonb),
+  'tasks_table_grants',        COALESCE((SELECT jsonb_agg(grantee || ':' || privilege_type ORDER BY grantee, privilege_type)
+                                  FROM information_schema.role_table_grants
+                                  WHERE table_schema='public' AND table_name='tasks'
+                                    AND grantee IN ('anon','authenticated')), '[]'::jsonb),
   'tasks_triggers',            COALESCE((SELECT jsonb_agg(tgname ORDER BY tgname) FROM pg_trigger
                                   WHERE tgrelid = 'public.tasks'::regclass AND NOT tgisinternal), '[]'::jsonb)
 )) AS report;
--- توقّف إن كان: missing_helpers غير فارغ، أو new_columns_already_present غير فارغ (راجعه أولًا).
+-- توقّف إن كان: missing_helpers غير فارغ، أو new_columns_already_present غير فارغ (راجعه أولًا)،
+-- أو كانت شروط tasks_policies غير مقصورة على admin/vice. الخطوة 1 تتحقق من ذلك أيضًا وتُجهض عند أي اختلاف.
+-- tasks_has_created_by = false مقبول: لا الترحيل ولا الواجهة يعتمدان على هذا العمود.
