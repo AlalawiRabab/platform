@@ -73,11 +73,11 @@
     </div>
     <div class="login-card">
       <h2 id="pr-title">تعيين كلمة مرور جديدة</h2>
-      <p class="pr-hint">أدخل كلمة المرور الجديدة ثم أكّدها. الحد الأدنى 6 أحرف.</p>
+      <p class="pr-hint">أدخل كلمة المرور الجديدة ثم أكّدها. الحد الأدنى 8 أحرف وتحتوي على حرف ورقم.</p>
       <div id="pr-msg" class="pr-msg hidden" role="alert"></div>
       <div class="login-field-group">
         <label for="pr-pass">كلمة المرور الجديدة</label>
-        <input type="password" id="pr-pass" placeholder="6 أحرف على الأقل" autocomplete="new-password" dir="ltr"/>
+        <input type="password" id="pr-pass" placeholder="8 أحرف على الأقل (حرف ورقم)" autocomplete="new-password" dir="ltr"/>
       </div>
       <div class="login-field-group">
         <label for="pr-pass2">تأكيد كلمة المرور</label>
@@ -555,7 +555,12 @@
         <div class="form-group"><label>المسؤولة</label><input type="text" id="task-resp" placeholder="اسم المسؤولة"/></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label>تاريخ الاستحقاق</label><input type="date" id="task-due"/><div class="hijri-preview" id="task-due-hijri"></div></div>
+        <div class="form-group"><label>بداية المهمة (تاريخ ووقت) <span class="req">*</span></label><input type="datetime-local" id="task-start"/><div class="hijri-preview" id="task-start-hijri"></div></div>
+        <div class="form-group"><label>نهاية المهمة (تاريخ ووقت) <span class="req">*</span></label><input type="datetime-local" id="task-end"/><div class="hijri-preview" id="task-end-hijri"></div></div>
+      </div>
+      <p class="field-hint" id="task-tz-hint"></p>
+      <p class="field-hint hidden" id="task-legacy-due-hint"></p>
+      <div class="form-row">
         <div class="form-group"><label>الأولوية</label>
           <select id="task-priority"><option value="high">عالية</option><option value="medium">متوسطة</option><option value="low">منخفضة</option></select>
         </div>
@@ -564,6 +569,14 @@
         </div>
       </div>
       <div class="form-group"><label>ملاحظات</label><textarea id="task-notes" placeholder="ملاحظات إضافية..."></textarea></div>
+      <div class="form-row">
+        <div class="form-group"><label>رابط Google Drive (شاهد المهمة)</label><input type="url" id="task-evidence-url" dir="ltr" maxlength="2048" placeholder="https://drive.google.com/..."/></div>
+        <div class="form-group"><label>اسم الشاهد (اختياري)</label><input type="text" id="task-evidence-title" maxlength="200" placeholder="مثال: محضر الاجتماع"/></div>
+      </div>
+      <div class="form-group hidden" id="task-evidence-approve-group">
+        <label><input type="checkbox" id="task-evidence-approved"/> اعتماد شاهد المهمة</label>
+      </div>
+      <p class="field-hint hidden" id="task-evidence-lock-hint">الشاهد معتمد — لا يمكن تعديله إلا بعد إلغاء الاعتماد من المدير.</p>
     </div>
     <div class="modal-footer">
       <button class="btn-primary" id="task-save-btn" onclick="saveTask()">💾 حفظ المهمة</button>
