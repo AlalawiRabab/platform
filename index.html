@@ -73,11 +73,11 @@
     </div>
     <div class="login-card">
       <h2 id="pr-title">تعيين كلمة مرور جديدة</h2>
-      <p class="pr-hint">أدخل كلمة المرور الجديدة ثم أكّدها. الحد الأدنى 8 أحرف وتحتوي على حرف ورقم.</p>
+      <p class="pr-hint">أدخل كلمة المرور الجديدة ثم أكّدها. الحد الأدنى 6 أحرف.</p>
       <div id="pr-msg" class="pr-msg hidden" role="alert"></div>
       <div class="login-field-group">
         <label for="pr-pass">كلمة المرور الجديدة</label>
-        <input type="password" id="pr-pass" placeholder="8 أحرف على الأقل (حرف ورقم)" autocomplete="new-password" dir="ltr"/>
+        <input type="password" id="pr-pass" placeholder="6 أحرف على الأقل" autocomplete="new-password" dir="ltr"/>
       </div>
       <div class="login-field-group">
         <label for="pr-pass2">تأكيد كلمة المرور</label>
@@ -569,10 +569,7 @@
         </div>
       </div>
       <div class="form-group"><label>ملاحظات</label><textarea id="task-notes" placeholder="ملاحظات إضافية..."></textarea></div>
-      <div class="form-row">
-        <div class="form-group"><label>رابط Google Drive (شاهد المهمة)</label><input type="url" id="task-evidence-url" dir="ltr" maxlength="2048" placeholder="https://drive.google.com/..."/></div>
-        <div class="form-group"><label>اسم الشاهد (اختياري)</label><input type="text" id="task-evidence-title" maxlength="200" placeholder="مثال: محضر الاجتماع"/></div>
-      </div>
+      <div class="form-group"><label>رابط Google Drive (شاهد المهمة)</label><input type="url" id="task-evidence-url" dir="ltr" maxlength="2048" placeholder="https://drive.google.com/..."/></div>
       <div class="form-group hidden" id="task-evidence-approve-group">
         <label><input type="checkbox" id="task-evidence-approved"/> اعتماد شاهد المهمة</label>
       </div>
@@ -585,7 +582,7 @@
   </div>
 </div>
 
-<!-- Task Evidence Modal (حساب المعلمات المشترك: رابط الشاهد واسمه فقط) -->
+<!-- Task Evidence Modal (حساب المعلمات المشترك: رابط Drive واحد فقط) -->
 <div id="task-evidence-modal" class="modal-overlay hidden">
   <div class="modal">
     <div class="modal-header">
@@ -596,8 +593,7 @@
       <input type="hidden" id="task-ev-task-id"/>
       <p class="field-hint" id="task-ev-task-name"></p>
       <div class="form-group"><label>رابط Google Drive <span class="req">*</span></label><input type="url" id="task-ev-url" dir="ltr" maxlength="2048" placeholder="https://drive.google.com/..."/></div>
-      <div class="form-group"><label>اسم الشاهد (اختياري)</label><input type="text" id="task-ev-title" maxlength="200" placeholder="مثال: محضر الاجتماع"/></div>
-      <p class="field-hint">تأكدي أن مشاركة الملف في Drive تسمح لإدارة المدرسة بفتحه. يمكن استبدال الرابط قبل اعتماده، ويُعتمد الشاهد من القائدة.</p>
+      <p class="field-hint">لكل مهمة رابط Drive واحد (ملف أو مجلد). تأكدي أن مشاركته تسمح لإدارة المدرسة بفتحه. يمكن استبدال الرابط قبل اعتماده، ويُعتمد الشاهد من القائدة.</p>
     </div>
     <div class="modal-footer">
       <button class="btn-primary" id="task-ev-save-btn" onclick="saveTaskEvidence()">💾 حفظ الشاهد</button>
@@ -705,7 +701,7 @@
 <div id="toast" class="toast hidden"></div>
   
  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1"></script>
-<script src="config.js?v=20260929-tasks"></script>
+<script src="config.js?v=20260814-recovery"></script>
 <script src="./script.js?v=20260929-tasks"></script>
   
 </body>

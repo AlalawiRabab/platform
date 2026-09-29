@@ -1,0 +1,354 @@
+import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'node:fs';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+
+export const REPO = fileURLToPath(new URL('../../', import.meta.url)).replace(/[\\/]$/, '');
+const isMain = import.meta.url === pathToFileURL(process.argv[1]).href;
+let pass = 0, fail = 0;
+const ok = (name, cond, extra = '') => {
+  if (cond) { pass++; console.log('  PASS', name); }
+  else { fail++; console.log('  FAIL', name, extra); }
+};
+
+export const U = {
+  admin:    '00000000-0000-0000-0000-00000000000a',
+  vice:     '00000000-0000-0000-0000-00000000000b',
+  teacher:  '00000000-0000-0000-0000-00000000000c',
+};
+export const Y_ACTIVE = '10000000-0000-0000-0000-000000000001';
+export const Y_ARCH   = '10000000-0000-0000-0000-000000000002';
+
+// ---------- baseline mirroring the live project (helpers from applied repo SQL on main) ----------
+export async function buildBaseline(db) {
+await db.exec(`
+CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN BYPASSRLS;
+CREATE SCHEMA auth; CREATE SCHEMA storage;
+GRANT USAGE ON SCHEMA public, auth, storage TO anon, authenticated, service_role;
+CREATE TABLE auth.users (id uuid PRIMARY KEY, email text);
+CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS
+  $$ SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO anon, authenticated, service_role;
+INSERT INTO auth.users VALUES ('${U.admin}','a@x'),('${U.vice}','v@x'),('${U.teacher}','t@x');
+
+CREATE TABLE public.profiles (id uuid PRIMARY KEY REFERENCES auth.users(id), name text NOT NULL,
+  username text UNIQUE, role text NOT NULL CHECK (role IN ('admin','vice','teacher')));
+INSERT INTO public.profiles VALUES ('${U.admin}','القائدة','admin1','admin'),
+  ('${U.vice}','الوكيلة','vice1','vice'),('${U.teacher}','حساب المعلمات','teachers','teacher');
+
+CREATE FUNCTION public.current_app_role() RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS
+  $$ SELECT p.role FROM public.profiles p WHERE p.id = auth.uid() $$;
+CREATE FUNCTION public.is_admin() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS
+  $$ SELECT EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role='admin') $$;
+CREATE FUNCTION public.is_staff() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS
+  $$ SELECT EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role IN ('admin','vice')) $$;
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+CREATE POLICY profiles_select ON public.profiles FOR SELECT TO authenticated USING (id = auth.uid() OR public.is_admin());
+GRANT SELECT ON public.profiles TO authenticated;
+
+CREATE TABLE public.school_years (id uuid PRIMARY KEY, name text, status text, is_active boolean, is_archived boolean);
+INSERT INTO public.school_years VALUES ('${Y_ACTIVE}','1447','active',true,false),('${Y_ARCH}','1446','archived',false,true);
+CREATE FUNCTION public.school_year_allows_write(p uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS
+  $$ SELECT EXISTS (SELECT 1 FROM public.school_years sy WHERE sy.id=p AND sy.is_active AND NOT sy.is_archived AND sy.status='active') $$;
+CREATE FUNCTION public.school_year_is_active(p uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS
+  $$ SELECT public.school_year_allows_write(p) $$;
+CREATE FUNCTION public.school_year_allows_read(p uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS
+  $$ SELECT CASE WHEN p IS NULL THEN false
+     WHEN public.is_staff() THEN EXISTS (SELECT 1 FROM public.school_years sy WHERE sy.id=p)
+     WHEN public.current_app_role()='teacher' THEN public.school_year_allows_write(p)
+     ELSE false END $$;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated, service_role;
+
+CREATE TABLE public.tasks (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL, resp text,
+  due_date date, priority text DEFAULT 'medium' CHECK (priority IN ('high','medium','low')),
+  status text DEFAULT 'pending' CHECK (status IN ('pending','inprogress','done')), notes text,
+  created_at timestamptz DEFAULT now(), created_by uuid DEFAULT auth.uid(), school_year_id uuid REFERENCES public.school_years(id));
+INSERT INTO public.tasks (name, resp, due_date, notes, school_year_id, created_by) VALUES
+  ('مهمة قديمة 1','أ. سارة','2026-09-10','رابط قديم في الملاحظات https://example.com/a','${Y_ACTIVE}','${U.vice}'),
+  ('مهمة قديمة 2', NULL, NULL, NULL,'${Y_ACTIVE}', NULL),
+  ('مهمة سنة مؤرشفة','أ. هند','2025-05-01', NULL,'${Y_ARCH}','${U.admin}');
+ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tasks_select ON public.tasks FOR SELECT TO authenticated
+  USING (public.current_app_role() IN ('admin','vice') AND public.school_year_allows_read(school_year_id));
+CREATE POLICY tasks_insert ON public.tasks FOR INSERT TO authenticated
+  WITH CHECK (public.current_app_role() IN ('admin','vice') AND public.school_year_allows_write(school_year_id));
+CREATE POLICY tasks_update ON public.tasks FOR UPDATE TO authenticated
+  USING (public.current_app_role() IN ('admin','vice') AND public.school_year_allows_write(school_year_id))
+  WITH CHECK (public.current_app_role() IN ('admin','vice') AND public.school_year_allows_write(school_year_id));
+CREATE POLICY tasks_delete ON public.tasks FOR DELETE TO authenticated
+  USING (public.is_admin() AND public.school_year_allows_write(school_year_id));
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.tasks TO authenticated;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+
+-- other sections (must stay byte-identical)
+CREATE TABLE public.programs (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, name text, school_year_id uuid);
+CREATE TABLE public.indicators (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, program_id bigint, name text);
+CREATE TABLE public.evidences (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, title text, file_url text,
+  link text, program_id bigint, indicator_id bigint, school_year_id uuid, created_by uuid);
+CREATE TABLE public.evidence_requirements (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), indicator_id bigint, name text);
+INSERT INTO public.programs (name, school_year_id) VALUES ('برنامج', '${Y_ACTIVE}');
+INSERT INTO public.indicators (program_id, name) VALUES (1, 'مؤشر');
+INSERT INTO public.evidences (title, file_url, link, program_id, indicator_id, school_year_id, created_by) VALUES
+  ('شاهد برنامج', '${U.vice}/a.pdf', NULL, 1, 1, '${Y_ACTIVE}', '${U.vice}'),
+  ('شاهد رابط', NULL, 'https://drive.google.com/file/d/prog/view', 1, 1, '${Y_ACTIVE}', '${U.teacher}');
+INSERT INTO public.evidence_requirements (indicator_id, name) VALUES (1, 'اسم شاهد');
+ALTER TABLE public.programs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.indicators ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.evidences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.evidence_requirements ENABLE ROW LEVEL SECURITY;
+CREATE POLICY programs_select ON public.programs FOR SELECT TO authenticated USING (public.school_year_allows_read(school_year_id));
+CREATE POLICY evidences_select ON public.evidences FOR SELECT TO authenticated USING (public.school_year_allows_read(school_year_id));
+CREATE POLICY evidences_insert ON public.evidences FOR INSERT TO authenticated WITH CHECK (public.school_year_allows_write(school_year_id));
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.programs, public.indicators, public.evidences TO authenticated;
+GRANT ALL ON public.evidence_requirements TO anon, authenticated;
+
+CREATE TABLE storage.objects (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), bucket_id text, name text);
+ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+CREATE POLICY evidences_auth_select ON storage.objects FOR SELECT TO authenticated
+  USING (bucket_id='evidences' AND public.current_app_role() IN ('admin','vice','teacher'));
+GRANT SELECT, INSERT ON storage.objects TO authenticated;
+INSERT INTO storage.objects (bucket_id, name) VALUES ('evidences','${U.vice}/a.pdf');
+`);
+}
+
+export function makeHelpers(db) {
+  async function as(role, fn) {
+    await db.exec(`RESET ROLE;`);
+    const pgRole = role === 'anon' ? 'anon' : 'authenticated';
+    const who = role === 'anon' ? '' : U[role];
+    await db.query(`SELECT set_config('request.jwt.claim.sub', $1, false)`, [who]);
+    await db.exec(`SET ROLE ${pgRole};`);
+    try { return await fn(); } finally { await db.exec(`RESET ROLE;`); }
+  }
+  async function tryQ(sql, params = []) {
+    try { const r = await db.query(sql, params); return { rows: r.rows, affected: r.affectedRows ?? 0 }; }
+    catch (e) { return { error: e.message }; }
+  }
+  const runMigration = (file) => db.exec(readFileSync(`${REPO}/sql/${file}`, 'utf8'));
+  return { as, tryQ, runMigration };
+}
+
+/** Everything outside the tasks feature: must be identical before/after the migrations. */
+async function outOfScopeSnapshot(db) {
+  const q = async (sql) => JSON.stringify((await db.query(sql)).rows);
+  return {
+    policies: await q(`SELECT schemaname, tablename, policyname, cmd, roles::text, qual, with_check FROM pg_policies
+      WHERE NOT (schemaname='public' AND tablename='tasks') ORDER BY 1,2,3`),
+    tasks_existing_policies: await q(`SELECT policyname, cmd, roles::text, qual, with_check FROM pg_policies
+      WHERE schemaname='public' AND tablename='tasks' AND policyname IN ('tasks_select','tasks_insert','tasks_update','tasks_delete') ORDER BY 1`),
+    table_grants: await q(`SELECT table_schema, table_name, grantee, privilege_type FROM information_schema.role_table_grants
+      WHERE grantee IN ('anon','authenticated','service_role') ORDER BY 1,2,3,4`),
+    functions: await q(`SELECT p.proname, pg_get_functiondef(p.oid), p.proacl::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+      WHERE n.nspname IN ('public','auth','storage') AND p.proname <> 'tasks_enforce_schedule_and_evidence'
+        AND p.proname <> 'tasks_require_schedule_on_insert' ORDER BY 1`),
+    columns: await q(`SELECT table_schema, table_name, column_name, data_type FROM information_schema.columns
+      WHERE table_schema IN ('public','storage','auth') AND table_name <> 'tasks' ORDER BY 1,2,3`),
+    rls: await q(`SELECT relname, relrowsecurity FROM pg_class WHERE relkind='r' AND relnamespace IN
+      (SELECT oid FROM pg_namespace WHERE nspname IN ('public','storage')) ORDER BY 1`),
+    rows: await q(`SELECT (SELECT jsonb_agg(to_jsonb(e) ORDER BY id) FROM public.evidences e) ev,
+      (SELECT jsonb_agg(to_jsonb(r) ORDER BY name) FROM public.evidence_requirements r) er,
+      (SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM public.programs p) pr,
+      (SELECT jsonb_agg(to_jsonb(i) ORDER BY id) FROM public.indicators i) ind,
+      (SELECT jsonb_agg(to_jsonb(pf) ORDER BY id) FROM public.profiles pf) pf,
+      (SELECT jsonb_agg(to_jsonb(o) ORDER BY name) FROM storage.objects o) obj`),
+  };
+}
+
+const LEGACY_COLS = ['id','name','resp','due_date','priority','status','notes','created_at','created_by','school_year_id'];
+const legacyTasks = async (db) => JSON.stringify((await db.query(
+  `SELECT ${LEGACY_COLS.join(',')} FROM public.tasks WHERE name LIKE 'مهمة قديمة%' OR name='مهمة سنة مؤرشفة' ORDER BY name`)).rows);
+
+if (isMain) {
+const db = new PGlite();
+await buildBaseline(db);
+const { as, tryQ, runMigration } = makeHelpers(db);
+const apply = async (file) => {
+  try { await runMigration(file); ok(`applied ${file}`, true); }
+  catch (e) { ok(`applied ${file}`, false, e.message); }
+};
+
+console.log('\n== Read-only precheck ==');
+{
+  const r = await db.exec(readFileSync(`${REPO}/sql/phase_task_schedule_precheck.sql`, 'utf8'));
+  const rep = JSON.parse(r[r.length - 1].rows[0].report);
+  ok('precheck: task counts', rep.tasks_total === 3 && rep.tasks_active_year === 2 && rep.tasks_with_resp === 2, JSON.stringify(rep));
+  ok('precheck: new columns not present yet, helpers present', rep.new_columns_already_present.length === 0
+    && rep.missing_helpers.length === 0, JSON.stringify(rep));
+  ok('precheck output has no names/emails', !JSON.stringify(rep).includes('سارة') && !JSON.stringify(rep).includes('@x'));
+}
+
+const before = await outOfScopeSnapshot(db);
+const legacyBefore = await legacyTasks(db);
+
+console.log('\n== Step 1: tasks expand (compatible with the current frontend) ==');
+await apply('phase_task_schedule_evidence_review.sql');
+await as('vice', async () => {
+  const r = await tryQ(`INSERT INTO public.tasks (name, resp, due_date, priority, status, notes, school_year_id)
+    VALUES ('من الواجهة الحالية','x','2026-10-05','high','pending',NULL,$1) RETURNING id`, [Y_ACTIVE]);
+  ok('current frontend insert (no times) still works between steps 1 and 3', !r.error && r.rows.length === 1, JSON.stringify(r));
+});
+try { await runMigration('phase_task_schedule_evidence_review.sql'); ok('re-run is idempotent', true); }
+catch (e) { ok('re-run is idempotent', false, e.message); }
+
+console.log('\n== Scope: nothing outside tasks changed ==');
+{
+  const after = await outOfScopeSnapshot(db);
+  for (const k of Object.keys(before)) ok(`unchanged: ${k}`, before[k] === after[k], k);
+  ok('existing tasks rows unchanged (all original columns incl. resp, notes, created_by)', legacyBefore === await legacyTasks(db));
+  const cols = (await db.query(`SELECT column_name FROM information_schema.columns WHERE table_name='tasks' ORDER BY 1`)).rows.map(r => r.column_name);
+  ok('single Drive link column, no evidence name / file / multi-link columns',
+    cols.includes('evidence_drive_url') && !cols.some(c => /title|file|links|assignee/.test(c)), JSON.stringify(cols));
+  const ty = (await db.query(`SELECT data_type FROM information_schema.columns WHERE table_name='tasks' AND column_name='evidence_drive_url'`)).rows[0];
+  ok('Drive link column is a single text value', ty.data_type === 'text');
+}
+
+console.log('\n== Tasks: start/end + Drive link (vice/admin) ==');
+const S = '2026-10-01T06:00:00Z', E = '2026-10-01T09:30:00Z';
+let taskId;
+await as('vice', async () => {
+  let r = await tryQ(`INSERT INTO public.tasks (name, resp, school_year_id, start_at, end_at, due_date, evidence_drive_url)
+    VALUES ('مهمة جديدة','أ. نورة',$1,$2,$3,'2026-10-01','https://drive.google.com/file/d/abc/view') RETURNING id, evidence_added_by, evidence_approved, created_by`,
+    [Y_ACTIVE, S, E]);
+  ok('vice adds task with start/end + Drive link', !r.error && r.rows[0].evidence_added_by === U.vice && r.rows[0].evidence_approved === false, JSON.stringify(r));
+  taskId = r.rows?.[0]?.id;
+  r = await tryQ(`INSERT INTO public.tasks (name, school_year_id, start_at, end_at) VALUES ('معكوسة',$1,$2,$3)`, [Y_ACTIVE, E, S]);
+  ok('end before start rejected', !!r.error && r.error.includes('tasks_schedule_order_check'), JSON.stringify(r));
+  r = await tryQ(`INSERT INTO public.tasks (name, school_year_id, start_at, end_at) VALUES ('متساوية',$1,$2,$2)`, [Y_ACTIVE, S]);
+  ok('end equal to start rejected', !!r.error && r.error.includes('tasks_schedule_order_check'), JSON.stringify(r));
+  for (const bad of ['http://drive.google.com/x', 'https://evil.example/x', 'javascript:alert(1)',
+                     'https://drive.google.com.evil.com/x', 'https://drive.google.com/x"><script>',
+                     'https://drive.google.com/a https://drive.google.com/b']) {
+    r = await tryQ(`UPDATE public.tasks SET evidence_drive_url=$1 WHERE id=$2`, [bad, taskId]);
+    ok(`invalid or multiple Drive URLs rejected: ${bad}`, !!r.error, JSON.stringify(r));
+  }
+  r = await tryQ(`UPDATE public.tasks SET start_at=$1, end_at=$2 WHERE id=$3`, ['2026-10-02T05:00:00Z', '2026-10-02T07:00:00Z', taskId]);
+  ok('vice edits task times', !r.error && r.affected === 1, JSON.stringify(r));
+  r = await tryQ(`UPDATE public.tasks SET start_at=NULL WHERE id=$1`, [taskId]);
+  ok('clearing only one time rejected', !!r.error && r.error.includes('tasks_schedule_pair_check'), JSON.stringify(r));
+  r = await tryQ(`UPDATE public.tasks SET evidence_approved=true WHERE id=$1`, [taskId]);
+  ok('vice cannot approve task evidence', !!r.error && r.error.includes('فقط القائدة'), JSON.stringify(r));
+  r = await tryQ(`UPDATE public.tasks SET evidence_approved_by=$1, evidence_approved_at=now() WHERE id=$2`, [U.vice, taskId]);
+  ok('vice cannot forge approval columns', !!r.error, JSON.stringify(r));
+  r = await tryQ(`UPDATE public.tasks SET status='inprogress' WHERE name='مهمة قديمة 1'`);
+  ok('legacy task (no times) still editable', !r.error && r.affected === 1, JSON.stringify(r));
+  r = await tryQ(`DELETE FROM public.tasks WHERE id=$1`, [taskId]);
+  ok('vice still cannot delete task (existing rule)', !r.error && r.affected === 0, JSON.stringify(r));
+});
+
+console.log('\n== Shared teacher account ==');
+await db.exec(`INSERT INTO public.tasks (name, resp, school_year_id, evidence_drive_url) VALUES
+  ('مهمة شاهدها معتمد','أ. هند','${Y_ACTIVE}','https://drive.google.com/approved')`);
+await as('admin', async () => {
+  const r = await tryQ(`UPDATE public.tasks SET evidence_approved=true WHERE name='مهمة شاهدها معتمد'`);
+  ok('setup: leader approves one task link', !r.error && r.affected === 1, JSON.stringify(r));
+});
+{
+  const exp = (await db.query(`SELECT count(*)::int c FROM public.tasks WHERE school_year_id = $1`, [Y_ACTIVE])).rows[0].c;
+  await as('teacher', async () => {
+    let r = await tryQ(`SELECT name, resp, school_year_id FROM public.tasks`);
+    ok(`shared account sees all ${exp} active-year tasks, none archived`,
+      r.rows?.length === exp && r.rows.every(t => t.school_year_id === Y_ACTIVE), JSON.stringify(r));
+    ok('shared account sees «المسؤولة»', r.rows?.some(t => t.resp === 'أ. نورة'), JSON.stringify(r.rows));
+    r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://drive.google.com/file/d/teacher/view'
+      WHERE id=$1 RETURNING evidence_added_by, evidence_approved, resp`, [taskId]);
+    ok('shared account adds link (stamped with shared account id, unapproved, resp unchanged)',
+      !r.error && r.rows?.[0]?.evidence_added_by === U.teacher && r.rows[0].evidence_approved === false && r.rows[0].resp === 'أ. نورة', JSON.stringify(r));
+    r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://docs.google.com/document/d/legacy' WHERE name='مهمة قديمة 2' RETURNING id`);
+    ok('shared account adds link to a legacy untimed task', !r.error && r.affected === 1, JSON.stringify(r));
+    r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://drive.google.com/drive/folders/fixed' WHERE id=$1`, [taskId]);
+    ok('shared account replaces link before approval', !r.error && r.affected === 1, JSON.stringify(r));
+    r = await tryQ(`UPDATE public.tasks SET evidence_drive_url=NULL WHERE id=$1`, [taskId]);
+    ok('shared account cannot clear an existing link', !!r.error, JSON.stringify(r));
+    r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://evil.example/x' WHERE id=$1`, [taskId]);
+    ok('shared account: non-Drive URL rejected', !!r.error, JSON.stringify(r));
+    for (const [col, val] of [['status', `'done'`], ['name', `'x'`], ['start_at', `start_at + interval '1 hour'`],
+                              ['end_at', `end_at + interval '1 hour'`], ['resp', `'x'`], ['priority', `'low'`],
+                              ['notes', `'x'`], ['due_date', `'2030-01-01'`], ['school_year_id', `'${Y_ARCH}'`],
+                              ['created_by', `'${U.teacher}'`],
+                              ['evidence_approved', 'true'], ['evidence_approved_by', `'${U.teacher}'`]]) {
+      r = await tryQ(`UPDATE public.tasks SET ${col}=${val} WHERE id=$1`, [taskId]);
+      ok(`shared account cannot change ${col}`, !!r.error, JSON.stringify(r));
+    }
+    r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://drive.google.com/x' WHERE name='مهمة سنة مؤرشفة'`);
+    ok('shared account cannot add link to archived-year task (0 rows)', !r.error && r.affected === 0, JSON.stringify(r));
+    r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://drive.google.com/other' WHERE name='مهمة شاهدها معتمد'`);
+    ok('shared account cannot change an approved link (0 rows)', !r.error && r.affected === 0, JSON.stringify(r));
+    r = await tryQ(`INSERT INTO public.tasks (name, school_year_id, start_at, end_at) VALUES ('x',$1,$2,$3)`, [Y_ACTIVE, S, E]);
+    ok('shared account cannot insert task', !!r.error, JSON.stringify(r));
+    r = await tryQ(`DELETE FROM public.tasks WHERE id=$1`, [taskId]);
+    ok('shared account cannot delete task (0 rows)', !r.error && r.affected === 0, JSON.stringify(r));
+  });
+  const a = (await db.query(`SELECT evidence_drive_url FROM public.tasks WHERE name='مهمة شاهدها معتمد'`)).rows[0];
+  ok('approved link unchanged in DB', a.evidence_drive_url === 'https://drive.google.com/approved');
+  const ar = (await db.query(`SELECT evidence_drive_url FROM public.tasks WHERE name='مهمة سنة مؤرشفة'`)).rows[0];
+  ok('archived-year task unchanged in DB', ar.evidence_drive_url === null);
+}
+
+await as('admin', async () => {
+  let r = await tryQ(`UPDATE public.tasks SET evidence_drive_url=NULL, evidence_approved=true WHERE id=$1`, [taskId]);
+  ok('approval without link rejected', !!r.error, JSON.stringify(r));
+  r = await tryQ(`UPDATE public.tasks SET evidence_approved=true WHERE id=$1 RETURNING evidence_approved_by, evidence_added_by`, [taskId]);
+  ok('leader approves the shared-account link', !r.error && r.rows[0].evidence_approved_by === U.admin && r.rows[0].evidence_added_by === U.teacher, JSON.stringify(r));
+});
+await as('teacher', async () => {
+  const r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://drive.google.com/new' WHERE id=$1`, [taskId]);
+  ok('after approval: shared account cannot change the link (0 rows)', !r.error && r.affected === 0, JSON.stringify(r));
+});
+await as('vice', async () => {
+  let r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://docs.google.com/document/d/zz' WHERE id=$1`, [taskId]);
+  ok('after approval: vice cannot change the link', !!r.error && r.error.includes('ألغِ الاعتماد'), JSON.stringify(r));
+  r = await tryQ(`UPDATE public.tasks SET evidence_approved=false WHERE id=$1`, [taskId]);
+  ok('vice cannot revoke approval', !!r.error, JSON.stringify(r));
+  r = await tryQ(`UPDATE public.tasks SET status='done' WHERE id=$1`, [taskId]);
+  ok('vice can still change status of task with approved link', !r.error && r.affected === 1, JSON.stringify(r));
+});
+await as('admin', async () => {
+  const r = await tryQ(`UPDATE public.tasks SET evidence_approved=false, evidence_drive_url='https://docs.google.com/document/d/zz'
+    WHERE id=$1 RETURNING evidence_approved, evidence_approved_by, evidence_added_by`, [taskId]);
+  ok('leader unapproves + replaces link', !r.error && r.rows[0].evidence_approved === false && r.rows[0].evidence_approved_by === null && r.rows[0].evidence_added_by === U.admin, JSON.stringify(r));
+});
+await as('anon', async () => {
+  const r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://drive.google.com/x'`);
+  ok('anon cannot touch tasks', !!r.error, JSON.stringify(r));
+});
+
+console.log('\n== Step 3: enforce times on insert (after frontend deploy) ==');
+await apply('phase_task_schedule_enforce_review.sql');
+await as('vice', async () => {
+  let r = await tryQ(`INSERT INTO public.tasks (name, school_year_id) VALUES ('بلا وقت',$1)`, [Y_ACTIVE]);
+  ok('new task without times rejected after step 3', !!r.error && r.error.includes('البداية والنهاية'), JSON.stringify(r));
+  r = await tryQ(`INSERT INTO public.tasks (name, school_year_id, start_at, end_at) VALUES ('بوقت',$1,$2,$3)`, [Y_ACTIVE, S, E]);
+  ok('new task with times accepted after step 3', !r.error, JSON.stringify(r));
+  r = await tryQ(`UPDATE public.tasks SET notes='ملاحظة' WHERE name='مهمة قديمة 2'`);
+  ok('legacy untimed task still editable after step 3', !r.error && r.affected === 1, JSON.stringify(r));
+});
+{
+  const after = await outOfScopeSnapshot(db);
+  ok('after all steps: nothing outside tasks changed', Object.keys(before).every(k => before[k] === after[k]));
+}
+
+console.log('\n== Rollback blocks execute cleanly and keep task rows ==');
+const rollbackOf = (file) => {
+  const src = readFileSync(`${REPO}/sql/${file}`, 'utf8');
+  const m = [...src.matchAll(/\/\*\s*\n(BEGIN;[\s\S]*?COMMIT;)[\s\S]*?\*\//g)];
+  return m.length ? m[m.length - 1][1] : null;
+};
+{
+  const n = (await db.query(`SELECT count(*)::int c FROM public.tasks`)).rows[0].c;
+  const sql = rollbackOf('phase_task_schedule_enforce_review.sql');
+  try { if (!sql) throw new Error('no rollback block'); await db.exec(sql); ok('rollback enforce step', true); }
+  catch (e) { ok('rollback enforce step', false, e.message); }
+  const sql2 = rollbackOf('phase_task_schedule_evidence_review.sql');
+  try { if (!sql2) throw new Error('no rollback block'); await db.exec(sql2); ok('rollback expand step', true); }
+  catch (e) { ok('rollback expand step', false, e.message); }
+  const n2 = (await db.query(`SELECT count(*)::int c FROM public.tasks`)).rows[0].c;
+  ok('rollbacks deleted no task rows', n === n2, `${n} → ${n2}`);
+  const pol = JSON.stringify((await db.query(`SELECT policyname, cmd, roles::text, qual, with_check FROM pg_policies
+    WHERE schemaname='public' AND tablename='tasks' ORDER BY 1`)).rows);
+  ok('after rollback: tasks policies exactly as before', pol === before.tasks_existing_policies, pol);
+  const after = await outOfScopeSnapshot(db);
+  ok('after rollback: nothing outside tasks changed', Object.keys(before).every(k => before[k] === after[k]));
+}
+
+console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);
+}

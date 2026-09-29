@@ -73,7 +73,7 @@
      created_at timestamptz DEFAULT now()
    );
    -- أعمدة الأوقات وشاهد Drive: sql/phase_task_schedule_evidence_review.sql
-   -- (start_at, end_at, evidence_drive_url, evidence_title, evidence_approved …)
+   -- (start_at, end_at, evidence_drive_url, evidence_approved …)
 
    -- ⑥ evidences (program_id مربوط ببرنامج)
    CREATE TABLE IF NOT EXISTS evidences (
@@ -205,7 +205,7 @@ const PERMS = {
     viewTeacherLinks:true,addTeacherLink:true,
     editSettings:false,manageUsers:false,
   },
-  // حساب المعلمات المشترك: مشاهدة + إرفاق شاهد فقط (للمؤشرات، ولمهام السنة النشطة) — بلا اعتماد
+  // المعلمة: مشاهدة + إرفاق شاهد فقط — بلا اعتماد
   teacher:{
     addProgram:false,editProgram:false,deleteProgram:false,
     addIndicator:false,deleteIndicator:false,toggleIndicator:false,
@@ -247,14 +247,7 @@ let _sessionBootstrapDone = false;
 let _passwordRecoveryActive = false;
 let _passwordRecoveryEventSeen = false;
 const RECOVERY_FLAG_KEY = 'sop_pw_recovery';
-const MIN_RECOVERY_PASSWORD_LEN = 8;
-
-/** مطابق isStrongPassword في admin-users */
-function isStrongPassword(password) {
-  const p = String(password || '');
-  if (p.length < MIN_RECOVERY_PASSWORD_LEN || p.length > 128) return false;
-  return /[A-Za-z\u0600-\u06FF]/.test(p) && /\d/.test(p);
-}
+const MIN_RECOVERY_PASSWORD_LEN = 6;
 
 function escapeHtml(str) {
   if (str == null) return '';
@@ -516,10 +509,9 @@ async function submitPasswordRecovery() {
   const p1 = passEl ? String(passEl.value || '') : '';
   const p2 = pass2El ? String(pass2El.value || '') : '';
 
-  if (!isStrongPassword(p1)) {
-    const msg = 'كلمة المرور يجب أن تكون 8 أحرف على الأقل وتحتوي على حرف ورقم';
-    setRecoveryMessage(msg, 'error');
-    showToast(msg, 'error');
+  if (p1.length < MIN_RECOVERY_PASSWORD_LEN || p1.length > 128) {
+    setRecoveryMessage('كلمة المرور يجب أن تكون 6 أحرف على الأقل', 'error');
+    showToast('كلمة المرور يجب أن تكون 6 أحرف على الأقل', 'error');
     return;
   }
   if (p1 !== p2) {
@@ -770,7 +762,6 @@ function classifyUsernameLoginFailure({ payload, error, caught }) {
   if (caught || /FunctionsFetchError|Failed to fetch|NetworkError|Load failed/i.test(errText)) {
     return 'unavailable';
   }
-  if (status === 429 || code === 'too_many_attempts') return 'throttled';
   if (status === 403 || code === 'forbidden') return 'origin';
   if (status === 404 || status === 405 || code === 'method_not_allowed') return 'unavailable';
   if (status >= 500 || code === 'operation_failed') return 'internal';
@@ -779,11 +770,9 @@ function classifyUsernameLoginFailure({ payload, error, caught }) {
   return 'credentials';
 }
 
-function showLoginFailure(kind, retryAfterSec) {
-  const minutes = Math.max(1, Math.ceil((Number(retryAfterSec) || 900) / 60));
+function showLoginFailure(kind) {
   const messages = {
     credentials: 'اسم المستخدم أو كلمة المرور غير صحيحة',
-    throttled: `محاولات دخول كثيرة. حاول مرة أخرى بعد ${minutes} دقيقة تقريبًا.`,
     origin: 'تعذر إكمال تسجيل الدخول من هذا المصدر.',
     unavailable: 'تعذر الاتصال بخدمة المصادقة.',
     internal: 'تعذر إتمام العملية حالياً. حاول مرة أخرى لاحقاً.',
@@ -847,7 +836,7 @@ async function doLogin() {
     const accessToken = payload && typeof payload.access_token === 'string' ? payload.access_token : '';
     const refreshToken = payload && typeof payload.refresh_token === 'string' ? payload.refresh_token : '';
     if (!accessToken || !refreshToken || (payload && payload.error) || error) {
-      showLoginFailure(classifyUsernameLoginFailure({ payload, error, caught: null }), payload?.retry_after);
+      showLoginFailure(classifyUsernameLoginFailure({ payload, error, caught: null }));
       return;
     }
 
@@ -1511,11 +1500,9 @@ function arabicDbError(err) {
   if (/forbidden|permission|rls|row-level|policy|42501|pgrst301|not allowed/.test(blob)) {
     return 'ليس لديك صلاحية لهذا الإجراء';
   }
-  if (code === 'PGRST116') return 'ليس لديك صلاحية لهذا الإجراء أو السجل غير موجود';
   if (blob.includes('tasks_schedule_order_check')) return 'وقت النهاية يجب أن يكون بعد وقت البداية';
   if (blob.includes('tasks_schedule_pair_check')) return 'يجب تحديد وقت البداية والنهاية معًا';
   if (blob.includes('tasks_evidence_drive_url_check')) return 'رابط Google Drive غير صالح';
-  if (blob.includes('tasks_evidence_title_check')) return 'اسم الشاهد غير صالح أو بدون رابط';
   if (msg.includes(NO_ACTIVE_YEAR_MSG) || /لا يمكن الكتابة|سنة دراسية/.test(msg)) {
     return msg;
   }
@@ -2488,7 +2475,6 @@ function mapTaskRow(r) {
     start_at: r.start_at || null,
     end_at: r.end_at || null,
     evidence_url: r.evidence_drive_url || '',
-    evidence_title: r.evidence_title || '',
     evidence_approved: r.evidence_approved === true,
     evidence_approved_at: r.evidence_approved_at || null,
     school_year_id: r.school_year_id || null,
@@ -2497,7 +2483,6 @@ function mapTaskRow(r) {
 
 const TASK_DRIVE_HOSTS = ['drive.google.com', 'docs.google.com'];
 const MAX_DRIVE_URL_LEN = 2048;
-const MAX_EVIDENCE_TITLE_LEN = 200;
 
 /** رابط Drive صالح بصيغة https على نطاق Google Drive/Docs فقط، وإلا '' */
 function normalizeDriveUrl(raw) {
@@ -2567,7 +2552,6 @@ function taskWritePayload(t) {
     priority:t.priority, status:t.status, notes:t.notes||null,
     start_at: t.start_at, end_at: t.end_at,
     evidence_drive_url: t.evidence_url || null,
-    evidence_title: t.evidence_url ? (t.evidence_title || null) : null,
   };
   // الاعتماد يُرسل من المدير فقط؛ القاعدة ترفضه من غيره (trg_tasks_enforce_evidence)
   if (can('approveEvidence')) payload.evidence_approved = !!(t.evidence_url && t.evidence_approved);
@@ -2592,22 +2576,29 @@ async function sbUpdateTask(t) {
     .eq('id', t.id)
     .select()
     .single();
-  if (error) throw error;
+  if (error) throw taskNoRowError(error);
   const saved = mapTaskRow(data);
   const i = tasksCache.findIndex(x => x.id === t.id);
   if (i !== -1) tasksCache[i] = saved;
   return saved;
 }
 
-/** حساب المعلمات المشترك: رابط الشاهد واسمه فقط — RLS (tasks_update_teacher_evidence) والمشغّل يرفضان أي عمود آخر */
-async function sbUpdateTaskEvidence(id, url, title) {
+/** RLS تُخفي الصف عند المنع (مثل شاهد معتمد أو سنة مؤرشفة) فيعود .single() بلا صف */
+function taskNoRowError(error) {
+  return error?.code === 'PGRST116'
+    ? new Error('ليس لديك صلاحية لهذا الإجراء أو أن شاهد المهمة معتمد')
+    : error;
+}
+
+/** حساب المعلمات المشترك: رابط الشاهد فقط — RLS (tasks_update_teacher_evidence) والمشغّل يرفضان أي عمود آخر */
+async function sbUpdateTaskEvidence(id, url) {
   requireSb();
   const { data, error } = await sb.from('tasks')
-    .update({ evidence_drive_url: url || null, evidence_title: url ? (title || null) : null })
+    .update({ evidence_drive_url: url || null })
     .eq('id', id)
     .select()
     .single();
-  if (error) throw error;
+  if (error) throw taskNoRowError(error);
   const saved = mapTaskRow(data);
   const i = tasksCache.findIndex(x => x.id === id);
   if (i !== -1) tasksCache[i] = saved;
@@ -4294,7 +4285,7 @@ function taskEvidenceHtml(t) {
   const badge = t.evidence_approved
     ? '<span class="badge badge-success">✅ معتمد</span>'
     : '<span class="badge badge-warning">قيد المراجعة</span>';
-  return `<span>📎 ${safeLinkHtml(url, t.evidence_title || 'شاهد المهمة (Drive)')} ${badge}</span>`;
+  return `<span>📎 ${safeLinkHtml(url, 'شاهد المهمة (Drive)')} ${badge}</span>`;
 }
 
 function renderTasks() {
@@ -4386,7 +4377,7 @@ function openTaskModal(id) {
   if (!id && !can('addTask'))  { showToast('ليس لديك صلاحية إضافة مهام','error');   return; }
   try { assertYearWritable(); } catch { return; }
   const ti=document.getElementById('task-modal-title'); if(ti) ti.textContent=id?'تعديل المهمة':'إضافة مهمة جديدة';
-  ['task-edit-id','task-name','task-resp','task-start','task-end','task-notes','task-evidence-url','task-evidence-title'].forEach(fid=>{const e=document.getElementById(fid);if(e)e.value='';});
+  ['task-edit-id','task-name','task-resp','task-start','task-end','task-notes','task-evidence-url'].forEach(fid=>{const e=document.getElementById(fid);if(e)e.value='';});
   const pEl=document.getElementById('task-priority'); if(pEl) pEl.value='high';
   const sEl=document.getElementById('task-status');   if(sEl) sEl.value='pending';
   const apprEl=document.getElementById('task-evidence-approved'); if(apprEl) apprEl.checked=false;
@@ -4401,7 +4392,7 @@ function openTaskModal(id) {
     const sv=(fid,v)=>{const e=document.getElementById(fid);if(e)e.value=v??'';};
     sv('task-edit-id',t.id);sv('task-name',t.name);sv('task-resp',t.resp||'');sv('task-priority',t.priority);sv('task-status',t.status);sv('task-notes',t.notes||'');
     sv('task-start',isoToLocalInput(t.start_at));sv('task-end',isoToLocalInput(t.end_at));
-    sv('task-evidence-url',t.evidence_url||'');sv('task-evidence-title',t.evidence_title||'');
+    sv('task-evidence-url',t.evidence_url||'');
     approved = !!t.evidence_approved;
     if (apprEl) apprEl.checked = approved;
     if (legacyHint && !t.start_at && t.due) {
@@ -4412,7 +4403,7 @@ function openTaskModal(id) {
   const isApprover = can('approveEvidence');
   document.getElementById('task-evidence-approve-group')?.classList.toggle('hidden', !isApprover);
   const lockEvidence = approved && !isApprover;
-  ['task-evidence-url','task-evidence-title'].forEach(fid=>{const e=document.getElementById(fid);if(e)e.disabled=lockEvidence;});
+  const evUrlEl=document.getElementById('task-evidence-url'); if(evUrlEl) evUrlEl.disabled=lockEvidence;
   document.getElementById('task-evidence-lock-hint')?.classList.toggle('hidden', !lockEvidence);
   refreshHijriPreview('task-start');
   refreshHijriPreview('task-end');
@@ -4428,7 +4419,6 @@ function openTaskEvidenceModal(id) {
   const sv = (fid, v) => { const e = document.getElementById(fid); if (e) e.value = v ?? ''; };
   sv('task-ev-task-id', t.id);
   sv('task-ev-url', t.evidence_url || '');
-  sv('task-ev-title', t.evidence_title || '');
   const nameEl = document.getElementById('task-ev-task-name');
   if (nameEl) nameEl.textContent = `${t.name} — المسؤولة: ${t.resp || '—'}`;
   openModal('task-evidence-modal');
@@ -4446,11 +4436,10 @@ async function saveTaskEvidence() {
     showToast('رابط الشاهد يجب أن يكون رابط Google Drive يبدأ بـ https://drive.google.com أو https://docs.google.com','error');
     return;
   }
-  const title = clampInput(g('task-ev-title'), MAX_EVIDENCE_TITLE_LEN);
   const btn = document.getElementById('task-ev-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'جارٍ الحفظ…'; }
   try {
-    await sbUpdateTaskEvidence(id, url, title);
+    await sbUpdateTaskEvidence(id, url);
     closeModal('task-evidence-modal');
     renderTasks();
     showToast('تم إرفاق الشاهد ✅ — بانتظار اعتماد القائدة','success');
@@ -4488,8 +4477,6 @@ async function saveTask() {
     showToast('رابط الشاهد يجب أن يكون رابط Google Drive يبدأ بـ https://drive.google.com أو https://docs.google.com','error');
     return;
   }
-  const evTitle = clampInput(g('task-evidence-title'), MAX_EVIDENCE_TITLE_LEN);
-  if (evTitle && !evUrl) { showToast('أضف رابط Drive قبل تسمية الشاهد','error'); return; }
   const evApproved = !!document.getElementById('task-evidence-approved')?.checked;
 
   const t={
@@ -4503,7 +4490,6 @@ async function saveTask() {
     status:['pending','inprogress','done'].includes(st)?st:'pending',
     notes:clampInput(g('task-notes'),1000),
     evidence_url: evUrl,
-    evidence_title: evUrl ? evTitle : '',
     evidence_approved: evUrl ? evApproved : false,
   };
   const btn=document.getElementById('task-save-btn');

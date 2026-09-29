@@ -2,7 +2,6 @@
 // مراجعة — لا تُنشر تلقائياً
 // Secrets (أسماء فقط): SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, ALLOWED_ORIGINS (اختياري؛ يُدمَج مع الافتراضي)
 // ملاحظة نشر لاحقاً: شاشة الدخول بلا JWT → يلزم verify_jwt=false لهذه الدالة فقط (لا يُضبط في هذا الملف).
-// يتطلب sql/phase_login_throttle_review.sql مطبّقًا قبل النشر (وإلا يُرفض كل دخول: fail-closed).
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 
@@ -11,11 +10,14 @@ const ALLOWED_METHODS = new Set(['POST', 'OPTIONS'])
 const MAX_BODY_BYTES = 4096
 
 /**
- * Origin الإنتاج فقط. أصول التطوير المحلي تُضاف عبر ALLOWED_ORIGINS في مشروع التطوير، لا هنا.
- * لا يُستخدم *. Origin قيد للمتصفح فقط وليس حماية — الحماية: حد المحاولات + Auth.
+ * Origins مسموحة دائمًا (إنتاج + تطوير محلي).
+ * تُدمَج مع ALLOWED_ORIGINS من Secrets إن وُجدت إضافات.
+ * لا يُستخدم *.
  */
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://alalawirabab.github.io',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
 ] as const
 
 /** مطابق admin-users normalizeUsername */
@@ -105,27 +107,6 @@ function escapeIlikeExact(value: string): string {
     .replace(/_/g, '\\_')
 }
 
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
-}
-
-/** عنوان العميل كما تمرّره منصة Supabase. تغيير العنوان يبقى محكومًا بسقف الاسم العام. */
-function clientIp(req: Request): string {
-  const cf = (req.headers.get('cf-connecting-ip') || '').trim()
-  if (cf) return cf
-  const xff = (req.headers.get('x-forwarded-for') || '').split(',')[0].trim()
-  return xff
-}
-
-function tooManyAttempts(req: Request, retryAfter: number) {
-  const seconds = Math.max(1, Math.min(3600, Math.ceil(retryAfter)))
-  return new Response(JSON.stringify({ error: 'too_many_attempts', retry_after: seconds }), {
-    status: 429,
-    headers: { ...corsHeadersFor(req), 'Content-Type': 'application/json', 'Retry-After': String(seconds) },
-  })
-}
-
 function isJsonContentType(req: Request): boolean {
   const ct = (req.headers.get('Content-Type') || '').toLowerCase()
   return ct.startsWith('application/json')
@@ -209,31 +190,10 @@ Deno.serve(async (req) => {
       return authFailed(req)
     }
 
-    const admin = createClient(supabaseUrl, serviceKey)
-
-    // 0) حد المحاولات قبل أي بحث أو تحقق — يُحتسب لأسماء غير موجودة أيضًا
-    //    الحد الأساسي لكل (اسم + شبكة): حساب المعلمات مشترك ويُستخدم من شبكة المدرسة نفسها
-    const userLower = username.toLowerCase()
-    const ip = clientIp(req)
-    const userKey = await sha256Hex(userLower)
-    const ipKey = ip ? await sha256Hex(ip) : ''
-    const pairKey = await sha256Hex(`${userLower}|${ip}`)
-    const { data: throttle, error: throttleErr } = await admin.rpc('login_throttle_begin', {
-      p_user_key: userKey,
-      p_ip_key: ipKey,
-      p_pair_key: pairKey,
-    })
-    if (throttleErr || !throttle || typeof throttle !== 'object') {
-      return json(req, { error: 'operation_failed' }, 503)
-    }
-    if ((throttle as { allowed?: boolean }).allowed !== true) {
-      return tooManyAttempts(req, Number((throttle as { retry_after?: number }).retry_after) || 900)
-    }
-    const attemptId = String((throttle as { attempt_id?: string }).attempt_id || '')
-
     // 1) service_role: بحث profile فقط (id) — يتجاوز RLS داخلياً فقط
     //    case-insensitive عبر ilike + تهريب _/% 
     //    limit(2): إن وُجد أكثر من صف → فشل عام (لا اختيار عشوائي)
+    const admin = createClient(supabaseUrl, serviceKey)
     const { data: profiles, error: profileErr } = await admin
       .from('profiles')
       .select('id')
@@ -275,8 +235,6 @@ Deno.serve(async (req) => {
     if (signInErr || !signInData?.session) {
       return authFailed(req)
     }
-
-    await admin.rpc('login_throttle_success', { p_pair_key: pairKey, p_attempt_id: attemptId })
 
     const session = signInData.session
     return json(req, {
