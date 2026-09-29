@@ -24,31 +24,34 @@
 | `ALLOWED_ORIGINS` | قائمة **origins فقط** (بلا مسارات) مفصولة بفواصل — لـ **CORS فقط** |
 | `PASSWORD_RESET_REDIRECT_URLS` | قائمة **روابط كاملة** مسموحة لـ `redirectTo` مفصولة بفواصل (تحافظ على المسار مثل `/platform/`) |
 
-مثال `ALLOWED_ORIGINS` (CORS — أصول بلا مسارات):
-```text
-http://127.0.0.1:5500,http://localhost:5500,https://alalawirabab.github.io
-```
-
-مثال `PASSWORD_RESET_REDIRECT_URLS` (القيمة التي ستُضبط لاحقاً):
-```text
-http://127.0.0.1:5500/index.html,http://localhost:5500/index.html,https://alalawirabab.github.io/platform/index.html
-```
+⚠️ الأسرار مشتركة بين كل دوال المشروع (`admin-users` و`username-login`).
+في **مشروع الإنتاج** اضبط أصل الإنتاج فقط — بلا `localhost` / `127.0.0.1`:
 
 ```bash
-supabase secrets set ALLOWED_ORIGINS="http://127.0.0.1:5500,http://localhost:5500,https://alalawirabab.github.io"
-supabase secrets set PASSWORD_RESET_REDIRECT_URLS="http://127.0.0.1:5500/index.html,http://localhost:5500/index.html,https://alalawirabab.github.io/platform/index.html"
+supabase secrets set ALLOWED_ORIGINS="https://alalawirabab.github.io"
+supabase secrets set PASSWORD_RESET_REDIRECT_URLS="https://alalawirabab.github.io/platform/index.html"
 ```
+
+أصول التطوير المحلي تُضبط في **مشروع Supabase منفصل للتطوير** فقط، مثل:
+```text
+ALLOWED_ORIGINS=http://127.0.0.1:5500,http://localhost:5500
+PASSWORD_RESET_REDIRECT_URLS=http://127.0.0.1:5500/index.html,http://localhost:5500/index.html
+```
+
+فحص Origin/CORS يمنع صفحات المتصفح الأخرى فقط؛ أي عميل خارج المتصفح يستطيع إرسال أي Origin.
+الحماية الفعلية: JWT + دور admin في `admin-users`، وحد المحاولات في `username-login`.
 
 ⚠️ لا تستخدم `{origin}/index.html` يدوياً للإنتاج — ذلك يحذف مسار `/platform/`.
 
 ## إعداد Authentication → URL Configuration
-في لوحة Supabase → Authentication → URL Configuration أضف إلى Redirect URLs:
+في لوحة Supabase (مشروع الإنتاج) → Authentication → URL Configuration، Redirect URLs:
 
 ```text
-http://127.0.0.1:5500/index.html
-http://localhost:5500/index.html
 https://alalawirabab.github.io/platform/index.html
 ```
+
+احذف أي `localhost` / `127.0.0.1` من هذه القائمة في الإنتاج (رابط استعادة يُحوَّل إلى localhost
+يسلّم رمز الاستعادة لأي خادم محلي يعمل على جهاز المستخدم).
 
 Site URL يمكن ضبطه لاحقاً على رابط الإنتاج المؤكد عند النشر.
 
@@ -84,8 +87,8 @@ Site URL يمكن ضبطه لاحقاً على رابط الإنتاج المؤ�
 ```bash
 supabase login
 supabase link --project-ref <PROJECT_REF>
-supabase secrets set ALLOWED_ORIGINS="http://127.0.0.1:5500,http://localhost:5500,https://alalawirabab.github.io"
-supabase secrets set PASSWORD_RESET_REDIRECT_URLS="http://127.0.0.1:5500/index.html,http://localhost:5500/index.html,https://alalawirabab.github.io/platform/index.html"
+supabase secrets set ALLOWED_ORIGINS="https://alalawirabab.github.io"
+supabase secrets set PASSWORD_RESET_REDIRECT_URLS="https://alalawirabab.github.io/platform/index.html"
 supabase functions deploy admin-users
 ```
 

@@ -3,3 +3,5 @@ supabase/.temp/
 
 # Local DB dump attempts / manual backups (never commit)
 backups/
+
+tests/**/node_modules/

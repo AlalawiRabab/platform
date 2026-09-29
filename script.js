@@ -157,6 +157,7 @@ let indicatorsCache  = {};
 let evidenceRequirementsCache = [];
 let evidenceRequirementsReady = false;
 let initiativesCache = [];
+let taskAssigneesCache = null;
 let tasksCache       = [];
 let evidencesCache   = [];
 let teachersCache    = [];
@@ -187,7 +188,7 @@ const PERMS = {
     addEvidence:true,editEvidence:true,deleteEvidence:true,
     manageEvidenceRequirements:true,deleteEvidenceRequirement:true,approveEvidence:true,
     addInitiative:true,editInitiative:true,deleteInitiative:true,
-    addTask:true,editTask:true,deleteTask:true,
+    addTask:true,editTask:true,deleteTask:true,attachTaskEvidence:true,
     addTeacher:true,editTeacher:true,deleteTeacher:true,
     viewTeacherLinks:true,addTeacherLink:true,
     editSettings:true,manageUsers:true,
@@ -200,19 +201,19 @@ const PERMS = {
     addEvidence:true,editEvidence:true,deleteEvidence:false,
     manageEvidenceRequirements:true,deleteEvidenceRequirement:false,approveEvidence:false,
     addInitiative:true,editInitiative:true,deleteInitiative:false,
-    addTask:true,editTask:true,deleteTask:false,
+    addTask:true,editTask:true,deleteTask:false,attachTaskEvidence:true,
     addTeacher:true,editTeacher:true,deleteTeacher:true,
     viewTeacherLinks:true,addTeacherLink:true,
     editSettings:false,manageUsers:false,
   },
-  // المعلمة: مشاهدة + إرفاق شاهد فقط — بلا اعتماد
+  // المعلمة: مشاهدة + إرفاق شاهد فقط (للمؤشرات، ولمهامها المسندة إليها) — بلا اعتماد
   teacher:{
     addProgram:false,editProgram:false,deleteProgram:false,
     addIndicator:false,deleteIndicator:false,toggleIndicator:false,
     addEvidence:true,editEvidence:false,deleteEvidence:false,
     manageEvidenceRequirements:false,deleteEvidenceRequirement:false,approveEvidence:false,
     addInitiative:false,editInitiative:false,deleteInitiative:false,
-    addTask:false,editTask:false,deleteTask:false,
+    addTask:false,editTask:false,deleteTask:false,attachTaskEvidence:true,
     addTeacher:false,editTeacher:false,deleteTeacher:false,
     viewTeacherLinks:false,addTeacherLink:false,
     editSettings:false,manageUsers:false,
@@ -223,7 +224,7 @@ const can = a => currentUser ? (PERMS[currentUser.role]?.[a] === true) : false;
 const NAV_ALLOWED = {
   admin  : ['dashboard','programs','plan','kpi','tasks','reports','teachers','calendar','stats','settings','users'],
   vice   : ['dashboard','programs','plan','kpi','tasks','reports','teachers','calendar','stats'],
-  teacher: ['dashboard','programs','reports'],
+  teacher: ['dashboard','programs','tasks','reports'],
 };
 
 const ALLOWED_EVIDENCE_EXT = ['pdf','jpg','jpeg','png','doc','docx','xls','xlsx'];
@@ -618,6 +619,7 @@ async function handleSignedOut() {
   currentUser = null;
   _sessionBootstrapDone = false;
   clearLegacySessionArtifacts();
+  taskAssigneesCache = null;
   [programsCache, initiativesCache, tasksCache, evidencesCache, teachersCache] = [[], [], [], [], []];
   indicatorsCache = {};
   settingsCache = {};
@@ -770,6 +772,7 @@ function classifyUsernameLoginFailure({ payload, error, caught }) {
   if (caught || /FunctionsFetchError|Failed to fetch|NetworkError|Load failed/i.test(errText)) {
     return 'unavailable';
   }
+  if (status === 429 || code === 'too_many_attempts') return 'throttled';
   if (status === 403 || code === 'forbidden') return 'origin';
   if (status === 404 || status === 405 || code === 'method_not_allowed') return 'unavailable';
   if (status >= 500 || code === 'operation_failed') return 'internal';
@@ -778,9 +781,11 @@ function classifyUsernameLoginFailure({ payload, error, caught }) {
   return 'credentials';
 }
 
-function showLoginFailure(kind) {
+function showLoginFailure(kind, retryAfterSec) {
+  const minutes = Math.max(1, Math.ceil((Number(retryAfterSec) || 900) / 60));
   const messages = {
     credentials: 'اسم المستخدم أو كلمة المرور غير صحيحة',
+    throttled: `محاولات دخول كثيرة. حاول مرة أخرى بعد ${minutes} دقيقة تقريبًا.`,
     origin: 'تعذر إكمال تسجيل الدخول من هذا المصدر.',
     unavailable: 'تعذر الاتصال بخدمة المصادقة.',
     internal: 'تعذر إتمام العملية حالياً. حاول مرة أخرى لاحقاً.',
@@ -844,7 +849,7 @@ async function doLogin() {
     const accessToken = payload && typeof payload.access_token === 'string' ? payload.access_token : '';
     const refreshToken = payload && typeof payload.refresh_token === 'string' ? payload.refresh_token : '';
     if (!accessToken || !refreshToken || (payload && payload.error) || error) {
-      showLoginFailure(classifyUsernameLoginFailure({ payload, error, caught: null }));
+      showLoginFailure(classifyUsernameLoginFailure({ payload, error, caught: null }), payload?.retry_after);
       return;
     }
 
@@ -876,6 +881,7 @@ window.doLogin = doLogin;
 async function doLogout() {
   _sessionBootstrapDone = false;
   currentUser = null;
+  taskAssigneesCache = null;
   [programsCache, initiativesCache, tasksCache, evidencesCache, teachersCache] = [[], [], [], [], []];
   indicatorsCache = {};
   settingsCache = {};
@@ -950,9 +956,12 @@ async function loadAllData(renderAfter = true) {
     await fetchEvidences();
     if (isSectionAllowed('plan') || isSectionAllowed('tasks')) {
       await fetchTasks();
-      await fetchInitiatives();
     } else {
       tasksCache = [];
+    }
+    if (isSectionAllowed('plan')) {
+      await fetchInitiatives();
+    } else {
       initiativesCache = [];
     }
     if (isSectionAllowed('teachers')) {
@@ -2479,6 +2488,7 @@ function mapTaskRow(r) {
   return {
     id:r.id, name:r.name||'', resp:r.resp||'', due:r.due_date||'',
     priority:r.priority||'medium', status:r.status||'pending', notes:r.notes||'',
+    assignee_id: r.assignee_id || null,
     start_at: r.start_at || null,
     end_at: r.end_at || null,
     evidence_url: r.evidence_drive_url || '',
@@ -2559,6 +2569,7 @@ function taskWritePayload(t) {
   const payload = {
     name:t.name, resp:t.resp||null, due_date:t.due||null,
     priority:t.priority, status:t.status, notes:t.notes||null,
+    assignee_id: t.assignee_id || null,
     start_at: t.start_at, end_at: t.end_at,
     evidence_drive_url: t.evidence_url || null,
     evidence_title: t.evidence_url ? (t.evidence_title || null) : null,
@@ -2591,6 +2602,34 @@ async function sbUpdateTask(t) {
   const i = tasksCache.findIndex(x => x.id === t.id);
   if (i !== -1) tasksCache[i] = saved;
   return saved;
+}
+
+/** المعلمة: شاهد مهمتها فقط — RLS (tasks_update_assignee_evidence) والمشغّل يرفضان أي عمود آخر */
+async function sbUpdateTaskEvidence(id, url, title) {
+  requireSb();
+  const { data, error } = await sb.from('tasks')
+    .update({ evidence_drive_url: url || null, evidence_title: url ? (title || null) : null })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+  const saved = mapTaskRow(data);
+  const i = tasksCache.findIndex(x => x.id === id);
+  if (i !== -1) tasksCache[i] = saved;
+  return saved;
+}
+
+/** قائمة المعلمات للإسناد (RPC list_task_assignees — للمدير والوكيلة) */
+async function fetchTaskAssignees() {
+  if (taskAssigneesCache) return taskAssigneesCache;
+  if (!sb) return [];
+  const { data, error } = await sb.rpc('list_task_assignees');
+  if (error) {
+    console.error('[fetchTaskAssignees]', error.message);
+    return [];
+  }
+  taskAssigneesCache = (data || []).map(r => ({ id: r.id, name: r.name || '' }));
+  return taskAssigneesCache;
 }
 
 async function sbDeleteTask(id) {
@@ -4281,8 +4320,9 @@ function renderTasks() {
   const now = new Date();
   const canWrite = !isYearReadOnlyMode();
 
-  if (currentUser?.role === 'teacher') {
-    tasks = tasks.filter(t => t.resp && t.resp.includes(currentUser.name));
+  const isTeacher = currentUser?.role === 'teacher';
+  if (isTeacher) {
+    tasks = tasks.filter(t => t.assignee_id && t.assignee_id === currentUser.id);
   }
 
   if (_taskFilter === 'late') {
@@ -4335,6 +4375,7 @@ function renderTasks() {
           </select>` : `<span class="badge ${SBM[t.status]}">${SL2[t.status]}</span>`}
           ${canWrite && can('editTask') ? `<button class="btn-sm btn-edit" onclick="openTaskModal('${esc(t.id)}')">✏️</button>` : ''}
           ${canWrite && can('deleteTask') ? `<button class="btn-sm btn-delete" onclick="deleteTask('${esc(t.id)}')">🗑️</button>` : ''}
+          ${canWrite && isTeacher && can('attachTaskEvidence') && !t.evidence_approved ? `<button class="btn-sm btn-edit" onclick="openTaskEvidenceModal('${esc(t.id)}')">📎 ${t.evidence_url ? 'تعديل الشاهد' : 'إرفاق شاهد'}</button>` : ''}
         </div>
       </div>
     `;
@@ -4396,7 +4437,76 @@ function openTaskModal(id) {
   document.getElementById('task-evidence-lock-hint')?.classList.toggle('hidden', !lockEvidence);
   refreshHijriPreview('task-start');
   refreshHijriPreview('task-end');
+  fillTaskAssigneeSelect(id ? (tasksCache.find(x => x.id === id)?.assignee_id || '') : '');
   openModal('task-modal');
+}
+
+/** الإسناد الحالي يُضبط فورًا حتى لا يُمسح عند الحفظ قبل وصول القائمة أو عند فشلها */
+async function fillTaskAssigneeSelect(selectedId) {
+  const sel = document.getElementById('task-assignee');
+  if (!sel) return;
+  const blank = '<option value="">— بدون إسناد لحساب —</option>';
+  const currentOpt = id => `<option value="${esc(id)}">(الحساب المسند حاليًا)</option>`;
+  sel.innerHTML = blank + (selectedId ? currentOpt(selectedId) : '');
+  sel.value = selectedId || '';
+  const editId = document.getElementById('task-edit-id')?.value || '';
+  const list = await fetchTaskAssignees();
+  if ((document.getElementById('task-edit-id')?.value || '') !== editId) return;
+  const chosen = sel.value;
+  sel.innerHTML = blank + list.map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('');
+  if (chosen && !list.some(a => a.id === chosen)) sel.insertAdjacentHTML('beforeend', currentOpt(chosen));
+  sel.value = chosen;
+}
+
+function onTaskAssigneeChange() {
+  const sel = document.getElementById('task-assignee');
+  const resp = document.getElementById('task-resp');
+  if (!sel || !resp || resp.value.trim()) return;
+  const a = (taskAssigneesCache || []).find(x => x.id === sel.value);
+  if (a) resp.value = a.name;
+}
+
+function openTaskEvidenceModal(id) {
+  if (!requireAuth('attachTaskEvidence')) return;
+  try { assertYearWritable(); } catch { return; }
+  const t = tasksCache.find(x => x.id === id);
+  if (!t) return;
+  if (t.evidence_approved) { showToast('الشاهد معتمد ولا يمكن تعديله','error'); return; }
+  const sv = (fid, v) => { const e = document.getElementById(fid); if (e) e.value = v ?? ''; };
+  sv('task-ev-task-id', t.id);
+  sv('task-ev-url', t.evidence_url || '');
+  sv('task-ev-title', t.evidence_title || '');
+  const nameEl = document.getElementById('task-ev-task-name');
+  if (nameEl) nameEl.textContent = t.name;
+  openModal('task-evidence-modal');
+}
+
+async function saveTaskEvidence() {
+  if (!requireAuth('attachTaskEvidence')) return;
+  try { assertYearWritable(); } catch { return; }
+  const g = id => (document.getElementById(id)?.value || '');
+  const id = g('task-ev-task-id');
+  if (!tasksCache.some(x => x.id === id)) return;
+  const urlRaw = g('task-ev-url').trim();
+  const url = urlRaw ? normalizeDriveUrl(urlRaw) : '';
+  if (!url) {
+    showToast('رابط الشاهد يجب أن يكون رابط Google Drive يبدأ بـ https://drive.google.com أو https://docs.google.com','error');
+    return;
+  }
+  const title = clampInput(g('task-ev-title'), MAX_EVIDENCE_TITLE_LEN);
+  const btn = document.getElementById('task-ev-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'جارٍ الحفظ…'; }
+  try {
+    await sbUpdateTaskEvidence(id, url, title);
+    closeModal('task-evidence-modal');
+    renderTasks();
+    showToast('تم إرفاق الشاهد ✅ — بانتظار اعتماد القائدة','success');
+  } catch (err) {
+    console.error('[saveTaskEvidence]', err.message);
+    showToast(arabicDbError(err), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '💾 حفظ الشاهد'; }
+  }
 }
 
 async function saveTask() {
@@ -4433,6 +4543,7 @@ async function saveTask() {
     id:editId||null,
     name,
     resp:clampInput(g('task-resp')),
+    assignee_id: g('task-assignee') || null,
     due: isLegacyUntimed ? (existing.due || '') : isoToLocalDateKey(endISO),
     start_at: startISO,
     end_at: endISO,
