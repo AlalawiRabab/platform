@@ -55,52 +55,69 @@ console.log('\n== username-login: origin handling ==');
   ok('POST from foreign Origin → 403', r.status === 403);
 }
 
-console.log('\n== username-login: attempt limit (Origin spoofed = non-browser attacker) ==');
+const SCHOOL = '203.0.113.7';
+console.log('\n== username-login: shared teacher account from one school network ==');
 {
-  const ip = '203.0.113.7';
-  for (let i = 1; i <= 5; i++) {
-    const r = await login('teacher1', 'wrong' + i, { ip });
-    if (i === 5) ok('attempts 1-5 wrong password → 401 invalid_credentials', r.status === 401 && r.data?.error === 'invalid_credentials', r.text);
+  globalThis.__edge.passwords['t@x'] = 'Correct123';
+  let r;
+  for (let round = 0; round < 3; round++) {
+    for (let i = 0; i < 9; i++) await login('teacher1', 'typo' + i, { ip: SCHOOL });
+    r = await login('teacher1', 'Correct123', { ip: SCHOOL });
   }
+  ok('school: 27 scattered typos between successful logins never lock the shared account', r.status === 200 && r.data?.access_token === 'AT', r.text);
+
+  for (let i = 1; i <= 10; i++) r = await login('teacher1', 'wrong' + i, { ip: SCHOOL });
+  ok('school: 10 consecutive failures → still 401 (not locked yet)', r.status === 401 && r.data?.error === 'invalid_credentials', r.text);
   globalThis.__edge.calls = [];
-  let r = await login('teacher1', 'wrong6', { ip });
-  ok('6th attempt → 429 too_many_attempts + Retry-After', r.status === 429 && r.data?.error === 'too_many_attempts'
+  r = await login('teacher1', 'wrong11', { ip: SCHOOL });
+  ok('school: 11th consecutive failure → 429 too_many_attempts + Retry-After', r.status === 429 && r.data?.error === 'too_many_attempts'
     && Number(r.headers.get('Retry-After')) > 0 && r.data.retry_after === Number(r.headers.get('Retry-After')), r.text);
   ok('blocked attempt never reaches password check', !globalThis.__edge.calls.includes('signIn') && !globalThis.__edge.calls.includes('from:profiles'),
     JSON.stringify(globalThis.__edge.calls));
-  r = await login('teacher1', 'Correct123', { ip: '192.0.2.99' });
-  ok('correct password during lockout also 429 (no oracle), even from new IP', r.status === 429, r.text);
-  r = await login('TEACHER1', 'wrong', { ip: '192.0.2.100' });
+  r = await login('teacher1', 'Correct123', { ip: SCHOOL });
+  ok('correct code during lockout from the same network also 429 (no oracle)', r.status === 429, r.text);
+  r = await login('TEACHER1', 'wrong', { ip: SCHOOL });
   ok('case variations share the same counter', r.status === 429, r.text);
   ok('429 carries CORS for the app to read it', r.headers.get('Access-Control-Allow-Origin') === PROD);
-  r = await login('teacher2', 'Other123', { ip });
-  ok('another user unaffected', r.status === 200 && r.data?.access_token === 'AT', r.text);
+  r = await login('teacher1', 'Correct123', { ip: '198.51.100.77' });
+  ok('same shared account from another network (e.g. home) still works', r.status === 200, r.text);
+  globalThis.__edge.passwords['v@x'] = 'ViceGood1';
+  r = await login('vice1', 'ViceGood1', { ip: SCHOOL });
+  ok('vice/admin accounts from the school network unaffected', r.status === 200, r.text);
 }
 
 console.log('\n== username-login: unknown usernames are throttled too ==');
 {
   let r;
-  for (let i = 0; i < 6; i++) r = await login('no.such.user', 'x' + i);
-  ok('6th attempt on unknown username → 429 (same as real user)', r.status === 429, r.text);
+  for (let i = 0; i < 11; i++) r = await login('no.such.user', 'x' + i, { ip: '192.0.2.10' });
+  ok('11th attempt on unknown username → 429 (same as real user)', r.status === 429, r.text);
 }
 
-console.log('\n== username-login: success resets counter ==');
+console.log('\n== username-login: success resets that network counter ==');
 {
-  await login('vice1', 'bad1'); await login('vice1', 'bad2');
-  globalThis.__edge.passwords['v@x'] = 'ViceGood1';
-  let r = await login('vice1', 'ViceGood1');
+  for (let i = 0; i < 5; i++) await login('vice1', 'bad' + i, { ip: '192.0.2.20' });
+  let r = await login('vice1', 'ViceGood1', { ip: '192.0.2.20' });
   ok('success → 200 tokens, no email in response', r.status === 200 && r.data.access_token === 'AT' && !r.text.includes('@'), r.text);
   let last;
-  for (let i = 0; i < 5; i++) last = await login('vice1', 'bad' + i);
-  ok('counter cleared: 5 more attempts allowed after success', last.status === 401, last.text);
+  for (let i = 0; i < 10; i++) last = await login('vice1', 'bad' + i, { ip: '192.0.2.20' });
+  ok('counter cleared: 10 more attempts allowed after success', last.status === 401, last.text);
 }
 
-console.log('\n== username-login: IP spraying limit ==');
+console.log('\n== username-login: distributed guessing and spraying caps ==');
 {
+  await db.exec('DELETE FROM private.login_attempts');
   let r;
-  for (let i = 0; i < 31; i++) r = await login(`spray.user${i}`, 'x', { ip: '203.0.113.50' });
-  ok('31st attempt from one IP across usernames → 429', r.status === 429, r.text);
+  for (let n = 0; n < 20; n++) for (let i = 0; i < 5; i++) await login('teacher2', 'g' + i, { ip: `100.64.0.${n + 1}` });
+  r = await login('teacher2', 'Other123', { ip: '100.64.1.1' });
+  ok('username cap: 100 failures from 20 networks → 429 from any network', r.status === 429, r.text);
+
+  await db.exec('DELETE FROM private.login_attempts');
+  for (let i = 0; i < 200; i++) await login(`spray.user${i}`, 'x', { ip: '203.0.113.50' });
+  r = await login('spray.final', 'x', { ip: '203.0.113.50' });
+  ok('network cap: 201st failure across usernames from one network → 429', r.status === 429, r.text);
+  await db.exec('DELETE FROM private.login_attempts');
 }
+
 
 console.log('\n== username-login: fail closed ==');
 {

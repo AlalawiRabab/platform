@@ -186,7 +186,8 @@ if (rep) {
   ok('precheck S7: 0 files would be cut (incl. encoded Arabic legacy URL)',
     s7.active_year_file_evidences === 3 && s7.object_found_by_new_key === 3 && s7.WOULD_BE_CUT_old_match_but_not_new_key === 0,
     JSON.stringify(s7));
-  ok('precheck S9: resp exact match counted', rep.S9_tasks_readiness.resp_exact_unique_teacher_match === 1,
+  ok('precheck S9: task counts, no name matching', rep.S9_tasks_readiness.tasks_active_year === 2
+    && rep.S9_tasks_readiness.tasks_with_resp === 1 && !('resp_exact_unique_teacher_match' in rep.S9_tasks_readiness),
     JSON.stringify(rep.S9_tasks_readiness));
   const txt = JSON.stringify(rep);
   ok('precheck output has no names/emails/file paths', !txt.includes('المعلمة') && !txt.includes('@x') && !txt.includes('active.pdf'));
@@ -234,9 +235,13 @@ catch (e) { ok('re-run OK', false, e.message); }
 console.log('\n== Data preservation ==');
 {
   const r = await db.query(`SELECT count(*) FILTER (WHERE name LIKE 'مهمة قديمة%')::int c,
-    count(*) FILTER (WHERE name LIKE 'مهمة قديمة%' AND start_at IS NULL AND end_at IS NULL AND assignee_id IS NULL)::int legacy,
-    count(*) FILTER (WHERE due_date = '2026-09-10')::int due FROM public.tasks`);
-  ok('legacy tasks kept, times/assignee left NULL, due_date untouched', r.rows[0].c === 2 && r.rows[0].legacy === 2 && r.rows[0].due === 1, JSON.stringify(r.rows));
+    count(*) FILTER (WHERE name LIKE 'مهمة قديمة%' AND start_at IS NULL AND end_at IS NULL)::int legacy,
+    count(*) FILTER (WHERE due_date = '2026-09-10')::int due,
+    count(*) FILTER (WHERE name = 'مهمة قديمة 1' AND resp = 'المعلمة')::int resp FROM public.tasks`);
+  ok('legacy tasks kept, times NULL, due_date and «المسؤولة» untouched',
+    r.rows[0].c === 2 && r.rows[0].legacy === 2 && r.rows[0].due === 1 && r.rows[0].resp === 1, JSON.stringify(r.rows));
+  const col = await db.query(`SELECT count(*)::int c FROM information_schema.columns WHERE table_name='tasks' AND column_name='assignee_id'`);
+  ok('no per-teacher assignment column (shared account model)', col.rows[0].c === 0);
   const rp = await db.query(`SELECT count(*)::int c FROM public.reports`);
   ok('reports rows kept (2)', rp.rows[0].c === 2);
   const ob = await db.query(`SELECT count(*)::int c FROM storage.objects`);
@@ -248,14 +253,11 @@ console.log('\n== Tasks: schedule & Drive evidence (vice/admin) ==');
 const S = '2026-10-01T06:00:00Z', E = '2026-10-01T09:30:00Z';
 let taskId;
 await as('vice', async () => {
-  let r = await tryQ(`INSERT INTO public.tasks (name, resp, assignee_id, school_year_id, start_at, end_at, due_date, evidence_drive_url, evidence_title)
-    VALUES ('مهمة جديدة','المعلمة',$4,$1,$2,$3,'2026-10-01','https://drive.google.com/file/d/abc/view','محضر') RETURNING id, evidence_added_by, evidence_approved`,
-    [Y_ACTIVE, S, E, U.teacher]);
-  ok('vice adds task with start/end + Drive link + assignee', !r.error && r.rows[0].evidence_added_by === U.vice && r.rows[0].evidence_approved === false, JSON.stringify(r));
+  let r = await tryQ(`INSERT INTO public.tasks (name, resp, school_year_id, start_at, end_at, due_date, evidence_drive_url, evidence_title)
+    VALUES ('مهمة جديدة','أ. نورة',$1,$2,$3,'2026-10-01','https://drive.google.com/file/d/abc/view','محضر') RETURNING id, evidence_added_by, evidence_approved`,
+    [Y_ACTIVE, S, E]);
+  ok('vice adds task with start/end + Drive link + «المسؤولة»', !r.error && r.rows[0].evidence_added_by === U.vice && r.rows[0].evidence_approved === false, JSON.stringify(r));
   taskId = r.rows?.[0]?.id;
-
-  r = await tryQ(`INSERT INTO public.tasks (name, assignee_id, school_year_id, start_at, end_at) VALUES ('إسناد خاطئ',$2,$1,$3,$4)`, [Y_ACTIVE, U.admin, S, E]);
-  ok('assignee must be a teacher account', !!r.error && r.error.includes('حساب معلمة'), JSON.stringify(r));
 
   r = await tryQ(`INSERT INTO public.tasks (name, school_year_id, start_at, end_at) VALUES ('معكوسة',$1,$2,$3)`, [Y_ACTIVE, E, S]);
   ok('end before start rejected', !!r.error && r.error.includes('tasks_schedule_order_check'), JSON.stringify(r));
@@ -287,55 +289,68 @@ await as('vice', async () => {
 
   r = await tryQ(`DELETE FROM public.tasks WHERE id=$1`, [taskId]);
   ok('vice cannot delete task (0 rows)', !r.error && r.affected === 0, JSON.stringify(r));
-
-  r = await tryQ(`SELECT count(*)::int c FROM public.list_task_assignees()`);
-  ok('vice lists 2 teacher accounts for assignment', r.rows?.[0]?.c === 2, JSON.stringify(r));
 });
 
-// ---------- teacher: evidence on her own task only ----------
-console.log('\n== Teacher: Drive evidence on her assigned task only ==');
-await db.exec(`INSERT INTO public.tasks (name, assignee_id, school_year_id) VALUES ('مهمة مؤرشفة للمعلمة','${U.teacher}','${Y_ARCH}')`);
-await as('teacher', async () => {
-  let r = await tryQ(`SELECT id, name FROM public.tasks`);
-  ok('teacher sees only her active-year assigned task (1)', r.rows?.length === 1 && r.rows[0].id === taskId, JSON.stringify(r));
-  r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://drive.google.com/file/d/teacher/view', evidence_title='صور التنفيذ'
-    WHERE id=$1 RETURNING evidence_added_by, evidence_approved`, [taskId]);
-  ok('teacher attaches Drive evidence to her task (stamped, unapproved)',
-    !r.error && r.rows?.[0]?.evidence_added_by === U.teacher && r.rows[0].evidence_approved === false, JSON.stringify(r));
-  r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://evil.example/x' WHERE id=$1`, [taskId]);
-  ok('teacher: invalid URL rejected', !!r.error, JSON.stringify(r));
-  for (const [col, val] of [['status', `'done'`], ['name', `'x'`], ['start_at', `start_at + interval '1 hour'`],
-                            ['assignee_id', `'${U.teacher2}'`], ['resp', `'x'`], ['evidence_approved', 'true']]) {
-    r = await tryQ(`UPDATE public.tasks SET ${col}=${val} WHERE id=$1`, [taskId]);
-    ok(`teacher cannot change ${col}`, !!r.error, JSON.stringify(r));
-  }
-  r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://drive.google.com/x' WHERE name='مهمة مؤرشفة للمعلمة'`);
-  ok('teacher cannot touch her archived-year task (0 rows)', !r.error && r.affected === 0, JSON.stringify(r));
-  r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://drive.google.com/x' WHERE name LIKE 'مهمة قديمة%'`);
-  ok('teacher cannot touch unassigned tasks (0 rows)', !r.error && r.affected === 0, JSON.stringify(r));
-  r = await tryQ(`INSERT INTO public.tasks (name, assignee_id, school_year_id, start_at, end_at) VALUES ('x',$4,$1,$2,$3)`, [Y_ACTIVE, S, E, U.teacher]);
-  ok('teacher cannot insert task', !!r.error, JSON.stringify(r));
-  r = await tryQ(`DELETE FROM public.tasks WHERE id=$1`, [taskId]);
-  ok('teacher cannot delete task (0 rows)', !r.error && r.affected === 0, JSON.stringify(r));
-  r = await tryQ(`SELECT count(*)::int c FROM public.list_task_assignees()`);
-  ok('teacher gets empty assignee list', r.rows?.[0]?.c === 0, JSON.stringify(r));
+// ---------- shared teacher account: evidence on any visible active-year task ----------
+console.log('\n== Shared teacher account: Drive evidence on active-year tasks ==');
+await db.exec(`INSERT INTO public.tasks (name, resp, school_year_id) VALUES ('مهمة سنة مؤرشفة','المعلمة','${Y_ARCH}')`);
+await db.exec(`INSERT INTO public.tasks (name, resp, school_year_id, evidence_drive_url, evidence_approved) VALUES
+  ('مهمة شاهدها معتمد','أ. هند','${Y_ACTIVE}','https://drive.google.com/approved', false)`);
+await as('admin', async () => {
+  const r = await tryQ(`UPDATE public.tasks SET evidence_approved=true WHERE name='مهمة شاهدها معتمد'`);
+  ok('setup: admin approves one task evidence', !r.error && r.affected === 1, JSON.stringify(r));
 });
-await as('teacher2', async () => {
-  let r = await tryQ(`SELECT count(*)::int c FROM public.tasks`);
-  ok('other teacher sees 0 tasks', r.rows?.[0]?.c === 0, JSON.stringify(r));
-  r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://drive.google.com/other' WHERE id=$1`, [taskId]);
-  ok('other teacher cannot attach evidence to it (0 rows)', !r.error && r.affected === 0, JSON.stringify(r));
-});
+{
+  const exp = (await db.query(`SELECT count(*)::int c FROM public.tasks WHERE school_year_id = $1`, [Y_ACTIVE])).rows[0].c;
+  await as('teacher', async () => {
+    let r = await tryQ(`SELECT name, resp, school_year_id FROM public.tasks`);
+    ok(`shared account sees all ${exp} active-year tasks, none archived`,
+      r.rows?.length === exp && r.rows.every(t => t.school_year_id === Y_ACTIVE), JSON.stringify(r));
+    ok('shared account sees «المسؤولة» of each task', r.rows?.some(t => t.resp === 'أ. نورة') && r.rows?.some(t => t.resp === 'المعلمة'), JSON.stringify(r.rows));
+
+    r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://drive.google.com/file/d/teacher/view', evidence_title='صور التنفيذ'
+      WHERE id=$1 RETURNING evidence_added_by, evidence_approved, resp`, [taskId]);
+    ok('shared account attaches Drive evidence (stamped with shared account id, unapproved, resp unchanged)',
+      !r.error && r.rows?.[0]?.evidence_added_by === U.teacher && r.rows[0].evidence_approved === false && r.rows[0].resp === 'أ. نورة', JSON.stringify(r));
+    r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://docs.google.com/document/d/legacy' WHERE name='مهمة قديمة 2' RETURNING id`);
+    ok('shared account attaches evidence to a legacy untimed task', !r.error && r.affected === 1, JSON.stringify(r));
+    r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://drive.google.com/file/d/fixed/view' WHERE id=$1`, [taskId]);
+    ok('shared account can replace an unapproved link', !r.error && r.affected === 1, JSON.stringify(r));
+    r = await tryQ(`UPDATE public.tasks SET evidence_drive_url=NULL WHERE id=$1`, [taskId]);
+    ok('shared account cannot delete an attached link', !!r.error, JSON.stringify(r));
+    r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://evil.example/x' WHERE id=$1`, [taskId]);
+    ok('shared account: invalid URL rejected', !!r.error, JSON.stringify(r));
+    for (const [col, val] of [['status', `'done'`], ['name', `'x'`], ['start_at', `start_at + interval '1 hour'`],
+                              ['end_at', `end_at + interval '1 hour'`], ['resp', `'x'`], ['priority', `'low'`],
+                              ['notes', `'x'`], ['due_date', `'2030-01-01'`], ['school_year_id', `'${Y_ARCH}'`],
+                              ['evidence_approved', 'true'], ['evidence_approved_by', `'${U.teacher}'`]]) {
+      r = await tryQ(`UPDATE public.tasks SET ${col}=${val} WHERE id=$1`, [taskId]);
+      ok(`shared account cannot change ${col}`, !!r.error, JSON.stringify(r));
+    }
+    r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://drive.google.com/x' WHERE name='مهمة سنة مؤرشفة'`);
+    ok('shared account cannot attach to archived-year task (0 rows)', !r.error && r.affected === 0, JSON.stringify(r));
+    r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://drive.google.com/other' WHERE name='مهمة شاهدها معتمد'`);
+    ok('shared account cannot change approved evidence (0 rows)', !r.error && r.affected === 0, JSON.stringify(r));
+    r = await tryQ(`INSERT INTO public.tasks (name, school_year_id, start_at, end_at) VALUES ('x',$1,$2,$3)`, [Y_ACTIVE, S, E]);
+    ok('shared account cannot insert task', !!r.error, JSON.stringify(r));
+    r = await tryQ(`DELETE FROM public.tasks WHERE id=$1`, [taskId]);
+    ok('shared account cannot delete task (0 rows)', !r.error && r.affected === 0, JSON.stringify(r));
+  });
+  const a = (await db.query(`SELECT evidence_drive_url FROM public.tasks WHERE name='مهمة شاهدها معتمد'`)).rows[0];
+  ok('approved evidence unchanged in DB', a.evidence_drive_url === 'https://drive.google.com/approved');
+  const ar = (await db.query(`SELECT evidence_drive_url FROM public.tasks WHERE name='مهمة سنة مؤرشفة'`)).rows[0];
+  ok('archived-year task unchanged in DB', ar.evidence_drive_url === null);
+}
 
 await as('admin', async () => {
   let r = await tryQ(`UPDATE public.tasks SET evidence_title='x', evidence_drive_url=NULL, evidence_approved=true WHERE id=$1`, [taskId]);
   ok('approval without link rejected', !!r.error, JSON.stringify(r));
   r = await tryQ(`UPDATE public.tasks SET evidence_approved=true WHERE id=$1 RETURNING evidence_approved_by, evidence_added_by`, [taskId]);
-  ok('admin (leader) approves teacher evidence', !r.error && r.rows[0].evidence_approved_by === U.admin && r.rows[0].evidence_added_by === U.teacher, JSON.stringify(r));
+  ok('admin (leader) approves shared-account evidence', !r.error && r.rows[0].evidence_approved_by === U.admin && r.rows[0].evidence_added_by === U.teacher, JSON.stringify(r));
 });
 await as('teacher', async () => {
   const r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://drive.google.com/new' WHERE id=$1`, [taskId]);
-  ok('approved evidence locked for teacher', !!r.error, JSON.stringify(r));
+  ok('approved evidence locked for shared account (0 rows)', !r.error && r.affected === 0, JSON.stringify(r));
 });
 await as('vice', async () => {
   let r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://docs.google.com/document/d/zz' WHERE id=$1`, [taskId]);
@@ -363,49 +378,59 @@ await as('vice', async () => {
   ok('legacy untimed task still editable after step 4', !r.error && r.affected === 1, JSON.stringify(r));
 });
 
-// ---------- step 5: login throttle ----------
+// ---------- step 5: login throttle (shared teacher account, one school network) ----------
 console.log('\n== Step 5: login throttle ==');
 await apply('phase_login_throttle_review.sql');
-const H = (c) => c.repeat(64);
+const hx = (tag) => tag.padStart(64, '0');
+const USER = hx('1111'), SCHOOL = hx('5c'), HOME = hx('40e'), PAIR_SCHOOL = hx('a5'), PAIR_HOME = hx('a40');
+const begin = (u, ip, pr) => tryQ(`SELECT public.login_throttle_begin($1, $2, $3) AS r`, [u, ip, pr]);
+const success = (pr, id) => tryQ(`SELECT public.login_throttle_success($1, $2::uuid)`, [pr, id]);
 await as('service', async () => {
-  let last;
-  for (let i = 1; i <= 5; i++) {
-    last = await tryQ(`SELECT public.login_throttle_begin($1, $2) AS r`, [H('a'), H('1')]);
+  let r;
+  for (let round = 0; round < 3; round++) {
+    for (let i = 0; i < 9; i++) await begin(USER, SCHOOL, PAIR_SCHOOL);
+    r = await begin(USER, SCHOOL, PAIR_SCHOOL);
+    await success(PAIR_SCHOOL, r.rows[0].r.attempt_id);
   }
-  ok('5 attempts allowed', last.rows?.[0]?.r?.allowed === true, JSON.stringify(last));
-  let r = await tryQ(`SELECT public.login_throttle_begin($1, $2) AS r`, [H('a'), H('1')]);
-  ok('6th attempt for same username blocked with retry_after',
+  ok('school: 27 scattered typos across the day never lock (each success resets the school counter)', r.rows?.[0]?.r?.allowed === true, JSON.stringify(r));
+
+  for (let i = 0; i < 10; i++) r = await begin(USER, SCHOOL, PAIR_SCHOOL);
+  ok('school: 10 consecutive failures allowed', r.rows?.[0]?.r?.allowed === true, JSON.stringify(r));
+  r = await begin(USER, SCHOOL, PAIR_SCHOOL);
+  ok('school: 11th consecutive failure → blocked with retry_after ≤ 900s',
     r.rows?.[0]?.r?.allowed === false && r.rows[0].r.retry_after > 0 && r.rows[0].r.retry_after <= 900, JSON.stringify(r));
-  r = await tryQ(`SELECT public.login_throttle_begin($1, $2) AS r`, [H('a'), H('2')]);
-  ok('changing IP does not bypass username limit', r.rows?.[0]?.r?.allowed === false, JSON.stringify(r));
-  r = await tryQ(`SELECT public.login_throttle_begin($1, $2) AS r`, [H('b'), H('1')]);
-  ok('other username still allowed', r.rows?.[0]?.r?.allowed === true, JSON.stringify(r));
-  r = await tryQ(`SELECT public.login_throttle_begin($1, $2) AS r`, ['not-a-hash', H('1')]);
+  r = await begin(USER, HOME, PAIR_HOME);
+  ok('same shared account from another network still allowed (school lock is local)', r.rows?.[0]?.r?.allowed === true, JSON.stringify(r));
+  r = await begin(hx('2222'), SCHOOL, hx('b5'));
+  ok('admin/vice username from the school network still allowed', r.rows?.[0]?.r?.allowed === true, JSON.stringify(r));
+  r = await tryQ(`SELECT public.login_throttle_begin($1, $2, $3) AS r`, ['not-a-hash', SCHOOL, PAIR_SCHOOL]);
   ok('raw (unhashed) key rejected', !!r.error, JSON.stringify(r));
-});
-await db.exec(`UPDATE private.login_attempts SET attempted_at = attempted_at - interval '16 minutes' WHERE key = 'u:${H('a')}'`);
-await as('service', async () => {
-  let r = await tryQ(`SELECT public.login_throttle_begin($1, $2) AS r`, [H('a'), H('3')]);
-  ok('username unblocked after window passes', r.rows?.[0]?.r?.allowed === true, JSON.stringify(r));
-  for (let i = 0; i < 3; i++) await tryQ(`SELECT public.login_throttle_begin($1, $2)`, [H('c'), H('4')]);
-  r = await tryQ(`SELECT public.login_throttle_begin($1, $2) AS r`, [H('c'), H('4')]);
-  const s = await tryQ(`SELECT public.login_throttle_success($1, $2::uuid)`, [H('c'), r.rows[0].r.attempt_id]);
-  ok('service_role can record success', !s.error, JSON.stringify(s));
   const t = await tryQ(`SELECT count(*) FROM private.login_attempts`);
   ok('service_role has no direct table access (functions only)', !!t.error, JSON.stringify(t));
 });
+await db.exec(`UPDATE private.login_attempts SET attempted_at = attempted_at - interval '16 minutes' WHERE key = 'pr:${PAIR_SCHOOL}'`);
+await as('service', async () => {
+  const r = await begin(USER, SCHOOL, PAIR_SCHOOL);
+  ok('school unblocked after the 15-minute window', r.rows?.[0]?.r?.allowed === true, JSON.stringify(r));
+});
 {
-  const c = await db.query(`SELECT count(*)::int n FROM private.login_attempts WHERE key = $1`, ['u:' + H('c')]);
-  ok('successful login clears username counter', c.rows[0].n === 0, JSON.stringify(c.rows));
-}
-{
-  for (let i = 0; i < 30; i++) await db.query(`SELECT public.login_throttle_begin($1, $2)`, [(i.toString(16).padStart(2, '0')).repeat(32), H('9')]);
-  const r = await db.query(`SELECT public.login_throttle_begin($1, $2) AS r`, [H('e'), H('9')]);
-  ok('IP limit (30 / 15 min) blocks spraying across usernames', r.rows[0].r.allowed === false, JSON.stringify(r.rows));
+  // distributed guessing: 100 failures from 20 networks → username capped everywhere
+  await db.exec(`DELETE FROM private.login_attempts`);
+  for (let n = 0; n < 20; n++) for (let i = 0; i < 5; i++)
+    await db.query(`SELECT public.login_throttle_begin($1, $2, $3)`, [USER, hx('e' + n.toString(16)), hx('f' + n.toString(16))]);
+  const r = await db.query(`SELECT public.login_throttle_begin($1, $2, $3) AS r`, [USER, hx('ee'), hx('fe')]);
+  ok('username cap: 100 failures from many networks → blocked (distributed guessing)', r.rows[0].r.allowed === false, JSON.stringify(r.rows));
+
+  await db.exec(`DELETE FROM private.login_attempts`);
+  for (let i = 0; i < 200; i++)
+    await db.query(`SELECT public.login_throttle_begin($1, $2, $3)`, [hx('c' + i.toString(16)), SCHOOL, hx('d' + i.toString(16))]);
+  const r2 = await db.query(`SELECT public.login_throttle_begin($1, $2, $3) AS r`, [hx('cfff'), SCHOOL, hx('dfff')]);
+  ok('network cap: 200 failures across usernames from one network → blocked (spraying)', r2.rows[0].r.allowed === false, JSON.stringify(r2.rows));
+  await db.exec(`DELETE FROM private.login_attempts`);
 }
 for (const role of ['anon', 'teacher', 'admin']) {
   await as(role, async () => {
-    const r = await tryQ(`SELECT public.login_throttle_begin($1, $2)`, [H('f'), H('1')]);
+    const r = await tryQ(`SELECT public.login_throttle_begin($1, $2, $3)`, [USER, SCHOOL, PAIR_SCHOOL]);
     ok(`${role} cannot call login_throttle_begin`, !!r.error, JSON.stringify(r));
     const t = await tryQ(`SELECT count(*) FROM private.login_attempts`);
     ok(`${role} cannot read private.login_attempts`, !!t.error, JSON.stringify(t));
@@ -456,8 +481,8 @@ await as('anon', async () => {
   }
   let r = await tryQ(`SELECT public.is_admin()`);
   ok('anon cannot execute public functions', !!r.error, JSON.stringify(r));
-  r = await tryQ(`SELECT * FROM public.list_task_assignees()`);
-  ok('anon cannot list assignees', !!r.error, JSON.stringify(r));
+  r = await tryQ(`UPDATE public.tasks SET evidence_drive_url='https://drive.google.com/x'`);
+  ok('anon cannot attach task evidence', !!r.error, JSON.stringify(r));
 });
 
 // ---------- rollbacks ----------

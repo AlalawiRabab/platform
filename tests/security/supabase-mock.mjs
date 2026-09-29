@@ -16,11 +16,11 @@ export function createClient(url, key) {
       if (S().rpcFail) return { data: null, error: { message: 'function does not exist' } };
       try {
         if (fn === 'login_throttle_begin') {
-          const r = await asService('SELECT public.login_throttle_begin($1, $2) AS r', [args.p_user_key, args.p_ip_key]);
+          const r = await asService('SELECT public.login_throttle_begin($1, $2, $3) AS r', [args.p_user_key, args.p_ip_key, args.p_pair_key]);
           return { data: r.rows[0].r, error: null };
         }
         if (fn === 'login_throttle_success') {
-          await asService('SELECT public.login_throttle_success($1, $2::uuid)', [args.p_user_key, args.p_attempt_id || null]);
+          await asService('SELECT public.login_throttle_success($1, $2::uuid)', [args.p_pair_key, args.p_attempt_id || null]);
           return { data: null, error: null };
         }
       } catch (e) { return { data: null, error: { message: e.message } }; }

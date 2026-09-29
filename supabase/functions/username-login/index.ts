@@ -110,7 +110,7 @@ async function sha256Hex(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-/** عنوان العميل كما تمرّره منصة Supabase؛ قد يُزوَّر خارج المنصة لذا الحد الأساسي لكل اسم مستخدم. */
+/** عنوان العميل كما تمرّره منصة Supabase. تغيير العنوان يبقى محكومًا بسقف الاسم العام. */
 function clientIp(req: Request): string {
   const cf = (req.headers.get('cf-connecting-ip') || '').trim()
   if (cf) return cf
@@ -212,12 +212,16 @@ Deno.serve(async (req) => {
     const admin = createClient(supabaseUrl, serviceKey)
 
     // 0) حد المحاولات قبل أي بحث أو تحقق — يُحتسب لأسماء غير موجودة أيضًا
-    const userKey = await sha256Hex(username.toLowerCase())
+    //    الحد الأساسي لكل (اسم + شبكة): حساب المعلمات مشترك ويُستخدم من شبكة المدرسة نفسها
+    const userLower = username.toLowerCase()
     const ip = clientIp(req)
+    const userKey = await sha256Hex(userLower)
     const ipKey = ip ? await sha256Hex(ip) : ''
+    const pairKey = await sha256Hex(`${userLower}|${ip}`)
     const { data: throttle, error: throttleErr } = await admin.rpc('login_throttle_begin', {
       p_user_key: userKey,
       p_ip_key: ipKey,
+      p_pair_key: pairKey,
     })
     if (throttleErr || !throttle || typeof throttle !== 'object') {
       return json(req, { error: 'operation_failed' }, 503)
@@ -272,7 +276,7 @@ Deno.serve(async (req) => {
       return authFailed(req)
     }
 
-    await admin.rpc('login_throttle_success', { p_user_key: userKey, p_attempt_id: attemptId })
+    await admin.rpc('login_throttle_success', { p_pair_key: pairKey, p_attempt_id: attemptId })
 
     const session = signInData.session
     return json(req, {

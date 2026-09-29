@@ -554,9 +554,6 @@
         <div class="form-group"><label>اسم المهمة <span class="req">*</span></label><input type="text" id="task-name" placeholder="اسم المهمة"/></div>
         <div class="form-group"><label>المسؤولة</label><input type="text" id="task-resp" placeholder="اسم المسؤولة"/></div>
       </div>
-      <div class="form-group"><label>إسناد إلى حساب معلمة (لتتمكن من إرفاق الشاهد)</label>
-        <select id="task-assignee" onchange="onTaskAssigneeChange()"><option value="">— بدون إسناد لحساب —</option></select>
-      </div>
       <div class="form-row">
         <div class="form-group"><label>بداية المهمة (تاريخ ووقت) <span class="req">*</span></label><input type="datetime-local" id="task-start"/><div class="hijri-preview" id="task-start-hijri"></div></div>
         <div class="form-group"><label>نهاية المهمة (تاريخ ووقت) <span class="req">*</span></label><input type="datetime-local" id="task-end"/><div class="hijri-preview" id="task-end-hijri"></div></div>
@@ -588,7 +585,7 @@
   </div>
 </div>
 
-<!-- Task Evidence Modal (المعلمة: شاهد مهمتها فقط) -->
+<!-- Task Evidence Modal (حساب المعلمات المشترك: رابط الشاهد واسمه فقط) -->
 <div id="task-evidence-modal" class="modal-overlay hidden">
   <div class="modal">
     <div class="modal-header">
@@ -600,7 +597,7 @@
       <p class="field-hint" id="task-ev-task-name"></p>
       <div class="form-group"><label>رابط Google Drive <span class="req">*</span></label><input type="url" id="task-ev-url" dir="ltr" maxlength="2048" placeholder="https://drive.google.com/..."/></div>
       <div class="form-group"><label>اسم الشاهد (اختياري)</label><input type="text" id="task-ev-title" maxlength="200" placeholder="مثال: محضر الاجتماع"/></div>
-      <p class="field-hint">تأكد أن مشاركة الملف في Drive تسمح لإدارة المدرسة بفتحه. يُعتمد الشاهد من القائدة.</p>
+      <p class="field-hint">تأكدي أن مشاركة الملف في Drive تسمح لإدارة المدرسة بفتحه. يمكن استبدال الرابط قبل اعتماده، ويُعتمد الشاهد من القائدة.</p>
     </div>
     <div class="modal-footer">
       <button class="btn-primary" id="task-ev-save-btn" onclick="saveTaskEvidence()">💾 حفظ الشاهد</button>

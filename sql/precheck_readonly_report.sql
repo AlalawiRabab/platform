@@ -101,7 +101,7 @@ BEGIN
   );
 END $$;
 
--- S9: جاهزية ترحيل المهام + مرشّحات الإسناد (أعداد فقط)
+-- S9: جاهزية ترحيل المهام (أعداد فقط؛ «المسؤولة» لا تُطابَق بأي حساب)
 CREATE OR REPLACE FUNCTION pg_temp.s9()
 RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE r jsonb;
@@ -109,19 +109,14 @@ BEGIN
   IF to_regclass('public.tasks') IS NULL THEN RETURN jsonb_build_object('tasks_exists', false); END IF;
   SELECT jsonb_build_object(
     'tasks_total', COUNT(*),
+    'tasks_active_year', COUNT(*) FILTER (WHERE EXISTS (
+        SELECT 1 FROM public.school_years sy WHERE sy.id = t.school_year_id AND sy.is_active)),
+    'tasks_without_school_year', COUNT(*) FILTER (WHERE t.school_year_id IS NULL),
     'tasks_with_due_date', COUNT(*) FILTER (WHERE t.due_date IS NOT NULL),
-    'tasks_with_resp', COUNT(*) FILTER (WHERE NULLIF(btrim(t.resp), '') IS NOT NULL),
-    'resp_exact_unique_teacher_match', COUNT(*) FILTER (WHERE (
-        SELECT COUNT(*) FROM public.profiles p WHERE p.role='teacher' AND btrim(p.name) = btrim(t.resp)) = 1),
-    'resp_ambiguous_teacher_match', COUNT(*) FILTER (WHERE (
-        SELECT COUNT(*) FROM public.profiles p WHERE p.role='teacher' AND btrim(p.name) = btrim(t.resp)) > 1),
-    'resp_no_teacher_match', COUNT(*) FILTER (WHERE NULLIF(btrim(t.resp), '') IS NOT NULL AND NOT EXISTS (
-        SELECT 1 FROM public.profiles p WHERE p.role='teacher' AND btrim(p.name) = btrim(t.resp)))
+    'tasks_with_resp', COUNT(*) FILTER (WHERE NULLIF(btrim(t.resp), '') IS NOT NULL)
   ) INTO r FROM public.tasks t;
   RETURN r || jsonb_build_object(
-    'teacher_profiles', (SELECT COUNT(*) FROM public.profiles WHERE role='teacher'),
-    'teacher_duplicate_names', (SELECT COUNT(*) FROM (SELECT btrim(name) FROM public.profiles
-        WHERE role='teacher' GROUP BY 1 HAVING COUNT(*) > 1) d),
+    'teacher_accounts', (SELECT COUNT(*) FROM public.profiles WHERE role='teacher'),
     'new_columns_already_present', (SELECT COALESCE(jsonb_agg(column_name ORDER BY column_name), '[]')
         FROM information_schema.columns WHERE table_schema='public' AND table_name='tasks'
         AND column_name IN ('start_at','end_at','assignee_id','evidence_drive_url','evidence_title','evidence_approved')),

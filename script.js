@@ -157,7 +157,6 @@ let indicatorsCache  = {};
 let evidenceRequirementsCache = [];
 let evidenceRequirementsReady = false;
 let initiativesCache = [];
-let taskAssigneesCache = null;
 let tasksCache       = [];
 let evidencesCache   = [];
 let teachersCache    = [];
@@ -206,7 +205,7 @@ const PERMS = {
     viewTeacherLinks:true,addTeacherLink:true,
     editSettings:false,manageUsers:false,
   },
-  // المعلمة: مشاهدة + إرفاق شاهد فقط (للمؤشرات، ولمهامها المسندة إليها) — بلا اعتماد
+  // حساب المعلمات المشترك: مشاهدة + إرفاق شاهد فقط (للمؤشرات، ولمهام السنة النشطة) — بلا اعتماد
   teacher:{
     addProgram:false,editProgram:false,deleteProgram:false,
     addIndicator:false,deleteIndicator:false,toggleIndicator:false,
@@ -619,7 +618,6 @@ async function handleSignedOut() {
   currentUser = null;
   _sessionBootstrapDone = false;
   clearLegacySessionArtifacts();
-  taskAssigneesCache = null;
   [programsCache, initiativesCache, tasksCache, evidencesCache, teachersCache] = [[], [], [], [], []];
   indicatorsCache = {};
   settingsCache = {};
@@ -881,7 +879,6 @@ window.doLogin = doLogin;
 async function doLogout() {
   _sessionBootstrapDone = false;
   currentUser = null;
-  taskAssigneesCache = null;
   [programsCache, initiativesCache, tasksCache, evidencesCache, teachersCache] = [[], [], [], [], []];
   indicatorsCache = {};
   settingsCache = {};
@@ -2488,7 +2485,6 @@ function mapTaskRow(r) {
   return {
     id:r.id, name:r.name||'', resp:r.resp||'', due:r.due_date||'',
     priority:r.priority||'medium', status:r.status||'pending', notes:r.notes||'',
-    assignee_id: r.assignee_id || null,
     start_at: r.start_at || null,
     end_at: r.end_at || null,
     evidence_url: r.evidence_drive_url || '',
@@ -2569,7 +2565,6 @@ function taskWritePayload(t) {
   const payload = {
     name:t.name, resp:t.resp||null, due_date:t.due||null,
     priority:t.priority, status:t.status, notes:t.notes||null,
-    assignee_id: t.assignee_id || null,
     start_at: t.start_at, end_at: t.end_at,
     evidence_drive_url: t.evidence_url || null,
     evidence_title: t.evidence_url ? (t.evidence_title || null) : null,
@@ -2604,7 +2599,7 @@ async function sbUpdateTask(t) {
   return saved;
 }
 
-/** المعلمة: شاهد مهمتها فقط — RLS (tasks_update_assignee_evidence) والمشغّل يرفضان أي عمود آخر */
+/** حساب المعلمات المشترك: رابط الشاهد واسمه فقط — RLS (tasks_update_teacher_evidence) والمشغّل يرفضان أي عمود آخر */
 async function sbUpdateTaskEvidence(id, url, title) {
   requireSb();
   const { data, error } = await sb.from('tasks')
@@ -2617,19 +2612,6 @@ async function sbUpdateTaskEvidence(id, url, title) {
   const i = tasksCache.findIndex(x => x.id === id);
   if (i !== -1) tasksCache[i] = saved;
   return saved;
-}
-
-/** قائمة المعلمات للإسناد (RPC list_task_assignees — للمدير والوكيلة) */
-async function fetchTaskAssignees() {
-  if (taskAssigneesCache) return taskAssigneesCache;
-  if (!sb) return [];
-  const { data, error } = await sb.rpc('list_task_assignees');
-  if (error) {
-    console.error('[fetchTaskAssignees]', error.message);
-    return [];
-  }
-  taskAssigneesCache = (data || []).map(r => ({ id: r.id, name: r.name || '' }));
-  return taskAssigneesCache;
 }
 
 async function sbDeleteTask(id) {
@@ -4321,9 +4303,6 @@ function renderTasks() {
   const canWrite = !isYearReadOnlyMode();
 
   const isTeacher = currentUser?.role === 'teacher';
-  if (isTeacher) {
-    tasks = tasks.filter(t => t.assignee_id && t.assignee_id === currentUser.id);
-  }
 
   if (_taskFilter === 'late') {
     tasks = tasks.filter(t => isTaskLate(t, now));
@@ -4437,33 +4416,7 @@ function openTaskModal(id) {
   document.getElementById('task-evidence-lock-hint')?.classList.toggle('hidden', !lockEvidence);
   refreshHijriPreview('task-start');
   refreshHijriPreview('task-end');
-  fillTaskAssigneeSelect(id ? (tasksCache.find(x => x.id === id)?.assignee_id || '') : '');
   openModal('task-modal');
-}
-
-/** الإسناد الحالي يُضبط فورًا حتى لا يُمسح عند الحفظ قبل وصول القائمة أو عند فشلها */
-async function fillTaskAssigneeSelect(selectedId) {
-  const sel = document.getElementById('task-assignee');
-  if (!sel) return;
-  const blank = '<option value="">— بدون إسناد لحساب —</option>';
-  const currentOpt = id => `<option value="${esc(id)}">(الحساب المسند حاليًا)</option>`;
-  sel.innerHTML = blank + (selectedId ? currentOpt(selectedId) : '');
-  sel.value = selectedId || '';
-  const editId = document.getElementById('task-edit-id')?.value || '';
-  const list = await fetchTaskAssignees();
-  if ((document.getElementById('task-edit-id')?.value || '') !== editId) return;
-  const chosen = sel.value;
-  sel.innerHTML = blank + list.map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('');
-  if (chosen && !list.some(a => a.id === chosen)) sel.insertAdjacentHTML('beforeend', currentOpt(chosen));
-  sel.value = chosen;
-}
-
-function onTaskAssigneeChange() {
-  const sel = document.getElementById('task-assignee');
-  const resp = document.getElementById('task-resp');
-  if (!sel || !resp || resp.value.trim()) return;
-  const a = (taskAssigneesCache || []).find(x => x.id === sel.value);
-  if (a) resp.value = a.name;
 }
 
 function openTaskEvidenceModal(id) {
@@ -4477,7 +4430,7 @@ function openTaskEvidenceModal(id) {
   sv('task-ev-url', t.evidence_url || '');
   sv('task-ev-title', t.evidence_title || '');
   const nameEl = document.getElementById('task-ev-task-name');
-  if (nameEl) nameEl.textContent = t.name;
+  if (nameEl) nameEl.textContent = `${t.name} — المسؤولة: ${t.resp || '—'}`;
   openModal('task-evidence-modal');
 }
 
@@ -4543,7 +4496,6 @@ async function saveTask() {
     id:editId||null,
     name,
     resp:clampInput(g('task-resp')),
-    assignee_id: g('task-assignee') || null,
     due: isLegacyUntimed ? (existing.due || '') : isoToLocalDateKey(endISO),
     start_at: startISO,
     end_at: endISO,

@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { readFileSync } from 'node:fs';
-import { REPO, U, Y_ACTIVE, buildBaseline } from './sql-test.mjs';
+import { REPO, U, Y_ACTIVE, Y_ARCH, buildBaseline } from './sql-test.mjs';
 
 const TZ = process.env.TZ || '(system)';
 let pass = 0, fail = 0;
@@ -79,11 +79,7 @@ class Q {
 }
 const mockClient = {
   from: t => new Q(t),
-  rpc: async (fn) => {
-    if (fn !== 'list_task_assignees') return { data: null, error: null };
-    try { return { data: (await runAs('SELECT * FROM public.list_task_assignees()', [])).rows, error: null }; }
-    catch (e) { return { data: null, error: { code: e.code || '', message: e.message } }; }
-  },
+  rpc: async () => ({ data: null, error: null }),
   auth: {
     getSession: async () => ({ data: { session: null }, error: null }),
     getUser: async () => ({ data: { user: null }, error: null }),
@@ -115,7 +111,7 @@ async function login(role) {
   currentRole = role;
   const names = { admin: 'القائدة', vice: 'الوكيلة', teacher: 'المعلمة', teacher2: 'معلمة ثانية' };
   const appRole = role.startsWith('teacher') ? 'teacher' : role;
-  w.eval(`currentUser = { id: '${U[role]}', name: '${names[role]}', role: '${appRole}', email: '' }; taskAssigneesCache = null;
+  w.eval(`currentUser = { id: '${U[role]}', name: '${names[role]}', role: '${appRole}', email: '' };
           schoolYearsCache = []; selectedSchoolYearId = '${Y_ACTIVE}'; activeSchoolYearId = '${Y_ACTIVE}';`);
   await w.eval('fetchSchoolYears()');
   w.eval(`selectedSchoolYearId = '${Y_ACTIVE}'`);
@@ -130,13 +126,8 @@ console.log(`\n== UI tests (TZ=${TZ}) ==`);
 await login('vice');
 ok('vice: approve checkbox hidden', (w.eval("openTaskModal()"), $('task-evidence-approve-group').classList.contains('hidden')));
 ok('vice: timezone hint shown', /توقيت جهازك/.test($('task-tz-hint').textContent), $('task-tz-hint').textContent);
-await new Promise(r => setTimeout(r, 30));
-const assigneeOpts = [...$('task-assignee').options].map(o => o.value).filter(Boolean);
-ok('vice: assignee dropdown lists the 2 teacher accounts only', assigneeOpts.length === 2 && assigneeOpts.includes(U.teacher) && !assigneeOpts.includes(U.admin), JSON.stringify(assigneeOpts));
+ok('vice: no per-teacher account assignment field', !$('task-assignee'));
 setVal('task-name', 'اجتماع أولياء الأمور');
-setVal('task-assignee', U.teacher);
-w.eval('onTaskAssigneeChange()');
-ok('vice: choosing assignee fills empty «المسؤولة» for display', $('task-resp').value === 'المعلمة', $('task-resp').value);
 setVal('task-resp', 'أ. نورة');
 setVal('task-start', '2026-10-05T08:00');
 setVal('task-end', '2026-10-05T10:30');
@@ -154,7 +145,7 @@ if (TZ === 'America/New_York') ok('add: New York 08:00 stored as 12:00Z', expSta
 ok('add: due_date synced to local end date', row?.due_date === '2026-10-05', row?.due_date);
 ok('add: Drive link + title saved, not approved', row?.evidence_drive_url === 'https://drive.google.com/file/d/1AbC/view?usp=sharing' && row?.evidence_title === 'محضر الاجتماع' && row?.evidence_approved === false);
 ok('add: evidence_added_by = vice (server-side)', row?.evidence_added_by === U.vice);
-ok('add: assignee_id saved, resp kept for display', row?.assignee_id === U.teacher && row?.resp === 'أ. نورة', JSON.stringify(row));
+ok('add: «المسؤولة» saved as display text', row?.resp === 'أ. نورة' && !('assignee_id' in row), JSON.stringify(row));
 
 // card rendering
 w.eval('renderTasks()');
@@ -248,77 +239,91 @@ await w.eval('saveTask()');
 row = await dbTask('مهمة قديمة 1');
 ok('legacy: saved without times, due_date unchanged', row.notes === 'تحديث ملاحظة' && row.start_at === null && row.due_date === '2026-09-10', JSON.stringify(row));
 
-// 8) teacher: sees only her assigned task, attaches Drive evidence, nothing else
-// admin creates a second task assigned to the teacher (unapproved evidence)
+// 8) shared teacher account: sees active-year tasks with «المسؤولة», attaches Drive evidence, nothing else
 await login('admin');
 w.eval('openTaskModal()');
-await new Promise(r => setTimeout(r, 30));
 setVal('task-name', 'تنفيذ الإذاعة');
-setVal('task-assignee', U.teacher);
-w.eval('onTaskAssigneeChange()');
+setVal('task-resp', 'أ. هند');
 setVal('task-start', '2026-10-10T07:00'); setVal('task-end', '2026-10-10T08:00');
 await w.eval('saveTask()');
-const t2 = (await dbTask('تنفيذ الإذاعة'));
-ok('admin: assigned task created', t2?.assignee_id === U.teacher && t2?.resp === 'المعلمة', toast());
+const t2 = await dbTask('تنفيذ الإذاعة');
+ok('admin: task created with «المسؤولة» only', t2?.resp === 'أ. هند', toast());
+await db.exec(`INSERT INTO public.tasks (name, resp, school_year_id, start_at, end_at)
+  VALUES ('مهمة سنة مؤرشفة','أ. هند','${Y_ARCH}','2025-10-01T05:00:00Z','2025-10-01T06:00:00Z')`);
+const archivedId = (await dbTask('مهمة سنة مؤرشفة')).id;
+const activeCount = (await db.query(`SELECT count(*)::int c FROM public.tasks WHERE school_year_id = $1`, [Y_ACTIVE])).rows[0].c;
 
 await login('teacher');
-ok('teacher: tasks section allowed in nav', w.eval(`isSectionAllowed('tasks')`) === true);
-ok('teacher: sees only her 2 assigned tasks (RLS)', tasks().length === 2 && tasks().every(t => t.assignee_id === U.teacher), JSON.stringify(tasks().map(t => t.name)));
+ok('shared account: tasks section allowed in nav', w.eval(`isSectionAllowed('tasks')`) === true);
+ok(`shared account: loads all ${activeCount} active-year tasks, no archived-year task (RLS)`,
+  tasks().length === activeCount && !tasks().some(t => t.id === archivedId), JSON.stringify(tasks().map(t => t.name)));
 w.eval('renderTasks()');
-const tCard = [...$('tasks-grid').querySelectorAll('.task-card')].find(c => c.textContent.includes('تنفيذ الإذاعة'));
-const tCardApproved = [...$('tasks-grid').querySelectorAll('.task-card')].find(c => c.textContent.includes('اجتماع أولياء الأمور'));
-ok('teacher card: attach-evidence button, no edit/delete/status controls',
+const cards = [...$('tasks-grid').querySelectorAll('.task-card')];
+const tCard = cards.find(c => c.textContent.includes('تنفيذ الإذاعة'));
+const tCardApproved = cards.find(c => c.textContent.includes('اجتماع أولياء الأمور'));
+const tCardLegacy = cards.find(c => c.textContent.includes('مهمة قديمة 2'));
+ok('shared account: cards show «المسؤولة» of each task', tCard?.textContent.includes('أ. هند') && tCardApproved?.textContent.includes('أ. نورة'));
+ok('shared account card: attach-evidence button, no edit/delete/status controls',
   tCard && /إرفاق شاهد/.test(tCard.textContent) && !tCard.querySelector('.btn-delete') && !tCard.querySelector('select')
   && ![...tCard.querySelectorAll('button')].some(b => (b.getAttribute('onclick') || '').includes('openTaskModal')), tCard?.innerHTML);
-ok('teacher card: no attach button on approved evidence', tCardApproved && !/إرفاق شاهد|تعديل الشاهد/.test(tCardApproved.textContent));
+ok('shared account card: attach button also on legacy task', tCardLegacy && /إرفاق شاهد/.test(tCardLegacy.textContent));
+ok('shared account card: no attach button on approved evidence', tCardApproved && !/إرفاق شاهد|تعديل الشاهد/.test(tCardApproved.textContent));
 w.eval('openTaskModal()');
-ok('teacher: UI blocks add', /ليس لديك صلاحية/.test(toast()), toast());
+ok('shared account: UI blocks add', /ليس لديك صلاحية/.test(toast()), toast());
 
 w.eval(`openTaskEvidenceModal('${t2.id}')`);
-ok('teacher: evidence modal opens', !$('task-evidence-modal').classList.contains('hidden'));
+ok('shared account: evidence modal opens and shows task + «المسؤولة»',
+  !$('task-evidence-modal').classList.contains('hidden') && /تنفيذ الإذاعة/.test($('task-ev-task-name').textContent) && /أ\. هند/.test($('task-ev-task-name').textContent));
 setVal('task-ev-url', 'https://evil.example/x');
 await w.eval('saveTaskEvidence()');
-ok('teacher: non-Drive URL rejected in UI', /Google Drive/.test(toast()), toast());
+ok('shared account: non-Drive URL rejected in UI', /Google Drive/.test(toast()), toast());
 setVal('task-ev-url', 'https://drive.google.com/drive/folders/XYZ');
 setVal('task-ev-title', 'صور الإذاعة');
 await w.eval('saveTaskEvidence()');
 row = await dbTask('تنفيذ الإذاعة');
-ok('teacher: Drive evidence saved on her task, stamped, pending approval',
+ok('shared account: Drive evidence saved, stamped with shared account id, pending approval',
   row.evidence_drive_url === 'https://drive.google.com/drive/folders/XYZ' && row.evidence_title === 'صور الإذاعة'
   && row.evidence_added_by === U.teacher && row.evidence_approved === false, toast() + JSON.stringify(row));
-ok('teacher: other columns untouched', row.name === 'تنفيذ الإذاعة' && row.status === 'pending');
+ok('shared account: task fields and «المسؤولة» untouched', row.name === 'تنفيذ الإذاعة' && row.status === 'pending' && row.resp === 'أ. هند');
+
+const legacy2 = tasks().find(t => t.name === 'مهمة قديمة 2');
+w.eval(`openTaskEvidenceModal('${legacy2.id}')`);
+setVal('task-ev-url', 'https://docs.google.com/document/d/legacy');
+await w.eval('saveTaskEvidence()');
+row = await dbTask('مهمة قديمة 2');
+ok('shared account: evidence attached to a legacy task', row.evidence_drive_url === 'https://docs.google.com/document/d/legacy' && row.start_at === null, toast());
 
 const tIns = await w.eval(`sbInsertTask({ name: 'x', resp: '', due: '', priority: 'low', status: 'pending', notes: '',
   start_at: '2026-10-01T05:00:00Z', end_at: '2026-10-01T06:00:00Z', evidence_url: '', evidence_title: '' })
   .then(() => 'saved', e => arabicDbError(e))`);
-ok('teacher: direct API insert rejected by RLS', tIns !== 'saved', tIns);
+ok('shared account: direct API insert rejected by RLS', tIns !== 'saved', tIns);
 const tUpd = await w.eval(`sbUpdateTask({ ...tasksCache.find(t => t.id === '${t2.id}'), status: 'done' })
   .then(() => 'saved', e => arabicDbError(e))`);
-ok('teacher: direct API full update (status) rejected by DB', tUpd !== 'saved', tUpd);
+ok('shared account: direct API task edit (status) rejected by DB', tUpd !== 'saved', tUpd);
+const tDel = await w.eval(`sbDeleteTask('${t2.id}').then(() => 'called', e => arabicDbError(e))`);
+ok('shared account: direct API delete removes nothing', (await dbTask('تنفيذ الإذاعة')) !== undefined, tDel);
 const tAppr = await w.eval(`sb.from('tasks').update({ evidence_approved: true }).eq('id', '${t2.id}').select().single()
   .then(r => r.error ? r.error.message : 'saved')`);
-ok('teacher: cannot self-approve via API', tAppr !== 'saved', tAppr);
+ok('shared account: cannot approve via API', tAppr !== 'saved', tAppr);
 const tLocked = await w.eval(`sbUpdateTaskEvidence('${t1.id}', 'https://drive.google.com/new', '')
   .then(() => 'saved', e => arabicDbError(e))`);
-ok('teacher: cannot change approved evidence via API', tLocked !== 'saved', tLocked);
-await login('teacher2');
-ok('teacher2: sees 0 tasks', tasks().length === 0);
-const t2Upd = await w.eval(`sbUpdateTaskEvidence('${t2.id}', 'https://drive.google.com/hijack', '')
+ok('shared account: cannot change approved evidence via API', tLocked !== 'saved', tLocked);
+const tArch = await w.eval(`sbUpdateTaskEvidence('${archivedId}', 'https://drive.google.com/arch', '')
   .then(() => 'saved', e => arabicDbError(e))`);
-ok('teacher2: cannot attach evidence to another teacher task (API)', t2Upd !== 'saved', t2Upd);
-row = await dbTask('تنفيذ الإذاعة');
-ok('teacher2: DB unchanged', row.evidence_drive_url === 'https://drive.google.com/drive/folders/XYZ');
+ok('shared account: cannot attach evidence to archived-year task via API', tArch !== 'saved' && (await dbTask('مهمة سنة مؤرشفة')).evidence_drive_url === null, tArch);
+row = await dbTask('اجتماع أولياء الأمور');
+ok('shared account: approved evidence unchanged in DB', row.evidence_approved === true && row.evidence_drive_url.startsWith('https://drive.google.com/file/d/1AbC'));
 
 await login('vice');
 w.eval('renderTasks()');
-ok('vice: sees teacher evidence pending review on card', [...$('tasks-grid').querySelectorAll('.task-card')]
+ok('vice: sees shared-account evidence pending review on card', [...$('tasks-grid').querySelectorAll('.task-card')]
   .some(c => c.textContent.includes('تنفيذ الإذاعة') && c.textContent.includes('صور الإذاعة') && c.textContent.includes('قيد المراجعة')));
-
+await login('admin');
 w.eval(`openTaskModal('${t2.id}')`);
-setVal('task-notes', 'حفظ فوري قبل وصول قائمة المعلمات');
+$('task-evidence-approved').checked = true;
 await w.eval('saveTask()');
 row = await dbTask('تنفيذ الإذاعة');
-ok('vice: immediate save keeps existing assignee (no silent un-assign)', row.assignee_id === U.teacher && row.notes.startsWith('حفظ فوري'), JSON.stringify(row));
+ok('admin: approves shared-account evidence; «المسؤولة» unchanged', row.evidence_approved === true && row.evidence_approved_by === U.admin && row.resp === 'أ. هند', toast());
 
 // 8b) throttled login message
 ok('login: 429 classified as throttled', w.eval(`classifyUsernameLoginFailure({ payload: { error: 'too_many_attempts', retry_after: 600 }, error: { context: { status: 429 } }, caught: null })`) === 'throttled');

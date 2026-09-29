@@ -1,19 +1,22 @@
 -- ============================================================
 -- phase_task_schedule_evidence_review.sql   (الخطوة 2 — توسيع متوافق)
--- وقت بدء/انتهاء المهمة + شاهد Drive + إسناد المهمة لحساب المعلمة
+-- وقت بدء/انتهاء المهمة + شاهد Drive يُرفق من حساب المعلمات المشترك
 -- مراجعة / تطبيق يدوي بعد نسخة احتياطية — لا يُنفَّذ تلقائياً
 -- ============================================================
+-- نموذج العمل: كل المعلمات يدخلن بحساب مشترك واحد (role = 'teacher').
+--   * «المسؤولة» (resp) معلومة تنظيمية للعرض فقط — ليست هوية من أرفق الشاهد.
+--   * evidence_added_by = معرّف الحساب الذي أرفق الرابط (قد يكون الحساب المشترك)،
+--     ولا يحدد معلمة بعينها.
 -- متوافق مع الواجهة الحالية والجديدة معًا:
 --   * لا يفرض الأوقات عند الإضافة (يُفرض لاحقًا في phase_task_schedule_enforce_review.sql
 --     بعد نشر الواجهة الجديدة) → لا فترة تتعطل فيها إضافة المهام.
 -- ضوابط الأمان:
---   * بلا DROP TABLE / TRUNCATE / DELETE / حذف أعمدة
---   * المهام القديمة: start_at و end_at و assignee_id تبقى NULL (لا افتراض قيم)
+--   * بلا DROP TABLE / TRUNCATE / DELETE / حذف أعمدة، ولا تعديل لـ resp أو أي بيانات قائمة
+--   * المهام القديمة: start_at و end_at تبقى NULL (لا افتراض قيم)
 --   * end_at > start_at و (كلاهما أو لا شيء) — CHECK
 --   * رابط الشاهد: https://drive.google.com أو https://docs.google.com فقط — CHECK
---   * assignee_id يشير لحساب معلمة (profiles.role = 'teacher') — Trigger
---   * المعلمة: ترى مهامها المسندة إليها فقط، وتعدّل رابط الشاهد واسمه فقط
---     في مهمتها وفي السنة النشطة فقط (RLS + Trigger يمنع تعديل أي عمود آخر)
+--   * حساب المعلمات: يرى مهام السنة النشطة، ويضيف/يستبدل رابط الشاهد واسمه فقط
+--     لمهمة في السنة النشطة شاهدها غير معتمد (RLS + Trigger يمنع أي عمود آخر وحذف الرابط)
 --   * اعتماد شاهد المهمة: القائدة (admin) فقط؛ الشاهد المعتمد مقفل
 --   * سياسات admin/vice الحالية على tasks لا تتغير
 -- ============================================================
@@ -27,7 +30,6 @@ BEGIN;
 ALTER TABLE public.tasks
   ADD COLUMN IF NOT EXISTS start_at timestamptz,
   ADD COLUMN IF NOT EXISTS end_at timestamptz,
-  ADD COLUMN IF NOT EXISTS assignee_id uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS evidence_drive_url text,
   ADD COLUMN IF NOT EXISTS evidence_title text,
   ADD COLUMN IF NOT EXISTS evidence_added_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
@@ -42,17 +44,14 @@ COMMENT ON COLUMN public.tasks.end_at IS
   'نهاية المهمة (timestamptz). يجب أن تكون بعد start_at. NULL للمهام القديمة فقط.';
 COMMENT ON COLUMN public.tasks.due_date IS
   'تاريخ الاستحقاق (قديم). للمهام الجديدة تضبطه الواجهة = تاريخ end_at المحلي للتوافق مع اللوحة والتقويم.';
-COMMENT ON COLUMN public.tasks.resp IS
-  'اسم المسؤولة للعرض فقط. الإسناد الموثوق في assignee_id.';
-COMMENT ON COLUMN public.tasks.assignee_id IS
-  'حساب المعلمة المسندة إليها المهمة (profiles.id). مصدر صلاحية إرفاق شاهد المهمة.';
+COMMENT ON COLUMN public.tasks.evidence_added_by IS
+  'معرّف الحساب الذي أرفق رابط الشاهد. للحساب المشترك لا يحدد معلمة بعينها.';
 COMMENT ON COLUMN public.tasks.evidence_drive_url IS
   'رابط Google Drive كشاهد للمهمة (https://drive.google.com أو https://docs.google.com فقط).';
 COMMENT ON COLUMN public.tasks.evidence_approved IS
   'اعتماد شاهد المهمة — القائدة فقط عبر trg_tasks_enforce_evidence.';
 
 CREATE INDEX IF NOT EXISTS tasks_end_at_idx ON public.tasks (end_at);
-CREATE INDEX IF NOT EXISTS tasks_assignee_id_idx ON public.tasks (assignee_id);
 
 -- ------------------------------------------------------------
 -- 2) قيود التحقق (لا تفشل على المهام القديمة: الحقول الجديدة فيها NULL)
@@ -90,7 +89,7 @@ ALTER TABLE public.tasks ADD CONSTRAINT tasks_evidence_approval_check
   CHECK (evidence_approved = false OR evidence_drive_url IS NOT NULL);
 
 -- ------------------------------------------------------------
--- 3) Trigger: حدود المعلمة + إسناد صالح + ختم الشاهد + اعتماد القائدة فقط
+-- 3) Trigger: حدود حساب المعلمات + ختم الشاهد + اعتماد القائدة فقط
 -- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.tasks_enforce_schedule_and_evidence()
 RETURNS trigger
@@ -109,19 +108,15 @@ BEGIN
     NEW.evidence_title := NULL;
   END IF;
 
-  -- المعلمة: رابط الشاهد واسمه فقط — أي عمود آخر (الاسم، الحالة، الأوقات، الإسناد، الاعتماد…) مرفوض
+  -- حساب المعلمات: رابط الشاهد واسمه فقط — أي عمود آخر (الاسم، المسؤولة، الحالة، الأوقات، الاعتماد…) مرفوض
   IF TG_OP = 'UPDATE' AND public.current_app_role() = 'teacher' THEN
     IF (to_jsonb(NEW) - v_evidence_cols) IS DISTINCT FROM (to_jsonb(OLD) - v_evidence_cols) THEN
-      RAISE EXCEPTION 'المعلمة تستطيع إرفاق رابط الشاهد واسمه فقط لمهمتها';
+      RAISE EXCEPTION 'حساب المعلمات يستطيع إرفاق رابط الشاهد واسمه فقط';
     END IF;
-  END IF;
-
-  IF NEW.assignee_id IS NOT NULL
-     AND (TG_OP = 'INSERT' OR NEW.assignee_id IS DISTINCT FROM OLD.assignee_id)
-     AND NOT EXISTS (
-       SELECT 1 FROM public.profiles p WHERE p.id = NEW.assignee_id AND p.role = 'teacher'
-     ) THEN
-    RAISE EXCEPTION 'يجب إسناد المهمة إلى حساب معلمة';
+    -- حساب مشترك: لا يُحذف رابط أُرفق (يمكن استبداله ما دام غير معتمد)
+    IF NEW.evidence_drive_url IS NULL AND OLD.evidence_drive_url IS NOT NULL THEN
+      RAISE EXCEPTION 'لا يمكن حذف رابط الشاهد من حساب المعلمات';
+    END IF;
   END IF;
 
   IF TG_OP = 'INSERT' THEN
@@ -206,70 +201,52 @@ REVOKE ALL ON FUNCTION public.tasks_enforce_schedule_and_evidence() FROM anon;
 REVOKE ALL ON FUNCTION public.tasks_enforce_schedule_and_evidence() FROM authenticated;
 
 -- ------------------------------------------------------------
--- 4) RLS للمعلمة (سياسات إضافية؛ سياسات admin/vice كما هي)
+-- 4) RLS لحساب المعلمات (سياسات إضافية؛ سياسات admin/vice كما هي)
+--    school_year_allows_read للمعلمة = السنة النشطة فقط
 -- ------------------------------------------------------------
 DROP POLICY IF EXISTS tasks_select_assignee ON public.tasks;
-CREATE POLICY tasks_select_assignee ON public.tasks
+DROP POLICY IF EXISTS tasks_update_assignee_evidence ON public.tasks;
+
+DROP POLICY IF EXISTS tasks_select_teacher ON public.tasks;
+CREATE POLICY tasks_select_teacher ON public.tasks
   FOR SELECT TO authenticated
   USING (
     public.current_app_role() = 'teacher'
-    AND assignee_id = auth.uid()
     AND public.school_year_allows_read(school_year_id)
   );
 
-DROP POLICY IF EXISTS tasks_update_assignee_evidence ON public.tasks;
-CREATE POLICY tasks_update_assignee_evidence ON public.tasks
+DROP POLICY IF EXISTS tasks_update_teacher_evidence ON public.tasks;
+CREATE POLICY tasks_update_teacher_evidence ON public.tasks
   FOR UPDATE TO authenticated
   USING (
     public.current_app_role() = 'teacher'
-    AND assignee_id = auth.uid()
     AND public.school_year_is_active(school_year_id)
+    AND evidence_approved = false
   )
   WITH CHECK (
     public.current_app_role() = 'teacher'
-    AND assignee_id = auth.uid()
     AND public.school_year_is_active(school_year_id)
+    AND evidence_approved = false
   );
--- لا INSERT ولا DELETE للمعلمة (tasks_insert / tasks_delete كما هي)
+-- لا INSERT ولا DELETE لحساب المعلمات (tasks_insert / tasks_delete كما هي)
 
 -- ------------------------------------------------------------
--- 5) قائمة المعلمات للإسناد (profiles_select لا يسمح للوكيلة بقراءة الحسابات)
---    تُرجع id + name فقط، وللقائدة والوكيلة فقط
--- ------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.list_task_assignees()
-RETURNS TABLE (id uuid, name text)
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = ''
-AS $$
-  SELECT p.id, p.name
-  FROM public.profiles AS p
-  WHERE public.is_staff() AND p.role = 'teacher'
-  ORDER BY p.name
-$$;
-
-REVOKE ALL ON FUNCTION public.list_task_assignees() FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.list_task_assignees() FROM anon;
-GRANT EXECUTE ON FUNCTION public.list_task_assignees() TO authenticated;
-
--- ------------------------------------------------------------
--- 6) تحقق داخل المعاملة (division by zero = فشل → ROLLBACK;)
+-- 5) تحقق داخل المعاملة (division by zero = فشل → ROLLBACK;)
 -- ------------------------------------------------------------
 SELECT 1 / CASE WHEN (
   SELECT COUNT(*) FROM information_schema.columns
   WHERE table_schema = 'public' AND table_name = 'tasks'
     AND column_name IN (
-      'start_at','end_at','assignee_id','evidence_drive_url','evidence_title',
+      'start_at','end_at','evidence_drive_url','evidence_title',
       'evidence_added_by','evidence_added_at',
       'evidence_approved','evidence_approved_by','evidence_approved_at'
     )
-) = 10 THEN 1 ELSE 0 END AS tx_check_columns;
+) = 9 THEN 1 ELSE 0 END AS tx_check_columns;
 
 SELECT 1 / CASE WHEN (
   SELECT COUNT(*) FROM pg_policies
   WHERE schemaname = 'public' AND tablename = 'tasks'
-    AND policyname IN ('tasks_select_assignee', 'tasks_update_assignee_evidence')
+    AND policyname IN ('tasks_select_teacher', 'tasks_update_teacher_evidence')
 ) = 2 THEN 1 ELSE 0 END AS tx_check_teacher_policies;
 
 COMMIT;
@@ -281,45 +258,22 @@ COMMIT;
 SELECT
   COUNT(*)                                             AS tasks_total,
   COUNT(*) FILTER (WHERE start_at IS NULL)             AS tasks_without_times,
-  COUNT(*) FILTER (WHERE assignee_id IS NOT NULL)      AS tasks_assigned,
   COUNT(*) FILTER (WHERE evidence_drive_url IS NOT NULL) AS tasks_with_drive_evidence,
   COUNT(*) FILTER (WHERE evidence_approved)            AS approved_task_evidence
 FROM public.tasks;
 -- المتوقع مباشرة بعد التطبيق: tasks_total كما في PRECHECK، tasks_without_times = tasks_total، والباقي 0
-
-
--- ############################################################################
--- (اختياري — معلّق) إسناد المهام القديمة التي يطابق «المسؤولة» فيها اسم معلمة واحدة حرفيًا.
--- راجع S9_tasks_readiness (resp_exact_unique_teacher_match / resp_ambiguous_teacher_match) في تقرير
--- PRECHECK أولًا. لا يُنفَّذ ضمن المسار العادي؛ البديل الأدق: الإسناد يدويًا من نافذة تعديل المهمة.
--- ############################################################################
-/*
-BEGIN;
-UPDATE public.tasks AS t
-SET assignee_id = m.id
-FROM (
-  SELECT t2.id AS task_id, MIN(p.id::text)::uuid AS id
-  FROM public.tasks t2
-  JOIN public.profiles p ON p.role = 'teacher' AND btrim(p.name) = btrim(t2.resp)
-  WHERE t2.assignee_id IS NULL
-  GROUP BY t2.id
-  HAVING COUNT(*) = 1
-) AS m
-WHERE t.id = m.task_id;
-COMMIT;
-*/
+-- resp («المسؤولة») لا يُمس ولا يُطابَق بأي حساب.
 
 
 -- ############################################################################
 -- ROLLBACK (يدوي — معلّق). يحذف الإضافات فقط، لا يمس بيانات المهام الأصلية.
--- تحذير: يفقد الأوقات والإسناد وروابط الشواهد التي أُدخلت بعد التطبيق.
+-- تحذير: يفقد الأوقات وروابط الشواهد التي أُدخلت بعد التطبيق.
 -- إن طُبّق phase_task_schedule_enforce_review.sql فارجع عنه أولًا.
 -- ############################################################################
 /*
 BEGIN;
-DROP POLICY IF EXISTS tasks_select_assignee ON public.tasks;
-DROP POLICY IF EXISTS tasks_update_assignee_evidence ON public.tasks;
-DROP FUNCTION IF EXISTS public.list_task_assignees();
+DROP POLICY IF EXISTS tasks_select_teacher ON public.tasks;
+DROP POLICY IF EXISTS tasks_update_teacher_evidence ON public.tasks;
 DROP TRIGGER IF EXISTS trg_tasks_enforce_evidence ON public.tasks;
 DROP FUNCTION IF EXISTS public.tasks_enforce_schedule_and_evidence();
 ALTER TABLE public.tasks DROP CONSTRAINT IF EXISTS tasks_schedule_pair_check;
@@ -328,11 +282,9 @@ ALTER TABLE public.tasks DROP CONSTRAINT IF EXISTS tasks_evidence_drive_url_chec
 ALTER TABLE public.tasks DROP CONSTRAINT IF EXISTS tasks_evidence_title_check;
 ALTER TABLE public.tasks DROP CONSTRAINT IF EXISTS tasks_evidence_approval_check;
 DROP INDEX IF EXISTS public.tasks_end_at_idx;
-DROP INDEX IF EXISTS public.tasks_assignee_id_idx;
 ALTER TABLE public.tasks
   DROP COLUMN IF EXISTS start_at,
   DROP COLUMN IF EXISTS end_at,
-  DROP COLUMN IF EXISTS assignee_id,
   DROP COLUMN IF EXISTS evidence_drive_url,
   DROP COLUMN IF EXISTS evidence_title,
   DROP COLUMN IF EXISTS evidence_added_by,
@@ -342,3 +294,4 @@ ALTER TABLE public.tasks
   DROP COLUMN IF EXISTS evidence_approved_at;
 COMMIT;
 */
+
