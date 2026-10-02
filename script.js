@@ -171,6 +171,9 @@ let calendarHijriYear  = 1447;
 let pendingFileData  = null;
 let pendingImageData = null;
 let pendingEvidenceFile = null;
+let pendingEvidenceFiles = [];
+let evidenceSaveBusy = false;
+let evidenceSavedKeys = new Set();
 let _planFilter      = 'all';
 let _planSearch      = '';
 let _taskFilter      = 'all';
@@ -722,6 +725,10 @@ function closeModal(id) {
     pendingImageData = null;
     pendingEvidenceFile = null;
   }
+  if (id === 'evidence-modal') {
+    pendingEvidenceFiles = [];
+    evidenceSavedKeys = new Set();
+  }
   if (id === 'program-detail-modal') {
     _openProgramDetailId = null;
   }
@@ -1049,16 +1056,21 @@ function getRequirementsForIndicator(indicatorId) {
       || String(a.created_at || '').localeCompare(String(b.created_at || '')));
 }
 
-/** المرفق المرتبط باسم شاهد مطلوب (أحدث سجل إن تعدد) */
-function getEvidenceForRequirement(requirementId) {
-  if (requirementId == null || requirementId === '') return null;
-  const list = (evidencesCache || []).filter(ev =>
-    ev && ev.requirement_id != null && String(ev.requirement_id) === String(requirementId)
+/** كل المرفقات (ملف أو رابط) المرتبطة باسم شاهد مطلوب، الأقدم أولاً */
+function getEvidencesForRequirement(requirementId) {
+  if (requirementId == null || requirementId === '') return [];
+  return (evidencesCache || []).filter(ev =>
+    ev && ev.requirement_id != null && String(ev.requirement_id) === String(requirementId) && evidenceHasAttachment(ev)
+  ).slice().sort((a, b) =>
+    String(a.created_at || a.date || '').localeCompare(String(b.created_at || b.date || ''))
+    || String(a.id).localeCompare(String(b.id))
   );
-  if (!list.length) return null;
-  return list.slice().sort((a, b) =>
-    String(b.created_at || b.date || '').localeCompare(String(a.created_at || a.date || ''))
-  )[0];
+}
+
+/** أحدث مرفق فقط — للمسارات القديمة. العرض والحساب يستخدمان القائمة كاملة */
+function getEvidenceForRequirement(requirementId) {
+  const list = getEvidencesForRequirement(requirementId);
+  return list.length ? list[list.length - 1] : null;
 }
 
 function evidenceHasAttachment(ev) {
@@ -1068,37 +1080,63 @@ function evidenceHasAttachment(ev) {
   return !!(fileUrl || link);
 }
 
-/** حالات الشاهد المطلوب: missing | pending | approved */
+/** اعتماد المرفق نفسه. قبل عمود is_approved يُستخدم اعتماد اسم الشاهد حتى لا تُصفَّر النسب */
+function isAttachmentApproved(ev) {
+  if (!ev) return false;
+  if (ev.is_approved === true || ev.is_approved === 'true' || ev.is_approved === 1) return true;
+  if (ev.is_approved === false || ev.is_approved === 'false' || ev.is_approved === 0) return false;
+  const req = (evidenceRequirementsCache || []).find(r => String(r.id) === String(ev.requirement_id));
+  return !!(req && (req.is_approved === true || req.is_approved === 'true' || req.is_approved === 1));
+}
+
+function requirementHasApprovedAttachment(req) {
+  if (!req) return false;
+  return getEvidencesForRequirement(req.id).some(isAttachmentApproved);
+}
+
+/**
+ * نسبة الشاهد = المرفقات المعتمدة ÷ إجمالي المرفقات × 100
+ * بلا مرفقات → 0٪
+ */
+function calcRequirementProgress(req) {
+  const id = req && typeof req === 'object' ? req.id : req;
+  const atts = getEvidencesForRequirement(id);
+  if (!atts.length) return 0;
+  const approved = atts.filter(isAttachmentApproved).length;
+  return Math.round((approved / atts.length) * 100);
+}
+
+/** حالات اسم الشاهد: missing | pending | partial | approved */
 function getRequirementStatus(req) {
   if (!req) return 'missing';
-  if (req.is_approved === true || req.is_approved === 'true' || req.is_approved === 1) {
-    return 'approved';
-  }
-  const ev = getEvidenceForRequirement(req.id);
-  if (evidenceHasAttachment(ev)) return 'pending';
-  return 'missing';
+  const atts = getEvidencesForRequirement(req.id);
+  if (!atts.length) return 'missing';
+  const pct = calcRequirementProgress(req);
+  if (pct >= 100) return 'approved';
+  if (atts.some(isAttachmentApproved)) return 'partial';
+  return 'pending';
 }
 
 const REQ_STATUS_META = {
   missing:  { label: 'غير مرفق', className: 'req-status-missing' },
   pending:  { label: 'قيد المراجعة', className: 'req-status-pending' },
-  approved: { label: 'معتمد', className: 'req-status-approved' },
+  partial:  { label: 'اعتماد جزئي', className: 'req-status-partial' },
+  approved: { label: 'مكتمل', className: 'req-status-approved' },
 };
 
 /**
- * نسبة إنجاز المؤشر = الشواهد المعتمدة ÷ إجمالي أسماء الشواهد المطلوبة × 100
- * بلا شواهد مطلوبة → 0٪ (بدون قسمة على صفر)
- * لا تعتمد على is_completed
+ * نسبة المؤشر = متوسط نسب شواهده
+ * وزن كل شاهد متساوٍ مهما زاد عدد مرفقاته
+ * بلا شواهد مطلوبة → 0٪
  */
 function calcIndicatorProgress(indicatorId) {
   if (!evidenceRequirementsReady) {
-    // قبل تطبيق Migration: لا تُصفّر النسب — أسقط إلى المنطق القديم مؤقتاً
     return calcIndicatorProgressLegacy(indicatorId);
   }
   const reqs = getRequirementsForIndicator(indicatorId);
   if (!reqs.length) return 0;
-  const approved = reqs.filter(r => getRequirementStatus(r) === 'approved').length;
-  return Math.round((approved / reqs.length) * 100);
+  const sum = reqs.reduce((s, r) => s + calcRequirementProgress(r), 0);
+  return Math.round(sum / reqs.length);
 }
 
 /** منطق قديم للمؤشر: is_completed + وجود شاهد مرتبط */
@@ -1121,12 +1159,11 @@ function getIndicatorRequirementStats(indicatorId) {
   }
   const reqs = getRequirementsForIndicator(indicatorId);
   const total = reqs.length;
-  const approved = reqs.filter(r => getRequirementStatus(r) === 'approved').length;
-  const attached = reqs.filter(r => {
-    const st = getRequirementStatus(r);
-    return st === 'pending' || st === 'approved';
-  }).length;
-  const pct = total > 0 ? Math.round((approved / total) * 100) : 0;
+  const approved = reqs.filter(r => calcRequirementProgress(r) >= 100).length;
+  const attached = reqs.filter(r => getEvidencesForRequirement(r.id).length > 0).length;
+  const pct = total > 0
+    ? Math.round(reqs.reduce((s, r) => s + calcRequirementProgress(r), 0) / total)
+    : 0;
   return { total, approved, attached, pct };
 }
 
@@ -1503,6 +1540,10 @@ function arabicDbError(err) {
   if (blob.includes('tasks_schedule_order_check')) return 'وقت النهاية يجب أن يكون بعد وقت البداية';
   if (blob.includes('tasks_schedule_pair_check')) return 'يجب تحديد وقت البداية والنهاية معًا';
   if (blob.includes('tasks_evidence_drive_url_check')) return 'رابط Google Drive غير صالح';
+  if (blob.includes('uq_evidences_one_per_requirement')) {
+    return 'لا يزال قيد المرفق الواحد مفعّلاً. طبّق تحديث SQL للمرفقات المتعددة أولاً.';
+  }
+  if (/فقط القائدة/.test(msg)) return msg;
   if (msg.includes(NO_ACTIVE_YEAR_MSG) || /لا يمكن الكتابة|سنة دراسية/.test(msg)) {
     return msg;
   }
@@ -2255,6 +2296,10 @@ async function handleRenameRequirement(progId, requirementId) {
   }
   try { assertYearWritable(); } catch { return; }
   const req = evidenceRequirementsCache.find(r => String(r.id) === String(requirementId));
+  if (requirementHasApprovedAttachment(req)) {
+    showToast('ألغِ اعتماد المرفقات أولاً قبل تعديل اسم الشاهد', 'error');
+    return;
+  }
   const name = prompt('تعديل اسم الشاهد:', req?.name || '');
   if (name == null) return;
   try {
@@ -2279,8 +2324,8 @@ async function handleDeleteRequirement(progId, requirementId) {
     return;
   }
   try {
-    if (req && getRequirementStatus(req) === 'approved') {
-      showToast('ألغِ اعتماد الشاهد أولاً قبل الحذف', 'error');
+    if (requirementHasApprovedAttachment(req)) {
+      showToast('ألغِ اعتماد المرفقات أولاً قبل حذف اسم الشاهد', 'error');
       return;
     }
     await sbDeleteEvidenceRequirement(requirementId);
@@ -2320,25 +2365,47 @@ async function handleToggleRequirementApproval(progId, requirementId) {
   }
 }
 
+function attachmentDisplayName(ev) {
+  if (!ev) return 'مرفق';
+  if (ev.file_name) return ev.file_name;
+  const link = evidenceDriveLink(ev);
+  if (link) {
+    try {
+      const path = new URL(link).pathname.replace(/\/+$/, '');
+      const tail = path.split('/').filter(Boolean).pop() || 'رابط';
+      return tail.length > 48 ? tail.slice(0, 45) + '…' : tail;
+    } catch {
+      return 'رابط';
+    }
+  }
+  return ev.title || 'مرفق';
+}
+
+function buildAttachmentItemHtml(ev, progId) {
+  const approved = isAttachmentApproved(ev);
+  const openBtn = evidenceHasViewTarget(ev) ? evidenceViewButtonHtml(ev, 'فتح') : '';
+  const approveBtn = can('approveEvidence') && !isYearReadOnlyMode()
+    ? `<button type="button" class="btn-sm req-approve-btn ${approved ? 'is-approved' : ''}"
+         onclick="handleToggleAttachmentApproval('${esc(progId)}','${esc(ev.id)}')"
+         title="${approved ? 'إلغاء الاعتماد' : 'اعتماد المرفق'}">${approved ? 'إلغاء الاعتماد' : 'اعتماد'}</button>`
+    : '';
+  const delBtn = can('deleteEvidence') && !isYearReadOnlyMode() && !approved
+    ? `<button type="button" class="btn-sm btn-delete" onclick="handleDelEv('${esc(ev.id)}')" title="حذف المرفق">🗑️</button>`
+    : '';
+  return `<div class="req-attachment-item ${approved ? 'is-approved' : ''}" data-ev-id="${esc(ev.id)}">
+    <span class="req-attachment-name">${esc(attachmentDisplayName(ev))}</span>
+    <span class="req-status-badge ${approved ? 'req-status-approved' : 'req-status-pending'}">${approved ? 'معتمد' : 'قيد المراجعة'}</span>
+    <div class="req-attachment-actions">${openBtn}${approveBtn}${delBtn}</div>
+  </div>`;
+}
+
 function buildRequirementRowHtml(req, progId, indId) {
   const status = getRequirementStatus(req);
   const meta = REQ_STATUS_META[status] || REQ_STATUS_META.missing;
-  const ev = getEvidenceForRequirement(req.id);
-  const attachmentLabel = ev
-    ? (ev.file_name || (evidenceDriveLink(ev) ? 'رابط مرفق' : '') || ev.title || 'مرفق')
-    : '—';
-  const viewBtn = ev && evidenceHasViewTarget(ev)
-    ? evidenceViewButtonHtml(ev)
-    : '';
-  const attachBtn = can('addEvidence') && !isYearReadOnlyMode() && status !== 'approved'
-    ? `<button type="button" class="btn-sm btn-evidence" onclick="openEvidenceModalForRequirement('${esc(progId)}','${esc(indId)}','${esc(req.id)}')">📎 إرفاق</button>`
-    : (status === 'approved'
-      ? `<span class="req-attach-locked" title="ألغِ الاعتماد قبل استبدال المرفق">مرفق معتمد</span>`
-      : '');
-  const approveBtn = can('approveEvidence') && !isYearReadOnlyMode()
-    ? `<button type="button" class="btn-sm req-approve-btn ${status === 'approved' ? 'is-approved' : ''}"
-         onclick="handleToggleRequirementApproval('${esc(progId)}','${esc(req.id)}')"
-         title="${status === 'approved' ? 'إلغاء الاعتماد' : 'اعتماد الشاهد'}">${status === 'approved' ? '✓' : '✓'}</button>`
+  const attachments = getEvidencesForRequirement(req.id);
+  const pct = calcRequirementProgress(req);
+  const attachBtn = can('addEvidence') && !isYearReadOnlyMode()
+    ? `<button type="button" class="btn-sm btn-evidence" onclick="openEvidenceModalForRequirement('${esc(progId)}','${esc(indId)}','${esc(req.id)}')">📎 إضافة مرفقات</button>`
     : '';
   const renameBtn = can('manageEvidenceRequirements') && !isYearReadOnlyMode()
     ? `<button type="button" class="btn-sm btn-edit" onclick="handleRenameRequirement('${esc(progId)}','${esc(req.id)}')">✏️</button>`
@@ -2346,17 +2413,21 @@ function buildRequirementRowHtml(req, progId, indId) {
   const delBtn = can('deleteEvidenceRequirement') && !isYearReadOnlyMode()
     ? `<button type="button" class="btn-sm btn-delete" onclick="handleDeleteRequirement('${esc(progId)}','${esc(req.id)}')">🗑️</button>`
     : '';
+  const list = attachments.length
+    ? `<div class="req-attachments">${attachments.map(ev => buildAttachmentItemHtml(ev, progId)).join('')}</div>`
+    : '';
 
   return `<div class="req-row ${meta.className}" data-req-id="${esc(req.id)}">
     <div class="req-main">
-      <div class="req-name">${esc(req.name)}</div>
+      <div class="req-name">${esc(req.name)}<span class="req-pct">${pct}٪</span></div>
       <div class="req-meta">
         <span class="req-status-badge ${meta.className}">${esc(meta.label)}</span>
-        <span class="req-attachment">${esc(attachmentLabel)}</span>
+        <span class="req-attachment">${attachments.length ? `${attachments.filter(isAttachmentApproved).length} من ${attachments.length} مرفقات معتمدة` : 'لا مرفقات'}</span>
       </div>
+      ${list}
     </div>
     <div class="req-actions">
-      ${viewBtn}${attachBtn}${approveBtn}${renameBtn}${delBtn}
+      ${attachBtn}${renameBtn}${delBtn}
     </div>
   </div>`;
 }
@@ -2376,7 +2447,7 @@ function buildRequirementsSectionHtml(progId, indId) {
   return `<div class="requirements-block">
     <div class="requirements-header">
       <h5>الشواهد المطلوبة</h5>
-      <div class="requirements-counter">الشواهد المعتمدة: ${stats.approved} من ${stats.total} — نسبة الإنجاز: ${stats.pct}٪</div>
+      <div class="requirements-counter">نسبة المؤشر: ${stats.pct}٪ — متوسط نسب الشواهد (${stats.total})، ووزن كل شاهد متساوٍ</div>
     </div>
     <div class="requirements-list">
       ${reqs.length
@@ -2390,7 +2461,47 @@ function buildRequirementsSectionHtml(progId, indId) {
 window.handleAddRequirement = handleAddRequirement;
 window.handleRenameRequirement = handleRenameRequirement;
 window.handleDeleteRequirement = handleDeleteRequirement;
+async function sbSetAttachmentApproval(evidenceId, approved) {
+  requireSb();
+  if (!can('approveEvidence')) throw new Error('فقط القائدة يمكنها اعتماد المرفقات');
+  const { data, error } = await sb.from('evidences')
+    .update({ is_approved: !!approved })
+    .eq('id', evidenceId)
+    .select('*')
+    .single();
+  if (error) throw error;
+  const mapped = mapEvidenceRow(data);
+  const idx = evidencesCache.findIndex(e => String(e.id) === String(evidenceId));
+  if (idx !== -1 && mapped) evidencesCache[idx] = mapped;
+  else if (mapped) evidencesCache.push(mapped);
+  return mapped;
+}
+
+async function handleToggleAttachmentApproval(progId, evidenceId) {
+  if (!can('approveEvidence')) {
+    showToast('فقط القائدة يمكنها اعتماد المرفقات أو إلغاء الاعتماد', 'error');
+    return;
+  }
+  try { assertYearWritable(); } catch { return; }
+  const ev = evidencesCache.find(e => String(e.id) === String(evidenceId));
+  if (!ev || !evidenceHasAttachment(ev)) {
+    showToast('لا يمكن الاعتماد قبل وجود ملف أو رابط', 'error');
+    return;
+  }
+  const next = !isAttachmentApproved(ev);
+  try {
+    await sbSetAttachmentApproval(evidenceId, next);
+    await syncProgress(progId);
+    await refreshEvidenceViews(progId);
+    showToast(next ? 'تم اعتماد المرفق ✓' : 'تم إلغاء اعتماد المرفق', 'success');
+  } catch (err) {
+    console.error('[handleToggleAttachmentApproval]', err.message || err);
+    showToast(arabicDbError(err), 'error');
+  }
+}
+
 window.handleToggleRequirementApproval = handleToggleRequirementApproval;
+window.handleToggleAttachmentApproval = handleToggleAttachmentApproval;
 
 window.sbToggleIndicator = sbToggleIndicator;
 
@@ -2669,6 +2780,11 @@ function mapEvidenceRow(r) {
     school_year_id: schoolYearId,
     created_by: r.created_by || null,
     created_at: r.created_at || null,
+    is_approved: !Object.prototype.hasOwnProperty.call(r, 'is_approved') || r.is_approved == null
+      ? null
+      : (r.is_approved === true || r.is_approved === 'true' || r.is_approved === 1),
+    approved_by: r.approved_by || null,
+    approved_at: r.approved_at || null,
   };
 }
 
@@ -2783,6 +2899,7 @@ async function sbInsertEvidence(ev) {
     file_size: ev.file_size != null ? ev.file_size : null,
     upload_date: ev.date || new Date().toISOString().split('T')[0],
     created_by: currentUser?.id || null,
+    is_approved: false,
   };
   if (ev.requirement_id) row.requirement_id = ev.requirement_id;
 
@@ -3072,7 +3189,6 @@ function buildProgramCard(p) {
                 '#C9D9EA';    // أزرق فاتح
 
   const total = inds.length;
-  const approvedInds = inds.filter(ind => calcIndicatorProgress(ind.id) >= 100).length;
 
   const indsHtml = total
     ? inds.map(ind => {
@@ -3082,7 +3198,7 @@ function buildProgramCard(p) {
 
         return `
           <div class="indicator-row" id="irow-${ind.id}">
-            <span class="ind-pct-chip" title="نسبة إنجاز المؤشر حسب الشواهد المعتمدة">${indPct}%</span>
+            <span class="ind-pct-chip" title="متوسط نسب الشواهد، ووزن كل شاهد متساوٍ">${indPct}%</span>
 
             <span class="ind-text" style="${d ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">
               ${esc(ind.indicator_text)}
@@ -3130,7 +3246,7 @@ function buildProgramCard(p) {
 
       <div class="program-progress-section">
         <div class="program-progress-label">
-          <span id="plbl-${p.id}">نسبة الإنجاز${total ? ` (متوسط ${approvedInds}/${total} مؤشر مكتمل بالشواهد)` : ''}</span>
+          <span id="plbl-${p.id}">نسبة الإنجاز${total ? ' (متوسط نسب المؤشرات)' : ''}</span>
           <span id="ppct-${p.id}" style="font-weight:800;color:${clr}">${pct}%</span>
         </div>
         <div class="progress-bar" style="height:10px">
@@ -3270,7 +3386,9 @@ function viewProgramDetail(id) {
   _openProgramDetailId = p.id;
 
   const status = calcProgramStatus(p);
-  const pct = parseInt(p.progress) || calcProgramProgress(p.id) || 0;
+  const pct = evidenceRequirementsReady
+    ? calcProgramProgress(p.id)
+    : (parseInt(p.progress) || calcProgramProgress(p.id) || 0);
   const clr = pct >= 90 ? '#27ae60' : pct >= 60 ? '#2e86c1' : pct >= 30 ? '#f39c12' : '#e74c3c';
   const inds = indicatorsCache[id] || indicatorsCache[String(id)] || p.indicators || [];
   // كل شواهد البرنامج — من cache الموثوق أو من p.evidence
@@ -3460,7 +3578,7 @@ if (barEl) {
 }
  if (lblEl) {
   lblEl.textContent = total
-    ? 'نسبة الإنجاز (متوسط ' + done + '/' + total + ' مؤشر مكتمل بالشواهد)'
+    ? 'نسبة الإنجاز (متوسط نسب المؤشرات)'
     : 'نسبة الإنجاز';
 }
   const card = document.getElementById('pcard-'+progId);
@@ -3477,7 +3595,7 @@ if (barEl) {
     const d = indPct >= 100;
     return `
       <div class="indicator-row" id="irow-${ind.id}">
-        <span class="ind-pct-chip" title="نسبة إنجاز المؤشر حسب الشواهد المعتمدة">${indPct}%</span>
+        <span class="ind-pct-chip" title="متوسط نسب الشواهد، ووزن كل شاهد متساوٍ">${indPct}%</span>
         <span class="ind-text" style="${d ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">
           ${esc(ind.indicator_text || ind.text || '')}
         </span>
@@ -3508,6 +3626,11 @@ function getEvidenceSource(prefix) {
 }
 
 function toggleEvidenceSource(prefix) {
+  if (prefix === 'ev') {
+    document.getElementById('ev-file-group')?.classList.remove('hidden');
+    document.getElementById('ev-link-group')?.classList.remove('hidden');
+    return;
+  }
   const source = getEvidenceSource(prefix);
   const fileGroup = document.getElementById(`${prefix}-file-group`);
   const linkGroup = document.getElementById(`${prefix}-link-group`);
@@ -3572,46 +3695,107 @@ async function removeUploadedEvidenceObject(path) {
   }
 }
 
+function evidenceFileKey(file) {
+  return `file:${file?.name || ''}|${file?.size || 0}|${file?.lastModified || 0}`;
+}
+
+function validateEvidenceFile(file) {
+  if (!file) return 'ملف غير صالح';
+  if (file.size > MAX_FILE_SIZE) return 'الملف أكبر من 10MB';
+  if (!validateFileExtension(file.name, ALLOWED_EVIDENCE_EXT)) {
+    return 'نوع الملف غير مسموح. المسموح: PDF, JPG, JPEG, PNG, DOC, DOCX, XLS, XLSX';
+  }
+  if (file.type && !ALLOWED_EVIDENCE_MIME.includes(file.type)) return 'نوع الملف غير مسموح';
+  return '';
+}
+
+function parseEvidenceLinkLines(raw) {
+  const seen = new Set();
+  const valid = [];
+  const invalid = [];
+  String(raw || '').split(/\r?\n/).forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    const safe = sanitizeUrl(trimmed);
+    let host = '';
+    try { host = safe ? new URL(safe).hostname : ''; } catch { host = ''; }
+    if (!safe || !host.includes('.') || host.startsWith('.') || host.endsWith('.')) {
+      invalid.push(trimmed);
+      return;
+    }
+    if (seen.has(safe)) return;
+    seen.add(safe);
+    valid.push(safe);
+  });
+  return { valid, invalid };
+}
+
+function renderEvidenceFilePreview(prefix) {
+  const prev = document.getElementById(`${prefix}-file-preview`);
+  if (!prev) return;
+  const files = prefix === 'ev'
+    ? pendingEvidenceFiles
+    : (pendingEvidenceFile ? [pendingEvidenceFile] : []);
+  if (!files.length) {
+    prev.classList.add('hidden');
+    prev.innerHTML = '';
+    return;
+  }
+  prev.classList.remove('hidden');
+  prev.innerHTML = files.map((file, i) => `<div class="file-preview-row">
+      <span style="font-size:20px">${getFileIcon(file.name)}</span>
+      <span class="file-name">${esc(file.name)}</span>
+      <span style="font-size:11px;color:var(--text-muted)">${(file.size / 1024).toFixed(0)} KB</span>
+      <span class="file-remove" onclick="${prefix === 'ev' ? `removePendingEvidenceFile(${i})` : `clearEvidenceFile('${prefix}')`}">✕</span>
+    </div>`).join('');
+}
+
+function removePendingEvidenceFile(index) {
+  pendingEvidenceFiles.splice(index, 1);
+  renderEvidenceFilePreview('ev');
+}
+
 function handleEvidenceFileSelect(input, prefix) {
+  if (prefix === 'ev') {
+    const selected = Array.from(input.files || []);
+    const rejected = [];
+    selected.forEach(file => {
+      const reason = validateEvidenceFile(file);
+      if (reason) { rejected.push(file.name + ': ' + reason); return; }
+      const key = evidenceFileKey(file);
+      if (evidenceSavedKeys.has(key)) return;
+      if (!pendingEvidenceFiles.some(f => evidenceFileKey(f) === key)) pendingEvidenceFiles.push(file);
+    });
+    input.value = '';
+    renderEvidenceFilePreview('ev');
+    if (rejected.length) showToast(rejected[0], 'error');
+    return;
+  }
+
   const file = input.files?.[0];
   if (!file) {
     pendingEvidenceFile = null;
+    renderEvidenceFilePreview(prefix);
     return;
   }
-  if (file.size > MAX_FILE_SIZE) {
-    showToast('الملف أكبر من 10MB','error');
+  const reason = validateEvidenceFile(file);
+  if (reason) {
+    showToast(reason, 'error');
     input.value = '';
     pendingEvidenceFile = null;
-    return;
-  }
-  if (!validateFileExtension(file.name, ALLOWED_EVIDENCE_EXT)) {
-    showToast('نوع الملف غير مسموح. المسموح: PDF, JPG, JPEG, PNG, DOC, DOCX, XLS, XLSX','error');
-    input.value = '';
-    pendingEvidenceFile = null;
-    return;
-  }
-  if (file.type && !ALLOWED_EVIDENCE_MIME.includes(file.type)) {
-    showToast('نوع الملف غير مسموح','error');
-    input.value = '';
-    pendingEvidenceFile = null;
+    renderEvidenceFilePreview(prefix);
     return;
   }
   pendingEvidenceFile = file;
-  const prev = document.getElementById(`${prefix}-file-preview`);
-  if (!prev) return;
-  prev.classList.remove('hidden');
-  prev.innerHTML = `<span style="font-size:20px">${getFileIcon(file.name)}</span>
-    <span class="file-name">${esc(file.name)}</span>
-    <span style="font-size:11px;color:var(--text-muted)">${(file.size/1024).toFixed(0)} KB</span>
-    <span class="file-remove" onclick="clearEvidenceFile('${prefix}')">✕</span>`;
+  renderEvidenceFilePreview(prefix);
 }
 
 function clearEvidenceFile(prefix) {
-  pendingEvidenceFile = null;
+  if (prefix === 'ev') pendingEvidenceFiles = [];
+  else pendingEvidenceFile = null;
   const input = document.getElementById(`${prefix}-file-input`);
   if (input) input.value = '';
-  const prev = document.getElementById(`${prefix}-file-preview`);
-  if (prev) { prev.classList.add('hidden'); prev.innerHTML = ''; }
+  renderEvidenceFilePreview(prefix);
 }
 
 async function uploadEvidenceToStorage(file, meta) {
@@ -3690,11 +3874,11 @@ async function resolveEvidenceViewUrl(ev) {
   return drive;
 }
 
-function evidenceViewButtonHtml(ev) {
+function evidenceViewButtonHtml(ev, label) {
   if (!evidenceHasViewTarget(ev)) return '—';
   const id = esc(ev.id);
-  const label = evidenceDriveLink(ev) && !ev.file_url ? 'فتح الرابط' : 'عرض الملف';
-  return `<button type="button" class="btn-sm btn-view evidence-view-btn" onclick="openEvidenceFile('${id}')">${label}</button>`;
+  const text = label || (evidenceDriveLink(ev) && !ev.file_url ? 'فتح الرابط' : 'عرض الملف');
+  return `<button type="button" class="btn-sm btn-view evidence-view-btn" onclick="openEvidenceFile('${id}')">${esc(text)}</button>`;
 }
 
 async function openEvidenceFile(evId) {
@@ -3741,6 +3925,8 @@ function openEvidenceModal(progId, evId) {
   }
 
   pendingEvidenceFile = null;
+  pendingEvidenceFiles = [];
+  evidenceSavedKeys = new Set();
   pendingFileData = null;
   pendingImageData = null;
 
@@ -3775,15 +3961,16 @@ function openEvidenceModal(progId, evId) {
   const ti = document.getElementById('evidence-modal-title');
   if (ti) ti.textContent = evId ? 'تعديل شاهد' : 'إضافة شاهد';
 
-  ['ev-title','ev-link','ev-person','ev-notes'].forEach(f => {
+  ['ev-title','ev-links','ev-person','ev-notes'].forEach(f => {
     const e = document.getElementById(f);
-    if (e) e.value = '';
+    if (e) {
+      e.value = '';
+      if (f === 'ev-title') e.readOnly = false;
+    }
   });
   clearEvidenceFile('ev');
-
-  const fileRadio = document.querySelector('input[name="ev-source"][value="file"]');
-  if (fileRadio) fileRadio.checked = true;
-  toggleEvidenceSource('ev');
+  document.getElementById('ev-file-group')?.classList.remove('hidden');
+  document.getElementById('ev-link-group')?.classList.remove('hidden');
   openModal('evidence-modal');
 }
 
@@ -3797,10 +3984,6 @@ function openEvidenceModalForRequirement(progId, indicatorId, requirementId) {
   const req = evidenceRequirementsCache.find(r => String(r.id) === String(requirementId));
   if (!req) {
     showToast('لم يتم العثور على اسم الشاهد المطلوب', 'error');
-    return;
-  }
-  if (getRequirementStatus(req) === 'approved') {
-    showToast('الشاهد معتمد — ألغِ الاعتماد قبل استبدال المرفق', 'error');
     return;
   }
 
@@ -3825,14 +4008,16 @@ function openEvidenceModalForRequirement(progId, indicatorId, requirementId) {
   }
 
   const titleEl = document.getElementById('ev-title');
-  if (titleEl) titleEl.value = req.name || '';
+  if (titleEl) {
+    titleEl.value = req.name || '';
+    titleEl.readOnly = true;
+  }
 
-  const existing = getEvidenceForRequirement(requirementId);
   const evEdit = document.getElementById('ev-edit-id');
-  if (evEdit) evEdit.value = (existing && can('editEvidence')) ? existing.id : '';
+  if (evEdit) evEdit.value = '';
 
   const ti = document.getElementById('evidence-modal-title');
-  if (ti) ti.textContent = 'إرفاق شاهد: ' + (req.name || '');
+  if (ti) ti.textContent = 'إضافة مرفقات: ' + (req.name || '');
 }
 window.openEvidenceModalForRequirement = openEvidenceModalForRequirement;
 
@@ -3841,14 +4026,31 @@ function getFileIcon(name) {
   return ext==='pdf'?'📄':ext==='doc'||ext==='docx'?'📝':ext==='xls'||ext==='xlsx'?'📊':['jpg','jpeg','png'].includes(ext)?'🖼️':'📎';
 }
 
+function requirementAlreadyHasLink(requirementId, url) {
+  if (!requirementId || !url) return false;
+  return getEvidencesForRequirement(requirementId).some(ev => evidenceDriveLink(ev) === url);
+}
+
+function rememberEvidence(mapped) {
+  if (!mapped) return;
+  const idx = evidencesCache.findIndex(e => String(e.id) === String(mapped.id));
+  if (idx === -1) evidencesCache.push(mapped);
+  else evidencesCache[idx] = mapped;
+}
+
+function isSingleAttachmentConstraint(err) {
+  const blob = `${err?.message || ''} ${err?.code || ''}`.toLowerCase();
+  return blob.includes('uq_evidences_one_per_requirement');
+}
+
 async function saveEvidence() {
+  if (evidenceSaveBusy) return;
   if (!can('addEvidence')) { showToast('ليس لديك صلاحية رفع الشواهد','error'); return; }
   try { assertYearWritable(); } catch { return; }
   const g = id => (document.getElementById(id)?.value||'');
   const progId = g('ev-program-id') || g('ev-program-select');
   const indicatorId = g('ev-indicator-id');
   const requirementId = g('ev-requirement-id') || null;
-  const editId = g('ev-edit-id') || null;
   if (!indicatorId) {
     showToast('يرجى اختيار المؤشر المرتبط بالشاهد','error');
     return;
@@ -3856,125 +4058,157 @@ async function saveEvidence() {
   const title = clampInput(g('ev-title'));
   if (!title) { showToast('يرجى إدخال عنوان الشاهد','error'); return; }
 
-  if (requirementId) {
-    const req = evidenceRequirementsCache.find(r => String(r.id) === String(requirementId));
-    if (req && getRequirementStatus(req) === 'approved') {
-      showToast('الشاهد معتمد — ألغِ الاعتماد قبل استبدال المرفق', 'error');
+  const parsed = parseEvidenceLinkLines(g('ev-links'));
+  if (parsed.invalid.length) {
+    showToast('أحد الروابط غير صالح. ضع كل رابط في سطر مستقل بصيغة https', 'error');
+    return;
+  }
+  const files = pendingEvidenceFiles.filter(f => !evidenceSavedKeys.has(evidenceFileKey(f)));
+  const links = parsed.valid.filter(url => !evidenceSavedKeys.has('link:' + url));
+  if (!files.length && !links.length) {
+    if (evidenceSavedKeys.size) {
+      closeModal('evidence-modal');
+      showToast('المرفقات محفوظة مسبقاً ولم يُكرر الحفظ.', 'success');
       return;
     }
+    showToast('أضيفي ملفاً أو رابطاً واحداً على الأقل', 'error');
+    return;
   }
 
-  const source = getEvidenceSource('ev');
-  let link = null;
-  let fileMeta = null;
-  let type = 'ملف';
-
-  if (source === 'drive') {
-    const rawLink = g('ev-link').trim();
-    const safeLink = rawLink ? sanitizeUrl(rawLink) : '';
-    if (!safeLink) {
-      showToast('يرجى إدخال رابط Google Drive صالح','error');
-      return;
-    }
-    link = safeLink;
-    type = 'Google Drive';
-  } else {
-    if (!pendingEvidenceFile) {
-      showToast('يرجى اختيار ملف واحد على الأقل من الجهاز','error');
-      return;
-    }
-    type = evidenceTypeFromFileName(pendingEvidenceFile.name);
-  }
-
+  evidenceSaveBusy = true;
   const btn = document.getElementById('ev-save-btn') || document.querySelector('#evidence-modal .btn-primary');
-  if (btn) { btn.disabled = true; btn.textContent = source === 'file' ? 'جاري رفع الملف...' : 'جارٍ الحفظ…'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'جارٍ الحفظ…'; }
+  const failures = [];
+  let savedCount = 0;
+  const savedLinks = new Set();
+  const person = clampInput(g('ev-person'));
+  const notes = clampInput(g('ev-notes'), 1000);
+  const date = new Date().toISOString().split('T')[0];
 
   try {
     const schoolYearId = await requireWritableSchoolYearId();
-    if (source === 'file') {
-      showToast('جاري رفع الملف...','info');
-      fileMeta = await uploadEvidenceToStorage(pendingEvidenceFile, {
-        schoolYearId,
-        programId: progId || 'general',
-        indicatorId: indicatorId || 'general',
-      });
+
+    for (const url of links) {
+      if (requirementId && requirementAlreadyHasLink(requirementId, url)) {
+        evidenceSavedKeys.add('link:' + url);
+        savedLinks.add(url);
+        continue;
+      }
+      try {
+        const saved = await sbInsertEvidence({
+          title,
+          type: 'Google Drive',
+          program_id: progId || null,
+          indicator_id: indicatorId,
+          requirement_id: requirementId || null,
+          person,
+          date,
+          link: url,
+          notes,
+          school_year_id: schoolYearId,
+          file_url: null,
+          file_name: null,
+          file_size: null,
+        });
+        rememberEvidence(saved);
+        evidenceSavedKeys.add('link:' + url);
+        savedLinks.add(url);
+        savedCount++;
+      } catch (err) {
+        failures.push({ label: url, error: err });
+        if (isSingleAttachmentConstraint(err)) break;
+      }
     }
 
-    const existingForReq = requirementId ? getEvidenceForRequirement(requirementId) : null;
-    const canReplace = !!(editId || (existingForReq && can('editEvidence')));
-
-    // المعلمة: إدراج مرفق جديد فقط؛ إن وُجد مرفق سابق لنفس الاسم المطلوب تطلب تعديلاً من الإدارة
-    if (requirementId && existingForReq && !canReplace && !editId) {
-      if (fileMeta?.path) await removeUploadedEvidenceObject(fileMeta.path);
-      showToast('يوجد مرفق لهذا الشاهد بالفعل. استبداله متاح للإدارة فقط.', 'error');
-      return;
+    for (const file of files) {
+      if (failures.some(f => isSingleAttachmentConstraint(f.error))) break;
+      const key = evidenceFileKey(file);
+      if (evidenceSavedKeys.has(key)) continue;
+      let uploaded = null;
+      try {
+        uploaded = await uploadEvidenceToStorage(file, {
+          schoolYearId,
+          programId: progId || 'general',
+          indicatorId: indicatorId || 'general',
+        });
+        const saved = await sbInsertEvidence({
+          title,
+          type: evidenceTypeFromFileName(file.name),
+          program_id: progId || null,
+          indicator_id: indicatorId,
+          requirement_id: requirementId || null,
+          person,
+          date,
+          link: null,
+          notes,
+          school_year_id: schoolYearId,
+          file_url: uploaded?.file_url || null,
+          file_name: uploaded?.file_name || file.name,
+          file_size: uploaded?.file_size ?? file.size,
+        });
+        rememberEvidence(saved);
+        evidenceSavedKeys.add(key);
+        pendingEvidenceFiles = pendingEvidenceFiles.filter(f => evidenceFileKey(f) !== key);
+        uploaded = null;
+        savedCount++;
+      } catch (err) {
+        if (uploaded?.path) await removeUploadedEvidenceObject(uploaded.path);
+        failures.push({ label: file.name, error: err });
+        if (isSingleAttachmentConstraint(err)) break;
+      }
     }
 
-    const payload = {
-      title,
-      type,
-      program_id: progId || null,
-      indicator_id: indicatorId,
-      requirement_id: requirementId || null,
-      person: clampInput(g('ev-person')),
-      date: new Date().toISOString().split('T')[0],
-      link: source === 'drive' ? link : null,
-      notes: clampInput(g('ev-notes'), 1000),
-      school_year_id: schoolYearId,
-      file_url: source === 'file' ? (fileMeta?.file_url || null) : null,
-      file_name: source === 'file' ? (fileMeta?.file_name || null) : null,
-      file_size: source === 'file' ? (fileMeta?.file_size ?? null) : null,
-    };
+    if (savedLinks.size) {
+      const box = document.getElementById('ev-links');
+      if (box) {
+        box.value = String(box.value || '').split(/\r?\n/).filter(line => {
+          const safe = sanitizeUrl(line.trim());
+          return !safe || !savedLinks.has(safe);
+        }).join('\n');
+      }
+    }
+    renderEvidenceFilePreview('ev');
 
-    let saved = null;
-    const targetId = editId || (canReplace && existingForReq ? existingForReq.id : null);
-    if (targetId && can('editEvidence')) {
-      requireSb();
-      const { data, error } = await sb.from('evidences')
-        .update({
-          title: payload.title,
-          type: payload.type,
-          link: payload.link,
-          notes: payload.notes,
-          person: payload.person,
-          file_url: payload.file_url,
-          file_name: payload.file_name,
-          file_size: payload.file_size,
-          requirement_id: payload.requirement_id,
-          indicator_id: payload.indicator_id,
-          program_id: payload.program_id,
-          upload_date: payload.date,
-        })
-        .eq('id', targetId)
-        .select('*')
-        .single();
-      if (error) throw error;
-      saved = mapEvidenceRow(data);
+    if (savedCount) {
+      try {
+        await refreshEvidenceViews(progId);
+        if (progId) await syncProgress(progId);
+      } catch (err) {
+        console.error('[saveEvidence] refresh');
+      }
+    }
+
+    if (!failures.length) {
+      const ps = document.getElementById('ev-program-select');
+      if (ps) ps.disabled = false;
+      const indSel = document.getElementById('ev-indicator-id');
+      if (indSel) indSel.disabled = false;
+      evidenceSavedKeys = new Set();
+      pendingEvidenceFiles = [];
+      closeModal('evidence-modal');
+      showToast(savedCount
+        ? 'تم حفظ المرفقات. الاعتماد يتم فقط من القائدة.'
+        : 'المرفقات محفوظة مسبقاً ولم يُكرر الحفظ.', 'success');
     } else {
-      saved = await sbInsertEvidence(payload);
+      const constraint = failures.find(f => isSingleAttachmentConstraint(f.error));
+      const names = failures.map(f => f.label).join('، ');
+      showToast(constraint
+        ? arabicDbError(constraint.error)
+        : `تم حفظ ${savedCount} مرفق. تعذّر: ${names}. أعد الحفظ لإكمال الباقي دون تكرار ما حُفظ.`,
+      'error');
     }
-
-    // الإرفاق لا يعني الاعتماد ولا يغيّر نسبة الإنجاز عبر is_completed
-    pendingEvidenceFile = null;
-    closeModal('evidence-modal');
-    const ps = document.getElementById('ev-program-select');
-    if (ps) ps.disabled = false;
-    const indSel = document.getElementById('ev-indicator-id');
-    if (indSel) indSel.disabled = false;
-    await refreshEvidenceViews(saved?.program_id || progId);
-    if (progId) await syncProgress(progId);
-    showToast('تم حفظ المرفق. الاعتماد يتم فقط بعلامة ✓ من المدير.', 'success');
   } catch (err) {
-    if (fileMeta?.path) await removeUploadedEvidenceObject(fileMeta.path);
     console.error('[saveEvidence]');
     showToast(arabicDbError(err) || 'تعذّر حفظ الشاهد', 'error');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '📎 حفظ الشاهد'; }
+    evidenceSaveBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = '💾 حفظ المرفقات'; }
   }
 }
 window.toggleEvidenceSource = toggleEvidenceSource;
 window.handleEvidenceFileSelect = handleEvidenceFileSelect;
 window.clearEvidenceFile = clearEvidenceFile;
+window.removePendingEvidenceFile = removePendingEvidenceFile;
 window.saveEvidence = saveEvidence;
 window.openEvidenceModal = openEvidenceModal;
 
@@ -4014,6 +4248,10 @@ async function handleDelEv(evId) {
   if (!confirm('حذف هذا الشاهد؟')) return;
 
   const target = evidencesCache.find(e => String(e.id) === String(evId));
+  if (isAttachmentApproved(target)) {
+    showToast('ألغِ اعتماد المرفق أولاً قبل حذفِه', 'error');
+    return;
+  }
   const affectedProg = target?.program_id || null;
 
   try {
@@ -4573,6 +4811,13 @@ function renderReports() {
   const rows = yearScopedRows(evidencesCache);
   const yearPrograms = yearScopedRows(programsCache);
   const canWrite = !isYearReadOnlyMode();
+  const avg = yearPrograms.length
+    ? Math.round(yearPrograms.reduce((s, p) => s + calcProgramProgress(p.id), 0) / yearPrograms.length)
+    : 0;
+  const sumEl = document.getElementById('reports-progress-summary');
+  if (sumEl) {
+    sumEl.textContent = `متوسط إنجاز البرامج: ${avg}٪ — نسبة المؤشر متوسط نسب شواهده، ووزن كل شاهد متساوٍ`;
+  }
 
   console.info('[UI] renderReports evidencesCache=', evidencesCache.length,
     'selectedYear=', selectedSchoolYearId ? '(set)' : '(none)', 'rendered=', rows.length);
@@ -4585,13 +4830,16 @@ function renderReports() {
           ? (yearPrograms.find(p => String(p.id) === String(r.program_id))?.name
             || programsCache.find(p => String(p.id) === String(r.program_id))?.name || '—')
           : '—';
+        const approved = evidenceHasAttachment(r) && isAttachmentApproved(r);
+        const statusLabel = !evidenceHasAttachment(r) ? '—' : (approved ? 'معتمد' : 'قيد المراجعة');
         return`<tr><td>${i+1}</td><td style="font-weight:600">${esc(title)}</td>
           <td><span class="badge badge-info">${TI[typeLabel]||getEvIcon(typeLabel||r.file_name)} ${esc(typeLabel||'—')}</span></td>
           <td>${esc(pName)}</td><td>${esc(r.person||'—')}</td><td>${esc(fmtDate(r.date || r.created_at))}</td>
-          <td>${evidenceViewButtonHtml(r)}</td>
+          <td>${esc(statusLabel)}</td>
+          <td>${evidenceViewButtonHtml(r, 'فتح')}</td>
           <td>${canWrite && can('deleteEvidence')?`<button class="btn-sm btn-delete" onclick="handleDelEv('${esc(r.id)}')">🗑️</button>`:''}</td></tr>`;
       }).join('')
-    : '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-muted)">لا توجد شواهد</td></tr>';
+    : '<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text-muted)">لا توجد شواهد</td></tr>';
 }
 
 async function saveReport() {
@@ -4842,6 +5090,7 @@ function saveTeacherNote(){ saveTeacher(); }
 function renderDashboard() {
   // §11: إخفاء admin من الإحصائيات
   const yearPrograms = yearScopedRows(programsCache);
+  yearPrograms.forEach(p => { p.progress = calcProgramProgress(p.id); });
   const yearTasks = yearScopedRows(tasksCache);
   const yearEvs = yearScopedRows(evidencesCache);
   const visTeachers = yearScopedRows(teachersCache).filter(t => t.name && !t.name.toLowerCase().includes('admin'));
@@ -4907,7 +5156,10 @@ function renderDashboard() {
 }
 function drawDashPie() {
   const c=document.getElementById('initiatives-chart'); if(!c)return;
-  const ctx=c.getContext('2d'),W=c.width,H=c.height; ctx.clearRect(0,0,W,H);
+  let ctx;
+  try { ctx = c.getContext('2d'); } catch { return; }
+  if (!ctx) return;
+  const W=c.width,H=c.height; ctx.clearRect(0,0,W,H);
   const yearPrograms = yearScopedRows(programsCache);
   const cnt={'منتهٍ':0,'جارٍ التنفيذ':0,'قيد التخطيط':0,'متأخر':0};
   yearPrograms.forEach(p=>{const s=calcProgramStatus(p);if(s==='done')cnt['منتهٍ']++;else if(s==='active')cnt['جارٍ التنفيذ']++;else if(s==='planning')cnt['قيد التخطيط']++;else cnt['متأخر']++;});
