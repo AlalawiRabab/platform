@@ -1,0 +1,12 @@
+{
+  "name": "platform-evidence-tests",
+  "private": true,
+  "type": "module",
+  "description": "Local tests for multi-attachment evidence. No production access.",
+  "scripts": {
+    "test": "node attachments-test.mjs"
+  },
+  "dependencies": {
+    "jsdom": "^30.1.1"
+  }
+}
