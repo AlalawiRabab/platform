@@ -217,7 +217,7 @@ canvas{display:block;max-width:100%;padding:14px}
 .requirements-counter{font-size:12px;font-weight:600;color:var(--text-muted)}
 .requirements-list{display:flex;flex-direction:column;gap:8px}
 .req-empty{font-size:12.5px;color:var(--text-muted);padding:6px 0}
-.req-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:8px;border:1px solid var(--border-light);background:#fff}
+.req-row{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:8px;border:1px solid var(--border-light);background:#fff}
 .req-main{flex:1;min-width:160px}
 .req-name{font-size:13px;font-weight:700;color:var(--text-main);margin-bottom:4px}
 .req-meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px;color:var(--text-muted)}
@@ -228,8 +228,19 @@ canvas{display:block;max-width:100%;padding:14px}
 .req-row.req-status-missing{border-color:#d5d8dc}
 .req-row.req-status-pending{border-color:#f5cba7}
 .req-row.req-status-approved{border-color:#a9dfbf}
+.req-status-partial .req-status-badge,.req-status-badge.req-status-partial{background:#eaf2ff;color:#1a5276}
+.req-row.req-status-partial{border-color:#aed6f1}
+.req-pct{display:inline-flex;align-items:center;margin-inline-start:8px;font-size:12px;font-weight:800;color:var(--primary-dark);background:#eaf2ff;border-radius:999px;padding:2px 8px}
+.req-attachments{display:flex;flex-direction:column;gap:6px;margin-top:8px;width:100%}
+.req-attachment-item{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:8px;background:#f7f9fc;border:1px solid var(--border-light)}
+.req-attachment-item.is-approved{background:#f4fbf7;border-color:#a9dfbf}
+.req-attachment-name{font-size:12.5px;font-weight:700;flex:1;min-width:140px;word-break:break-word}
+.req-attachment-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .req-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-.req-approve-btn{min-width:34px;font-size:16px;font-weight:800;background:#eef1f4;color:#7f8c8d;border:1.5px solid #cfd4d9}
+.reports-progress-summary{margin:0 0 14px;font-size:13px;font-weight:700;color:var(--primary-dark)}
+.file-preview-list{flex-direction:column;align-items:stretch;gap:8px}
+.file-preview-list .file-preview-row{display:flex;align-items:center;gap:10px}
+.req-approve-btn{min-width:34px;font-size:12px;font-weight:800;background:#eef1f4;color:#7f8c8d;border:1.5px solid #cfd4d9}
 .req-approve-btn.is-approved{background:#27ae60;color:#fff;border-color:#1e8449}
 .req-approve-btn:hover{filter:brightness(0.97)}
 .req-attach-locked{font-size:11px;color:#1e8449;font-weight:700}

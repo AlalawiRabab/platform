@@ -12,7 +12,7 @@
   <meta http-equiv="X-Content-Type-Options" content="nosniff"/>
   <meta name="referrer" content="strict-origin-when-cross-origin"/>
   <title>منصة الخطة التشغيلية المدرسية</title>
- <link rel="stylesheet" href="style.css?v=20260814-recovery">
+ <link rel="stylesheet" href="style.css?v=20261002-multi-attach">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&family=Cairo:wght@300;400;600;700&display=swap" rel="stylesheet">
   <script>
@@ -245,6 +245,7 @@
         </div>
         <p style="margin:0 0 16px;color:var(--muted,#7f8c8d);font-size:0.95rem">
           تُحسب تلقائيًا من برامج ومؤشرات وشواهد ومهام ومبادرات السنة المحددة — بلا إدخال يدوي.
+          نسبة الشاهد = المرفقات المعتمدة ÷ إجمالي مرفقاته، ونسبة المؤشر = متوسط نسب شواهده بوزن متساوٍ لكل شاهد.
         </p>
         <div class="kpi-cards" id="kpi-cards"></div>
       </section>
@@ -279,11 +280,12 @@
           <h2>التقارير والشواهد</h2>
           <button class="btn-primary" onclick="openReportModal()">+ رفع شاهد</button>
         </div>
+        <p id="reports-progress-summary" class="reports-progress-summary"></p>
         <div class="table-wrapper">
           <table class="data-table">
             <thead><tr>
               <th>#</th><th>العنوان</th><th>النوع</th><th>البرنامج المرتبط</th>
-              <th>المسؤولة</th><th>التاريخ</th><th>الرابط</th><th>إجراءات</th>
+              <th>المسؤولة</th><th>التاريخ</th><th>الحالة</th><th>فتح</th><th>إجراءات</th>
             </tr></thead>
             <tbody id="reports-tbody"></tbody>
           </table>
@@ -456,38 +458,24 @@
         <input type="text" id="ev-title" placeholder="عنوان الشاهد"/>
       </div>
 
-      <div class="form-group">
-        <label>طريقة إضافة الشاهد <span class="req">*</span></label>
-        <div class="evidence-source-toggle" role="group" aria-label="طريقة إضافة الشاهد">
-          <label class="evidence-source-option">
-            <input type="radio" name="ev-source" value="file" checked onchange="toggleEvidenceSource('ev')"/>
-            <span>رفع ملف من الجهاز</span>
-          </label>
-          <label class="evidence-source-option">
-            <input type="radio" name="ev-source" value="drive" onchange="toggleEvidenceSource('ev')"/>
-            <span>إضافة رابط Google Drive</span>
-          </label>
-        </div>
-      </div>
-
       <div id="ev-file-group" class="form-group">
-        <label>اختر ملفاً من الجهاز <span class="req">*</span></label>
-        <input type="file" id="ev-file-input" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,application/pdf,image/jpeg,image/png" onchange="handleEvidenceFileSelect(this, 'ev')"/>
-        <small class="field-hint">الأنواع المسموحة: PDF, JPG, JPEG, PNG, DOC, DOCX, XLS, XLSX — الحد الأقصى 10MB</small>
-        <div id="ev-file-preview" class="file-preview hidden"></div>
+        <label>ملفات من الجهاز</label>
+        <input type="file" id="ev-file-input" multiple accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,application/pdf,image/jpeg,image/png" onchange="handleEvidenceFileSelect(this, 'ev')"/>
+        <small class="field-hint">يمكن اختيار عدة ملفات. الأنواع المسموحة: PDF, JPG, JPEG, PNG, DOC, DOCX, XLS, XLSX — الحد الأقصى 10MB لكل ملف</small>
+        <div id="ev-file-preview" class="file-preview file-preview-list hidden"></div>
       </div>
 
-      <div id="ev-link-group" class="form-group hidden">
-        <label>رابط Google Drive <span class="req">*</span></label>
-        <input type="url" id="ev-link" placeholder="https://drive.google.com/..."/>
-        <small class="field-hint">الصق رابط ملف أو مجلد من Google Drive</small>
+      <div id="ev-link-group" class="form-group">
+        <label>روابط المرفقات</label>
+        <textarea id="ev-links" rows="4" dir="ltr" placeholder="https://drive.google.com/file/d/...&#10;https://drive.google.com/drive/folders/..."></textarea>
+        <small class="field-hint">رابط واحد في كل سطر. يمكن الجمع بين الملفات والروابط لنفس الشاهد. الحفظ يضيف مرفقات جديدة ولا يستبدل السابقة.</small>
       </div>
 
       <div class="form-group"><label>المسؤولة / الرافعة</label><input type="text" id="ev-person" placeholder="اسم المعلمة"/></div>
       <div class="form-group"><label>ملاحظات</label><textarea id="ev-notes" placeholder="ملاحظات إضافية..."></textarea></div>
     </div>
     <div class="modal-footer">
-      <button class="btn-primary" id="ev-save-btn" onclick="saveEvidence()">📎 حفظ الشاهد</button>
+      <button class="btn-primary" id="ev-save-btn" onclick="saveEvidence()">💾 حفظ المرفقات</button>
       <button class="btn-secondary" onclick="closeModal('evidence-modal')">إلغاء</button>
     </div>
   </div>
@@ -672,7 +660,7 @@
   
  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1"></script>
 <script src="config.js?v=20260814-recovery"></script>
-<script src="./script.js?v=20260814-recovery"></script>
+<script src="./script.js?v=20261002-multi-attach"></script>
   
 </body>
 </html>
