@@ -384,6 +384,32 @@ for (const [name, expectErr, setup] of gateCases) {
   else ok(`gate: ${name} (nothing changed)`, !!err && err.includes('STOP') && err.includes(expectErr) && cols === 0, err);
 }
 
+console.log('\n== TRUNCATE revoke on tasks (production grants: authenticated=arwdDxtm) ==');
+{
+  const g = new PGlite();
+  await buildBaseline(g);
+  await g.exec(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF; END $$;
+    GRANT ALL ON public.tasks TO service_role; GRANT TRUNCATE, REFERENCES, TRIGGER ON public.tasks TO authenticated;`);
+  const priv = async (role, p) => (await g.query(`SELECT has_table_privilege($1, 'public.tasks', $2) v`, [role, p])).rows[0].v;
+  ok('before: authenticated has TRUNCATE (as in production)', await priv('authenticated', 'TRUNCATE'));
+  const rowsBefore = JSON.stringify((await g.query(`SELECT * FROM public.tasks ORDER BY id`)).rows);
+  const polBefore = JSON.stringify((await g.query(`SELECT policyname, qual, with_check FROM pg_policies WHERE tablename='tasks' ORDER BY 1`)).rows);
+  await g.exec(readFileSync(`${REPO}/sql/phase_tasks_revoke_truncate.sql`, 'utf8'));
+  ok('after: authenticated/anon/PUBLIC have no TRUNCATE', !(await priv('authenticated', 'TRUNCATE')) && !(await priv('anon', 'TRUNCATE')) && !(await priv('public', 'TRUNCATE')));
+  let same = true;
+  for (const p of ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'REFERENCES', 'TRIGGER']) same = same && await priv('authenticated', p);
+  ok('after: authenticated keeps SELECT/INSERT/UPDATE/DELETE/REFERENCES/TRIGGER', same);
+  ok('after: service_role keeps TRUNCATE', await priv('service_role', 'TRUNCATE'));
+  ok('after: task rows and policies unchanged',
+    JSON.stringify((await g.query(`SELECT * FROM public.tasks ORDER BY id`)).rows) === rowsBefore
+    && JSON.stringify((await g.query(`SELECT policyname, qual, with_check FROM pg_policies WHERE tablename='tasks' ORDER BY 1`)).rows) === polBefore);
+  await g.exec(`SET ROLE authenticated`);
+  let terr = null;
+  try { await g.exec(`TRUNCATE public.tasks`); } catch (e) { terr = e.message; }
+  await g.exec(`RESET ROLE`);
+  ok('after: TRUNCATE as authenticated denied (local PGlite only)', !!terr && /permission denied/.test(terr), terr);
+}
+
 console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
 }
