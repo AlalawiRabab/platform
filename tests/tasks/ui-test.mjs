@@ -225,7 +225,7 @@ w.eval('renderTasks()');
 ok('card: approved badge', $('tasks-grid').textContent.includes('معتمد'));
 
 // 6) backend is the barrier: bypass the UI
-const bypass = await w.eval(`sbUpdateTask({ ...tasksCache.find(t => t.id === '${t1.id}'), evidence_url: 'https://docs.google.com/x' })`
+const bypass = await w.eval(`sbUpdateTask({ ...tasksCache.find(t => String(t.id) === '${t1.id}'), evidence_url: 'https://docs.google.com/x' })`
   + `.then(() => 'saved', e => arabicDbError(e))`);
 ok('bypass: vice direct update of approved link rejected by DB', /ألغِ الاعتماد/.test(bypass), bypass);
 const forged = await w.eval(`sb.from('tasks').update({ evidence_approved: false }).eq('id', '${t1.id}').select().single()`
@@ -277,7 +277,10 @@ ok('shared account: UI blocks add', /ليس لديك صلاحية/.test(toast())
 
 w.eval(`openTaskEvidenceModal('${t2.id}')`);
 ok('shared account: evidence modal opens and shows task + «المسؤولة»',
-  !$('task-evidence-modal').classList.contains('hidden') && /تنفيذ الإذاعة/.test($('task-ev-task-name').textContent) && /أ\. هند/.test($('task-ev-task-name').textContent));
+  !$('task-evidence-modal').classList.contains('hidden') && /تنفيذ الإذاعة/.test($('task-ev-task-name').textContent) && /أ\. هند/.test($('task-ev-details').textContent));
+ok('shared account: details show schedule, priority and status',
+  /يبدأ/.test($('task-ev-details').textContent) && /ينتهي/.test($('task-ev-details').textContent)
+  && /الأولوية/.test($('task-ev-details').textContent) && /الحالة/.test($('task-ev-details').textContent), $('task-ev-details').textContent);
 setVal('task-ev-url', 'https://evil.example/x');
 await w.eval('saveTaskEvidence()');
 ok('shared account: non-Drive URL rejected in UI', /Google Drive/.test(toast()), toast());
@@ -313,7 +316,7 @@ const tIns = await w.eval(`sbInsertTask({ name: 'x', resp: '', due: '', priority
   start_at: '2026-10-01T05:00:00Z', end_at: '2026-10-01T06:00:00Z', evidence_url: '' })
   .then(() => 'saved', e => arabicDbError(e))`);
 ok('shared account: direct API insert rejected by RLS', tIns !== 'saved', tIns);
-const tUpd = await w.eval(`sbUpdateTask({ ...tasksCache.find(t => t.id === '${t2.id}'), status: 'done' })
+const tUpd = await w.eval(`sbUpdateTask({ ...tasksCache.find(t => String(t.id) === '${t2.id}'), status: 'done' })
   .then(() => 'saved', e => arabicDbError(e))`);
 ok('shared account: direct API task edit (status) rejected by DB', tUpd !== 'saved', tUpd);
 const tDel = await w.eval(`sbDeleteTask('${t2.id}').then(() => 'called', e => arabicDbError(e))`);
@@ -345,13 +348,126 @@ await login('teacher');
 w.eval('renderTasks()');
 const tCardApprovedNow = [...$('tasks-grid').querySelectorAll('.task-card')].find(c => c.textContent.includes('تنفيذ الإذاعة'));
 ok('after approval: shared account has no attach/replace button', tCardApprovedNow && !/إرفاق شاهد|تعديل الشاهد/.test(tCardApprovedNow.textContent));
+ok('after approval: shared account still has a details button', tCardApprovedNow && /التفاصيل/.test(tCardApprovedNow.textContent));
 w.eval(`openTaskEvidenceModal('${t2.id}')`);
-ok('after approval: evidence modal refuses to open', /معتمد/.test(toast()), toast());
+ok('after approval: modal opens read-only (details shown, link field and save hidden, lock hint)',
+  !$('task-evidence-modal').classList.contains('hidden') && /أ\. هند/.test($('task-ev-details').textContent)
+  && $('task-ev-url-group').classList.contains('hidden') && $('task-ev-url').disabled
+  && $('task-ev-save-btn').classList.contains('hidden') && !$('task-ev-locked-hint').classList.contains('hidden'));
+w.eval(`closeModal('task-evidence-modal')`);
+setVal('task-ev-url', 'https://drive.google.com/late');
+await w.eval('saveTaskEvidence()');
+ok('after approval: UI save refused', /معتمد/.test(toast()), toast());
 const tAfter = await w.eval(`sbUpdateTaskEvidence('${t2.id}', 'https://drive.google.com/late').then(() => 'saved', e => arabicDbError(e))`);
 ok('after approval: API change rejected, link unchanged', tAfter !== 'saved'
   && (await dbTask('تنفيذ الإذاعة')).evidence_drive_url === 'https://docs.google.com/presentation/d/NEW', tAfter);
 
-// 9) other sections untouched by the frontend change
+// 9) real button clicks on rendered cards (bigint ids, as in production)
+async function waitFor(fn, ms = 4000) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { const v = await fn(); if (v) return v; await new Promise(r => setTimeout(r, 25)); }
+  return null;
+}
+const cardOf = name => [...$('tasks-grid').querySelectorAll('.task-card')].find(c => c.textContent.includes(name));
+const btnOf = (card, fn) => card && [...card.querySelectorAll('button')].find(b => (b.getAttribute('onclick') || '').includes(fn));
+
+await login('admin');
+ok('ids: tasksCache ids are numbers like production bigint', tasks().length > 0 && tasks().every(t => typeof t.id === 'number'), JSON.stringify(tasks().map(t => t.id)));
+[...$('section-tasks').querySelectorAll('.btn-primary')].find(b => (b.getAttribute('onclick') || '').includes('openTaskModal')).click();
+ok('click admin: "+ مهمة جديدة" opens add modal', !$('task-modal').classList.contains('hidden') && $('task-edit-id').value === '');
+setVal('task-name', 'نقر حقيقي'); setVal('task-resp', 'أ. منى');
+setVal('task-start', '2026-11-01T08:00'); setVal('task-end', '2026-11-01T12:00');
+$('task-save-btn').click();
+let cRow = await waitFor(() => dbTask('نقر حقيقي'));
+ok('click admin: save creates task with UTC times', cRow && new Date(cRow.start_at).toISOString() === new Date('2026-11-01T08:00').toISOString(), toast());
+await waitFor(() => $('task-modal').classList.contains('hidden'));
+
+w.eval('renderTasks()');
+btnOf(cardOf('نقر حقيقي'), 'openTaskModal').click();
+ok('click admin: ✏️ opens edit modal prefilled', !$('task-modal').classList.contains('hidden')
+  && $('task-name').value === 'نقر حقيقي' && $('task-resp').value === 'أ. منى' && $('task-start').value === '2026-11-01T08:00', toast());
+setVal('task-notes', 'عُدّلت بالنقر'); setVal('task-end', '2026-11-01T13:00');
+$('task-save-btn').click();
+cRow = await waitFor(async () => { const r = await dbTask('نقر حقيقي'); return r?.notes === 'عُدّلت بالنقر' ? r : null; });
+ok('click admin: edit saved to DB', cRow && new Date(cRow.end_at).toISOString() === new Date('2026-11-01T13:00').toISOString(), toast());
+ok('click admin: cache updated in place (no duplicate)', tasks().filter(t => t.name === 'نقر حقيقي').length === 1);
+
+w.eval('renderTasks()');
+const sel = cardOf('نقر حقيقي').querySelector('select.task-status-select');
+sel.value = 'inprogress'; sel.dispatchEvent(new w.Event('change'));
+cRow = await waitFor(async () => { const r = await dbTask('نقر حقيقي'); return r?.status === 'inprogress' ? r : null; });
+ok('click admin: status select updates DB', !!cRow, toast());
+
+await login('teacher');
+w.eval('renderTasks()');
+const attachBtn = btnOf(cardOf('نقر حقيقي'), 'openTaskEvidenceModal');
+ok('click teacher: attach button rendered', attachBtn && /إرفاق شاهد/.test(attachBtn.textContent));
+attachBtn.click();
+ok('click teacher: attach modal opens with details + «المسؤولة»', !$('task-evidence-modal').classList.contains('hidden')
+  && /أ\. منى/.test($('task-ev-details').textContent) && !$('task-ev-url').disabled, toast());
+setVal('task-ev-url', 'https://drive.google.com/drive/folders/CLICK1');
+$('task-ev-save-btn').click();
+cRow = await waitFor(async () => { const r = await dbTask('نقر حقيقي'); return r?.evidence_drive_url ? r : null; });
+ok('click teacher: link saved, stamped with shared account', cRow?.evidence_drive_url === 'https://drive.google.com/drive/folders/CLICK1'
+  && cRow.evidence_added_by === U.teacher && cRow.evidence_approved === false, toast());
+await waitFor(() => $('task-evidence-modal').classList.contains('hidden'));
+w.eval('renderTasks()');
+btnOf(cardOf('نقر حقيقي'), 'openTaskEvidenceModal').click();
+ok('click teacher: modal prefilled with current link', $('task-ev-url').value === 'https://drive.google.com/drive/folders/CLICK1');
+setVal('task-ev-url', 'https://docs.google.com/document/d/CLICK2');
+$('task-ev-save-btn').click();
+cRow = await waitFor(async () => { const r = await dbTask('نقر حقيقي'); return r?.evidence_drive_url?.endsWith('CLICK2') ? r : null; });
+ok('click teacher: replaces link before approval', !!cRow, toast());
+await waitFor(() => $('task-evidence-modal').classList.contains('hidden'));
+
+const legacyClick = (await db.query(`SELECT name FROM public.tasks WHERE start_at IS NULL AND evidence_drive_url IS NULL AND school_year_id = $1 LIMIT 1`, [Y_ACTIVE])).rows[0]?.name;
+w.eval('renderTasks()');
+btnOf(cardOf(legacyClick), 'openTaskEvidenceModal')?.click();
+setVal('task-ev-url', 'https://drive.google.com/file/d/LEGACYCLICK');
+$('task-ev-save-btn').click();
+cRow = await waitFor(async () => { const r = await dbTask(legacyClick); return r?.evidence_drive_url ? r : null; });
+ok('click teacher: link attached to legacy task, times stay NULL', cRow?.evidence_drive_url === 'https://drive.google.com/file/d/LEGACYCLICK' && cRow.start_at === null, `${legacyClick} ${toast()}`);
+await waitFor(() => $('task-evidence-modal').classList.contains('hidden'));
+
+await login('admin');
+w.eval('renderTasks()');
+btnOf(cardOf('نقر حقيقي'), 'openTaskModal').click();
+$('task-evidence-approved').checked = true;
+$('task-save-btn').click();
+cRow = await waitFor(async () => { const r = await dbTask('نقر حقيقي'); return r?.evidence_approved ? r : null; });
+ok('click admin: approves link', cRow?.evidence_approved_by === U.admin, toast());
+await waitFor(() => $('task-modal').classList.contains('hidden'));
+w.eval('renderTasks()');
+btnOf(cardOf('نقر حقيقي'), 'openTaskModal').click();
+setVal('task-evidence-url', 'https://drive.google.com/file/d/SWAP');
+$('task-save-btn').click();
+await waitFor(() => /ألغِ الاعتماد/.test(toast()));
+ok('click admin: approved link cannot be changed until unapproved', /ألغِ الاعتماد/.test(toast())
+  && (await dbTask('نقر حقيقي')).evidence_drive_url.endsWith('CLICK2'), toast());
+setVal('task-evidence-url', 'https://docs.google.com/document/d/CLICK2');
+setVal('task-notes', 'تعديل بعد الاعتماد');
+$('task-save-btn').click();
+cRow = await waitFor(async () => { const r = await dbTask('نقر حقيقي'); return r?.notes === 'تعديل بعد الاعتماد' ? r : null; });
+ok('click admin: other fields still editable on approved task', cRow?.evidence_approved === true, toast());
+await waitFor(() => $('task-modal').classList.contains('hidden'));
+
+await login('teacher');
+w.eval('renderTasks()');
+const detBtn = btnOf(cardOf('نقر حقيقي'), 'openTaskEvidenceModal');
+ok('click teacher: approved task shows details button only', detBtn && /التفاصيل/.test(detBtn.textContent)
+  && !btnOf(cardOf('نقر حقيقي'), 'openTaskModal') && !cardOf('نقر حقيقي').querySelector('.btn-delete, select'));
+detBtn.click();
+ok('click teacher: details read-only after approval', !$('task-evidence-modal').classList.contains('hidden')
+  && $('task-ev-save-btn').classList.contains('hidden') && /أ\. منى/.test($('task-ev-details').textContent));
+w.eval(`closeModal('task-evidence-modal')`);
+
+await login('admin');
+w.eval('renderTasks()');
+btnOf(cardOf('نقر حقيقي'), 'deleteTask').click();
+const gone = await waitFor(async () => !(await dbTask('نقر حقيقي')));
+ok('click admin: 🗑️ deletes task and removes it from cache', gone && !tasks().some(t => t.name === 'نقر حقيقي'), toast());
+
+// 10) other sections untouched by the frontend change
 ok('recovery password rule unchanged (6 chars)', w.eval('MIN_RECOVERY_PASSWORD_LEN') === 6);
 ok('no login throttle UI added', w.eval(`typeof isStrongPassword`) === 'undefined'
   && w.eval(`classifyUsernameLoginFailure({ payload: { error: 'too_many_attempts' }, error: { context: { status: 429 } }, caught: null })`) !== 'throttled');

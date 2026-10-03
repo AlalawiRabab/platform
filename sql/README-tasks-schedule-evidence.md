@@ -64,6 +64,11 @@
 
 **الرجوع:** كتلة معلّقة تحذف المشغّل فقط، فورًا ودون أن تمس البيانات.
 
+## 4) سحب TRUNCATE عن جدول المهام
+`sql/phase_tasks_revoke_truncate.sql`: يسحب TRUNCATE (الذي يتجاوز RLS) من `authenticated` و`anon` و`PUBLIC` على `public.tasks` فقط. لا يمس بقية الصلاحيات أو السياسات أو المشغّلات أو `service_role` أو المالك.
+
+**الرجوع:** `GRANT TRUNCATE ON TABLE public.tasks TO authenticated;`
+
 ---
 
 ## الصلاحيات في قسم المهام بعد التطبيق

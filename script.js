@@ -2689,7 +2689,7 @@ async function sbUpdateTask(t) {
     .single();
   if (error) throw taskNoRowError(error);
   const saved = mapTaskRow(data);
-  const i = tasksCache.findIndex(x => x.id === t.id);
+  const i = tasksCache.findIndex(x => String(x.id) === String(t.id));
   if (i !== -1) tasksCache[i] = saved;
   return saved;
 }
@@ -2711,7 +2711,7 @@ async function sbUpdateTaskEvidence(id, url) {
     .single();
   if (error) throw taskNoRowError(error);
   const saved = mapTaskRow(data);
-  const i = tasksCache.findIndex(x => x.id === id);
+  const i = tasksCache.findIndex(x => String(x.id) === String(id));
   if (i !== -1) tasksCache[i] = saved;
   return saved;
 }
@@ -2720,12 +2720,12 @@ async function sbDeleteTask(id) {
   requireSb();
   const { error } = await sb.from('tasks').delete().eq('id', id);
   if (error) throw error;
-  tasksCache = tasksCache.filter(t => t.id !== id);
+  tasksCache = tasksCache.filter(t => String(t.id) !== String(id));
 }
 
 async function sbUpdateTaskStatus(id, status) {
   requireSb();
-  const t = tasksCache.find(x => x.id === id); if (!t) return;
+  const t = tasksCache.find(x => String(x.id) === String(id)); if (!t) return;
   const prev = t.status;
   t.status = status;
   const { error } = await sb.from('tasks').update({status}).eq('id', id);
@@ -4583,7 +4583,7 @@ function renderTasks() {
           </select>` : `<span class="badge ${SBM[t.status]}">${SL2[t.status]}</span>`}
           ${canWrite && can('editTask') ? `<button class="btn-sm btn-edit" onclick="openTaskModal('${esc(t.id)}')">✏️</button>` : ''}
           ${canWrite && can('deleteTask') ? `<button class="btn-sm btn-delete" onclick="deleteTask('${esc(t.id)}')">🗑️</button>` : ''}
-          ${canWrite && isTeacher && can('attachTaskEvidence') && !t.evidence_approved ? `<button class="btn-sm btn-edit" onclick="openTaskEvidenceModal('${esc(t.id)}')">📎 ${t.evidence_url ? 'تعديل الشاهد' : 'إرفاق شاهد'}</button>` : ''}
+          ${isTeacher && can('attachTaskEvidence') ? `<button class="btn-sm btn-edit" onclick="openTaskEvidenceModal('${esc(t.id)}')">${canWrite && !t.evidence_approved ? `📎 ${t.evidence_url ? 'تعديل الشاهد' : 'إرفاق شاهد'}` : '👁️ التفاصيل'}</button>` : ''}
         </div>
       </div>
     `;
@@ -4626,7 +4626,7 @@ function openTaskModal(id) {
 
   let approved = false;
   if (id) {
-    const t=tasksCache.find(x=>x.id===id); if(!t)return;
+    const t=tasksCache.find(x=>String(x.id)===String(id)); if(!t)return;
     const sv=(fid,v)=>{const e=document.getElementById(fid);if(e)e.value=v??'';};
     sv('task-edit-id',t.id);sv('task-name',t.name);sv('task-resp',t.resp||'');sv('task-priority',t.priority);sv('task-status',t.status);sv('task-notes',t.notes||'');
     sv('task-start',isoToLocalInput(t.start_at));sv('task-end',isoToLocalInput(t.end_at));
@@ -4648,17 +4648,37 @@ function openTaskModal(id) {
   openModal('task-modal');
 }
 
+function taskDetailsHtml(t) {
+  const PL = { high:'عالية', medium:'متوسطة', low:'منخفضة' };
+  const SL = { pending:'معلقة', inprogress:'قيد التنفيذ', done:'منجزة' };
+  const evidence = taskEvidenceHtml(t);
+  return `
+    <span>👩‍🏫 المسؤولة: ${esc(t.resp || '—')}</span>
+    ${taskScheduleHtml(t)}
+    <span>🔴 الأولوية: ${esc(PL[t.priority] || t.priority)}</span>
+    <span>📌 الحالة: ${esc(SL[t.status] || t.status)}</span>
+    ${t.notes ? `<span>📝 ${esc(t.notes)}</span>` : ''}
+    ${evidence || '<span>📎 لا يوجد شاهد مرفق بعد</span>'}`;
+}
+
+/** حساب المعلمات: تفاصيل المهمة + إرفاق/استبدال رابط Drive قبل الاعتماد؛ بعد الاعتماد للعرض فقط */
 function openTaskEvidenceModal(id) {
   if (!requireAuth('attachTaskEvidence')) return;
-  try { assertYearWritable(); } catch { return; }
-  const t = tasksCache.find(x => x.id === id);
+  const t = tasksCache.find(x => String(x.id) === String(id));
   if (!t) return;
-  if (t.evidence_approved) { showToast('الشاهد معتمد ولا يمكن تعديله','error'); return; }
+  const readOnly = !!t.evidence_approved || !isSelectedYearWritable();
   const sv = (fid, v) => { const e = document.getElementById(fid); if (e) e.value = v ?? ''; };
   sv('task-ev-task-id', t.id);
   sv('task-ev-url', t.evidence_url || '');
   const nameEl = document.getElementById('task-ev-task-name');
-  if (nameEl) nameEl.textContent = `${t.name} — المسؤولة: ${t.resp || '—'}`;
+  if (nameEl) nameEl.textContent = t.name;
+  const detailsEl = document.getElementById('task-ev-details');
+  if (detailsEl) detailsEl.innerHTML = taskDetailsHtml(t);
+  const urlEl = document.getElementById('task-ev-url');
+  if (urlEl) urlEl.disabled = readOnly;
+  document.getElementById('task-ev-url-group')?.classList.toggle('hidden', readOnly);
+  document.getElementById('task-ev-save-btn')?.classList.toggle('hidden', readOnly);
+  document.getElementById('task-ev-locked-hint')?.classList.toggle('hidden', !t.evidence_approved);
   openModal('task-evidence-modal');
 }
 
@@ -4667,7 +4687,9 @@ async function saveTaskEvidence() {
   try { assertYearWritable(); } catch { return; }
   const g = id => (document.getElementById(id)?.value || '');
   const id = g('task-ev-task-id');
-  if (!tasksCache.some(x => x.id === id)) return;
+  const current = tasksCache.find(x => String(x.id) === String(id));
+  if (!current) return;
+  if (current.evidence_approved) { showToast('الشاهد معتمد ولا يمكن تعديله','error'); return; }
   const urlRaw = g('task-ev-url').trim();
   const url = urlRaw ? normalizeDriveUrl(urlRaw) : '';
   if (!url) {
