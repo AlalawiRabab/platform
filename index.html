@@ -574,14 +574,18 @@
 <div id="task-evidence-modal" class="modal-overlay hidden">
   <div class="modal">
     <div class="modal-header">
-      <h3>إرفاق شاهد المهمة</h3>
+      <h3>تفاصيل المهمة وشاهدها</h3>
       <button onclick="closeModal('task-evidence-modal')" class="modal-close">✕</button>
     </div>
     <div class="modal-body">
       <input type="hidden" id="task-ev-task-id"/>
-      <p class="field-hint" id="task-ev-task-name"></p>
-      <div class="form-group"><label>رابط Google Drive <span class="req">*</span></label><input type="url" id="task-ev-url" dir="ltr" maxlength="2048" placeholder="https://drive.google.com/..."/></div>
-      <p class="field-hint">لكل مهمة رابط Drive واحد (ملف أو مجلد). تأكدي أن مشاركته تسمح لإدارة المدرسة بفتحه. يمكن استبدال الرابط قبل اعتماده، ويُعتمد الشاهد من القائدة.</p>
+      <p class="task-title" id="task-ev-task-name"></p>
+      <div class="task-meta" id="task-ev-details"></div>
+      <p class="field-hint hidden" id="task-ev-locked-hint">الشاهد معتمد من القائدة — لا يمكن تغيير الرابط.</p>
+      <div id="task-ev-url-group">
+        <div class="form-group"><label>رابط Google Drive <span class="req">*</span></label><input type="url" id="task-ev-url" dir="ltr" maxlength="2048" placeholder="https://drive.google.com/..."/></div>
+        <p class="field-hint">لكل مهمة رابط Drive واحد (ملف أو مجلد). تأكدي أن مشاركته تسمح لإدارة المدرسة بفتحه. يمكن استبدال الرابط قبل اعتماده، ويُعتمد الشاهد من القائدة.</p>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn-primary" id="task-ev-save-btn" onclick="saveTaskEvidence()">💾 حفظ الشاهد</button>
@@ -690,7 +694,7 @@
   
  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1"></script>
 <script src="config.js?v=20260814-recovery"></script>
-<script src="./script.js?v=20261002-tasks-multi-attach"></script>
+<script src="./script.js?v=20261003-tasks-fix"></script>
   
 </body>
 </html>
