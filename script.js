@@ -72,6 +72,8 @@
      notes text,
      created_at timestamptz DEFAULT now()
    );
+   -- أعمدة الأوقات وشاهد Drive: sql/phase_task_schedule_evidence_review.sql
+   -- (start_at, end_at, evidence_drive_url, evidence_approved …)
 
    -- ⑥ evidences (program_id مربوط ببرنامج)
    CREATE TABLE IF NOT EXISTS evidences (
@@ -188,7 +190,7 @@ const PERMS = {
     addEvidence:true,editEvidence:true,deleteEvidence:true,
     manageEvidenceRequirements:true,deleteEvidenceRequirement:true,approveEvidence:true,
     addInitiative:true,editInitiative:true,deleteInitiative:true,
-    addTask:true,editTask:true,deleteTask:true,
+    addTask:true,editTask:true,deleteTask:true,attachTaskEvidence:true,
     addTeacher:true,editTeacher:true,deleteTeacher:true,
     viewTeacherLinks:true,addTeacherLink:true,
     editSettings:true,manageUsers:true,
@@ -201,7 +203,7 @@ const PERMS = {
     addEvidence:true,editEvidence:true,deleteEvidence:false,
     manageEvidenceRequirements:true,deleteEvidenceRequirement:false,approveEvidence:false,
     addInitiative:true,editInitiative:true,deleteInitiative:false,
-    addTask:true,editTask:true,deleteTask:false,
+    addTask:true,editTask:true,deleteTask:false,attachTaskEvidence:true,
     addTeacher:true,editTeacher:true,deleteTeacher:true,
     viewTeacherLinks:true,addTeacherLink:true,
     editSettings:false,manageUsers:false,
@@ -213,7 +215,7 @@ const PERMS = {
     addEvidence:true,editEvidence:false,deleteEvidence:false,
     manageEvidenceRequirements:false,deleteEvidenceRequirement:false,approveEvidence:false,
     addInitiative:false,editInitiative:false,deleteInitiative:false,
-    addTask:false,editTask:false,deleteTask:false,
+    addTask:false,editTask:false,deleteTask:false,attachTaskEvidence:true,
     addTeacher:false,editTeacher:false,deleteTeacher:false,
     viewTeacherLinks:false,addTeacherLink:false,
     editSettings:false,manageUsers:false,
@@ -224,7 +226,7 @@ const can = a => currentUser ? (PERMS[currentUser.role]?.[a] === true) : false;
 const NAV_ALLOWED = {
   admin  : ['dashboard','programs','plan','kpi','tasks','reports','teachers','calendar','stats','settings','users'],
   vice   : ['dashboard','programs','plan','kpi','tasks','reports','teachers','calendar','stats'],
-  teacher: ['dashboard','programs','reports'],
+  teacher: ['dashboard','programs','tasks','reports'],
 };
 
 const ALLOWED_EVIDENCE_EXT = ['pdf','jpg','jpeg','png','doc','docx','xls','xlsx'];
@@ -947,9 +949,12 @@ async function loadAllData(renderAfter = true) {
     await fetchEvidences();
     if (isSectionAllowed('plan') || isSectionAllowed('tasks')) {
       await fetchTasks();
-      await fetchInitiatives();
     } else {
       tasksCache = [];
+    }
+    if (isSectionAllowed('plan')) {
+      await fetchInitiatives();
+    } else {
       initiativesCache = [];
     }
     if (isSectionAllowed('teachers')) {
@@ -1532,6 +1537,9 @@ function arabicDbError(err) {
   if (/forbidden|permission|rls|row-level|policy|42501|pgrst301|not allowed/.test(blob)) {
     return 'ليس لديك صلاحية لهذا الإجراء';
   }
+  if (blob.includes('tasks_schedule_order_check')) return 'وقت النهاية يجب أن يكون بعد وقت البداية';
+  if (blob.includes('tasks_schedule_pair_check')) return 'يجب تحديد وقت البداية والنهاية معًا';
+  if (blob.includes('tasks_evidence_drive_url_check')) return 'رابط Google Drive غير صالح';
   if (blob.includes('uq_evidences_one_per_requirement')) {
     return 'لا يزال قيد المرفق الواحد مفعّلاً. طبّق تحديث SQL للمرفقات المتعددة أولاً.';
   }
@@ -1668,7 +1676,8 @@ function refreshHijriPreview(inputId) {
     'prog-end': 'prog-end-hijri',
     'ini-start': 'ini-start-hijri',
     'ini-end': 'ini-end-hijri',
-    'task-due': 'task-due-hijri',
+    'task-start': 'task-start-hijri',
+    'task-end': 'task-end-hijri',
     'tf-last-report': 'tf-last-report-hijri',
     'sy-start': 'sy-start-hijri',
     'sy-end': 'sy-end-hijri',
@@ -1682,7 +1691,8 @@ function bindAllHijriPreviews() {
     ['prog-end', 'prog-end-hijri'],
     ['ini-start', 'ini-start-hijri'],
     ['ini-end', 'ini-end-hijri'],
-    ['task-due', 'task-due-hijri'],
+    ['task-start', 'task-start-hijri'],
+    ['task-end', 'task-end-hijri'],
     ['tf-last-report', 'tf-last-report-hijri'],
     ['sy-start', 'sy-start-hijri'],
     ['sy-end', 'sy-end-hijri'],
@@ -2566,35 +2576,144 @@ async function fetchTasks() {
     showToast('تعذّر تحميل المهام', 'error');
     return;
   }
-  tasksCache = (data||[]).map(r => ({
+  tasksCache = (data||[]).map(mapTaskRow);
+}
+
+function mapTaskRow(r) {
+  return {
     id:r.id, name:r.name||'', resp:r.resp||'', due:r.due_date||'',
     priority:r.priority||'medium', status:r.status||'pending', notes:r.notes||'',
+    start_at: r.start_at || null,
+    end_at: r.end_at || null,
+    evidence_url: r.evidence_drive_url || '',
+    evidence_approved: r.evidence_approved === true,
+    evidence_approved_at: r.evidence_approved_at || null,
     school_year_id: r.school_year_id || null,
-  }));
+  };
+}
+
+const TASK_DRIVE_HOSTS = ['drive.google.com', 'docs.google.com'];
+const MAX_DRIVE_URL_LEN = 2048;
+
+/** رابط Drive صالح بصيغة https على نطاق Google Drive/Docs فقط، وإلا '' */
+function normalizeDriveUrl(raw) {
+  const s = String(raw || '').trim();
+  if (!s || s.length > MAX_DRIVE_URL_LEN) return '';
+  if (/[\s<>"'`\\]/.test(s)) return '';
+  let u;
+  try { u = new URL(s); } catch { return ''; }
+  if (u.protocol !== 'https:') return '';
+  if (u.username || u.password || u.port) return '';
+  if (!TASK_DRIVE_HOSTS.includes(u.hostname.toLowerCase())) return '';
+  return u.href;
+}
+
+/** قيمة input[type=datetime-local] → ISO (UTC). المتصفح يفسّرها بتوقيت المستخدم المحلي. */
+function localInputToISO(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+/** ISO/timestamptz → قيمة datetime-local بتوقيت المستخدم المحلي */
+function isoToLocalInput(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** تاريخ محلي YYYY-MM-DD (لمزامنة due_date مع اللوحة والتقويم) */
+function isoToLocalDateKey(iso) {
+  const v = isoToLocalInput(iso);
+  return v ? v.slice(0, 10) : '';
+}
+
+function formatLocalDateTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  try {
+    return d.toLocaleString('ar-SA-u-ca-gregory', {
+      year: 'numeric', month: 'short', day: 'numeric',
+      hour: 'numeric', minute: '2-digit',
+    });
+  } catch {
+    return d.toLocaleString();
+  }
+}
+
+function userTimeZoneLabel() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; }
+}
+
+function isTaskLate(t, now = new Date()) {
+  if (t.status === 'done') return false;
+  if (t.end_at) return new Date(t.end_at) < now;
+  const due = t.due ? parseISODateOnly(t.due) : null;
+  if (!due) return false;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return due < today;
+}
+
+function taskWritePayload(t) {
+  const payload = {
+    name:t.name, resp:t.resp||null, due_date:t.due||null,
+    priority:t.priority, status:t.status, notes:t.notes||null,
+    start_at: t.start_at, end_at: t.end_at,
+    evidence_drive_url: t.evidence_url || null,
+  };
+  // الاعتماد يُرسل من المدير فقط؛ القاعدة ترفضه من غيره (trg_tasks_enforce_evidence)
+  if (can('approveEvidence')) payload.evidence_approved = !!(t.evidence_url && t.evidence_approved);
+  return payload;
 }
 
 async function sbInsertTask(t) {
   requireSb();
   const schoolYearId = await requireWritableSchoolYearId();
   const { data, error } = await sb.from('tasks').insert({
-    name:t.name, resp:t.resp||null, due_date:t.due||null,
-    priority:t.priority, status:t.status, notes:t.notes||null,
+    ...taskWritePayload(t),
     school_year_id: schoolYearId,
   }).select().single();
   if (error) throw error;
-  return { ...t, id:data.id, school_year_id: schoolYearId };
+  return mapTaskRow(data);
 }
 
 async function sbUpdateTask(t) {
   requireSb();
-  const { error } = await sb.from('tasks').update({
-    name:t.name, resp:t.resp||null, due_date:t.due||null,
-    priority:t.priority, status:t.status, notes:t.notes||null,
-  }).eq('id', t.id);
-  if (error) throw error;
+  const { data, error } = await sb.from('tasks')
+    .update(taskWritePayload(t))
+    .eq('id', t.id)
+    .select()
+    .single();
+  if (error) throw taskNoRowError(error);
+  const saved = mapTaskRow(data);
   const i = tasksCache.findIndex(x => x.id === t.id);
-  if (i !== -1) tasksCache[i] = t;
-  return t;
+  if (i !== -1) tasksCache[i] = saved;
+  return saved;
+}
+
+/** RLS تُخفي الصف عند المنع (مثل شاهد معتمد أو سنة مؤرشفة) فيعود .single() بلا صف */
+function taskNoRowError(error) {
+  return error?.code === 'PGRST116'
+    ? new Error('ليس لديك صلاحية لهذا الإجراء أو أن شاهد المهمة معتمد')
+    : error;
+}
+
+/** حساب المعلمات المشترك: رابط الشاهد فقط — RLS (tasks_update_teacher_evidence) والمشغّل يرفضان أي عمود آخر */
+async function sbUpdateTaskEvidence(id, url) {
+  requireSb();
+  const { data, error } = await sb.from('tasks')
+    .update({ evidence_drive_url: url || null })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw taskNoRowError(error);
+  const saved = mapTaskRow(data);
+  const i = tasksCache.findIndex(x => x.id === id);
+  if (i !== -1) tasksCache[i] = saved;
+  return saved;
 }
 
 async function sbDeleteTask(id) {
@@ -4390,20 +4509,32 @@ function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
 function filterTasks(v) { _taskFilter=v; renderTasks(); }
 function filterTasksPriority(v) { _taskPriFilter=v; renderTasks(); }
 
+function taskScheduleHtml(t) {
+  if (t.start_at && t.end_at) {
+    return `<span>🕘 يبدأ: ${esc(formatLocalDateTime(t.start_at))}</span>
+          <span>🏁 ينتهي: ${esc(formatLocalDateTime(t.end_at))}</span>`;
+  }
+  return `<span>📅 ${esc(fmtDate(t.due))}</span>`;
+}
+
+function taskEvidenceHtml(t) {
+  const url = normalizeDriveUrl(t.evidence_url);
+  if (!url) return '';
+  const badge = t.evidence_approved
+    ? '<span class="badge badge-success">✅ معتمد</span>'
+    : '<span class="badge badge-warning">قيد المراجعة</span>';
+  return `<span>📎 ${safeLinkHtml(url, 'شاهد المهمة (Drive)')} ${badge}</span>`;
+}
+
 function renderTasks() {
   let tasks = yearScopedRows(tasksCache);
-  const today = new Date(); today.setHours(0,0,0,0);
+  const now = new Date();
   const canWrite = !isYearReadOnlyMode();
 
-  if (currentUser?.role === 'teacher') {
-    tasks = tasks.filter(t => t.resp && t.resp.includes(currentUser.name));
-  }
+  const isTeacher = currentUser?.role === 'teacher';
 
   if (_taskFilter === 'late') {
-    tasks = tasks.filter(t => {
-      const due = t.due ? parseISODateOnly(t.due) : null;
-      return t.status !== 'done' && due && due < today;
-    });
+    tasks = tasks.filter(t => isTaskLate(t, now));
   } else if (_taskFilter !== 'all') {
     tasks = tasks.filter(t => t.status === _taskFilter);
   }
@@ -4425,8 +4556,7 @@ function renderTasks() {
   }
 
   grid.innerHTML = tasks.map(t => {
-    const due = t.due ? parseISODateOnly(t.due) : null;
-    const late = t.status !== 'done' && due && due < today;
+    const late = isTaskLate(t, now);
 
     return `
       <div class="task-card priority-${t.priority}">
@@ -4439,9 +4569,10 @@ function renderTasks() {
 
         <div class="task-meta">
           <span>👩‍🏫 ${esc(t.resp || '—')}</span>
-          <span>📅 ${esc(fmtDate(t.due))}</span>
+          ${taskScheduleHtml(t)}
           <span>🔴 ${esc(PL[t.priority] || t.priority)}</span>
           ${t.notes ? `<span>📝 ${esc(t.notes)}</span>` : ''}
+          ${taskEvidenceHtml(t)}
         </div>
 
         <div class="task-actions">
@@ -4452,6 +4583,7 @@ function renderTasks() {
           </select>` : `<span class="badge ${SBM[t.status]}">${SL2[t.status]}</span>`}
           ${canWrite && can('editTask') ? `<button class="btn-sm btn-edit" onclick="openTaskModal('${esc(t.id)}')">✏️</button>` : ''}
           ${canWrite && can('deleteTask') ? `<button class="btn-sm btn-delete" onclick="deleteTask('${esc(t.id)}')">🗑️</button>` : ''}
+          ${canWrite && isTeacher && can('attachTaskEvidence') && !t.evidence_approved ? `<button class="btn-sm btn-edit" onclick="openTaskEvidenceModal('${esc(t.id)}')">📎 ${t.evidence_url ? 'تعديل الشاهد' : 'إرفاق شاهد'}</button>` : ''}
         </div>
       </div>
     `;
@@ -4483,16 +4615,78 @@ function openTaskModal(id) {
   if (!id && !can('addTask'))  { showToast('ليس لديك صلاحية إضافة مهام','error');   return; }
   try { assertYearWritable(); } catch { return; }
   const ti=document.getElementById('task-modal-title'); if(ti) ti.textContent=id?'تعديل المهمة':'إضافة مهمة جديدة';
-  ['task-edit-id','task-name','task-resp','task-due','task-notes'].forEach(fid=>{const e=document.getElementById(fid);if(e)e.value='';});
+  ['task-edit-id','task-name','task-resp','task-start','task-end','task-notes','task-evidence-url'].forEach(fid=>{const e=document.getElementById(fid);if(e)e.value='';});
   const pEl=document.getElementById('task-priority'); if(pEl) pEl.value='high';
   const sEl=document.getElementById('task-status');   if(sEl) sEl.value='pending';
+  const apprEl=document.getElementById('task-evidence-approved'); if(apprEl) apprEl.checked=false;
+  const legacyHint=document.getElementById('task-legacy-due-hint');
+  if (legacyHint) { legacyHint.textContent=''; legacyHint.classList.add('hidden'); }
+  const tzHint=document.getElementById('task-tz-hint');
+  if (tzHint) { const tz=userTimeZoneLabel(); tzHint.textContent = tz ? `الأوقات بتوقيت جهازك: ${tz}` : 'الأوقات بتوقيت جهازك المحلي'; }
+
+  let approved = false;
   if (id) {
     const t=tasksCache.find(x=>x.id===id); if(!t)return;
     const sv=(fid,v)=>{const e=document.getElementById(fid);if(e)e.value=v??'';};
-    sv('task-edit-id',t.id);sv('task-name',t.name);sv('task-resp',t.resp||'');sv('task-due',t.due||'');sv('task-priority',t.priority);sv('task-status',t.status);sv('task-notes',t.notes||'');
+    sv('task-edit-id',t.id);sv('task-name',t.name);sv('task-resp',t.resp||'');sv('task-priority',t.priority);sv('task-status',t.status);sv('task-notes',t.notes||'');
+    sv('task-start',isoToLocalInput(t.start_at));sv('task-end',isoToLocalInput(t.end_at));
+    sv('task-evidence-url',t.evidence_url||'');
+    approved = !!t.evidence_approved;
+    if (apprEl) apprEl.checked = approved;
+    if (legacyHint && !t.start_at && t.due) {
+      legacyHint.textContent = `مهمة سابقة بلا أوقات محددة — تاريخ الاستحقاق المسجّل: ${fmtDate(t.due)}. حدّد البداية والنهاية لتحديثها، أو اتركهما فارغين للإبقاء عليه.`;
+      legacyHint.classList.remove('hidden');
+    }
   }
-  refreshHijriPreview('task-due');
+  const isApprover = can('approveEvidence');
+  document.getElementById('task-evidence-approve-group')?.classList.toggle('hidden', !isApprover);
+  const lockEvidence = approved && !isApprover;
+  const evUrlEl=document.getElementById('task-evidence-url'); if(evUrlEl) evUrlEl.disabled=lockEvidence;
+  document.getElementById('task-evidence-lock-hint')?.classList.toggle('hidden', !lockEvidence);
+  refreshHijriPreview('task-start');
+  refreshHijriPreview('task-end');
   openModal('task-modal');
+}
+
+function openTaskEvidenceModal(id) {
+  if (!requireAuth('attachTaskEvidence')) return;
+  try { assertYearWritable(); } catch { return; }
+  const t = tasksCache.find(x => x.id === id);
+  if (!t) return;
+  if (t.evidence_approved) { showToast('الشاهد معتمد ولا يمكن تعديله','error'); return; }
+  const sv = (fid, v) => { const e = document.getElementById(fid); if (e) e.value = v ?? ''; };
+  sv('task-ev-task-id', t.id);
+  sv('task-ev-url', t.evidence_url || '');
+  const nameEl = document.getElementById('task-ev-task-name');
+  if (nameEl) nameEl.textContent = `${t.name} — المسؤولة: ${t.resp || '—'}`;
+  openModal('task-evidence-modal');
+}
+
+async function saveTaskEvidence() {
+  if (!requireAuth('attachTaskEvidence')) return;
+  try { assertYearWritable(); } catch { return; }
+  const g = id => (document.getElementById(id)?.value || '');
+  const id = g('task-ev-task-id');
+  if (!tasksCache.some(x => x.id === id)) return;
+  const urlRaw = g('task-ev-url').trim();
+  const url = urlRaw ? normalizeDriveUrl(urlRaw) : '';
+  if (!url) {
+    showToast('رابط الشاهد يجب أن يكون رابط Google Drive يبدأ بـ https://drive.google.com أو https://docs.google.com','error');
+    return;
+  }
+  const btn = document.getElementById('task-ev-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'جارٍ الحفظ…'; }
+  try {
+    await sbUpdateTaskEvidence(id, url);
+    closeModal('task-evidence-modal');
+    renderTasks();
+    showToast('تم إرفاق الشاهد ✅ — بانتظار اعتماد القائدة','success');
+  } catch (err) {
+    console.error('[saveTaskEvidence]', err.message);
+    showToast(arabicDbError(err), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '💾 حفظ الشاهد'; }
+  }
 }
 
 async function saveTask() {
@@ -4503,14 +4697,38 @@ async function saveTask() {
   const g=id=>(document.getElementById(id)?.value||'');
   const name=clampInput(g('task-name')); if(!name){showToast('يرجى إدخال اسم المهمة','error');return;}
   const pri=g('task-priority'); const st=g('task-status');
+  const existing = editId ? tasksCache.find(x => String(x.id) === String(editId)) : null;
+
+  const startRaw = g('task-start'); const endRaw = g('task-end');
+  const isLegacyUntimed = !!existing && !existing.start_at && !startRaw && !endRaw;
+  let startISO = null; let endISO = null;
+  if (!isLegacyUntimed) {
+    if (!startRaw || !endRaw) { showToast('يرجى تحديد تاريخ ووقت البداية والنهاية','error'); return; }
+    startISO = localInputToISO(startRaw); endISO = localInputToISO(endRaw);
+    if (!startISO || !endISO) { showToast('صيغة التاريخ أو الوقت غير صحيحة','error'); return; }
+    if (new Date(endISO) <= new Date(startISO)) { showToast('وقت النهاية يجب أن يكون بعد وقت البداية','error'); return; }
+  }
+
+  const evUrlRaw = g('task-evidence-url').trim();
+  const evUrl = evUrlRaw ? normalizeDriveUrl(evUrlRaw) : '';
+  if (evUrlRaw && !evUrl) {
+    showToast('رابط الشاهد يجب أن يكون رابط Google Drive يبدأ بـ https://drive.google.com أو https://docs.google.com','error');
+    return;
+  }
+  const evApproved = !!document.getElementById('task-evidence-approved')?.checked;
+
   const t={
     id:editId||null,
     name,
     resp:clampInput(g('task-resp')),
-    due:g('task-due'),
+    due: isLegacyUntimed ? (existing.due || '') : isoToLocalDateKey(endISO),
+    start_at: startISO,
+    end_at: endISO,
     priority:['high','medium','low'].includes(pri)?pri:'medium',
     status:['pending','inprogress','done'].includes(st)?st:'pending',
-    notes:clampInput(g('task-notes'),1000)
+    notes:clampInput(g('task-notes'),1000),
+    evidence_url: evUrl,
+    evidence_approved: evUrl ? evApproved : false,
   };
   const btn=document.getElementById('task-save-btn');
   if(btn){btn.disabled=true;btn.textContent='جارٍ الحفظ…';}
