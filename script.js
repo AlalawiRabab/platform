@@ -199,7 +199,7 @@ const PERMS = {
   // الاعتماد محصور بالمدير (admin) فقط
   vice:{
     addProgram:true,editProgram:true,deleteProgram:false,
-    addIndicator:true,deleteIndicator:false,toggleIndicator:true,
+    addIndicator:true,deleteIndicator:true,toggleIndicator:true,
     addEvidence:true,editEvidence:true,deleteEvidence:false,
     manageEvidenceRequirements:true,deleteEvidenceRequirement:false,approveEvidence:false,
     addInitiative:true,editInitiative:true,deleteInitiative:false,
@@ -2151,23 +2151,70 @@ async function sbToggleIndicator(progId, indId) {
   viewProgramDetail(progId);
 }
 
+/** الشواهد المطلوبة والمرفقات والملاحظات المرتبطة بالمؤشر (من الكاش؛ قاعدة البيانات تتحقق مجدداً) */
+function getIndicatorLinkedData(indId) {
+  const reqIds = new Set(getRequirementsForIndicator(indId).map(r => String(r.id)));
+  const evs = (evidencesCache || []).filter(ev => ev && (
+    (ev.indicator_id != null && String(ev.indicator_id) === String(indId))
+    || (ev.requirement_id != null && reqIds.has(String(ev.requirement_id)))
+  ));
+  return {
+    requirements: reqIds.size,
+    evidences: evs.length,
+    notes: evs.filter(ev => evidenceNoteText(ev)).length,
+  };
+}
+
+function indicatorLinkedMessage(name, linked) {
+  const parts = [];
+  if (linked.requirements) parts.push(`${linked.requirements} شاهد مطلوب`);
+  if (linked.evidences) parts.push(`${linked.evidences} مرفق`);
+  if (linked.notes) parts.push(`${linked.notes} ملاحظة`);
+  return `لا يمكن حذف المؤشر «${name}» لأنه مرتبط بـ ${parts.join(' و')}. `
+    + 'أزيلي الشواهد والمرفقات المرتبطة به أولاً؛ لا تُحذف بياناته تلقائياً.';
+}
+
 async function handleDelInd(progId, indId) {
   if (!requireAuth('deleteIndicator')) return;
   try { assertYearWritable(); } catch { return; }
-  if (!confirm('حذف هذا المؤشر؟')) return;
+  const ind = (indicatorsCache[progId] || []).find(i => String(i.id) === String(indId));
+  const name = String(ind?.indicator_text || ind?.text || '').trim() || 'بدون اسم';
+  const linked = getIndicatorLinkedData(indId);
+  if (linked.requirements || linked.evidences) {
+    const msg = indicatorLinkedMessage(name, linked);
+    showToast(msg, 'error');
+    alert(msg);
+    return;
+  }
+  if (!confirm(`تأكيد حذف المؤشر؟\n\n«${name}»\n\nلا يمكن التراجع عن الحذف.`)) return;
   try {
     requireSb();
-    const { error } = await sb.from('program_indicators').delete().eq('id', indId);
+    const { data, error } = await sb.from('program_indicators').delete().eq('id', indId).select('id');
     if (error) throw error;
+    if (!data || !data.length) {
+      throw new Error('لم يُحذف المؤشر: ليس لديك صلاحية حذفه أو أن السنة الدراسية للقراءة فقط');
+    }
     if (indicatorsCache[progId]) {
       indicatorsCache[progId] = indicatorsCache[progId].filter(i => String(i.id) !== String(indId));
     }
+    const prog = programsCache.find(p => String(p.id) === String(progId));
+    if (prog) prog.indicators = indicatorsCache[progId] || [];
     await syncProgress(progId);
-    renderPrograms();
+    renderReports();
+    const detailModal = document.getElementById('program-detail-modal');
+    if (detailModal && !detailModal.classList.contains('hidden')
+        && String(_openProgramDetailId) === String(progId)) {
+      viewProgramDetail(progId);
+    }
     showToast('تم حذف المؤشر 🗑️', 'warning');
   } catch (err) {
     console.error('[handleDelInd]', err.message);
-    showToast(arabicDbError(err), 'error');
+    const msg = arabicDbError(err);
+    showToast(msg, 'error');
+    if (/لا يمكن حذف المؤشر/.test(msg)) {
+      alert(msg);
+      await refreshEvidenceViews(progId);
+    }
   }
 }
 window.handleDelInd = handleDelInd;
@@ -2381,8 +2428,42 @@ function attachmentDisplayName(ev) {
   return ev.title || 'مرفق';
 }
 
-function buildAttachmentItemHtml(ev, progId) {
+function evidenceNoteText(ev) {
+  return String(ev?.notes || '').trim();
+}
+
+function evidenceNoteHtml(text, label = 'ملاحظة') {
+  if (!text) return '';
+  return `<div class="ev-note"><span class="ev-note-label">📝 ${esc(label)}:</span> ${esc(text)}</div>`;
+}
+
+/**
+ * الملاحظة تُحفظ على كل مرفق (evidences.notes) مربوطاً بالشاهد عبر requirement_id.
+ * النص نفسه على أكثر من مرفق من الحفظ نفسه (الكاتبة والتاريخ) كُتب مرة واحدة للشاهد ككل؛
+ * غير ذلك فهو ملاحظة على مرفقه فقط.
+ */
+function splitRequirementNotes(attachments) {
+  const groups = new Map();
+  attachments.forEach(ev => {
+    const text = evidenceNoteText(ev);
+    if (!text) return;
+    const key = [ev.created_by || '', ev.date || '', text].join('\u0001');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(ev);
+  });
+  const shared = [];
+  const sharedIds = new Set();
+  groups.forEach(list => {
+    if (list.length < 2) return;
+    shared.push(evidenceNoteText(list[0]));
+    list.forEach(ev => sharedIds.add(String(ev.id)));
+  });
+  return { shared, sharedIds };
+}
+
+function buildAttachmentItemHtml(ev, progId, opts = {}) {
   const approved = isAttachmentApproved(ev);
+  const note = opts.hideNote ? '' : evidenceNoteText(ev);
   const openBtn = evidenceHasViewTarget(ev) ? evidenceViewButtonHtml(ev, 'فتح') : '';
   const approveBtn = can('approveEvidence') && !isYearReadOnlyMode()
     ? `<button type="button" class="btn-sm req-approve-btn ${approved ? 'is-approved' : ''}"
@@ -2396,6 +2477,7 @@ function buildAttachmentItemHtml(ev, progId) {
     <span class="req-attachment-name">${esc(attachmentDisplayName(ev))}</span>
     <span class="req-status-badge ${approved ? 'req-status-approved' : 'req-status-pending'}">${approved ? 'معتمد' : 'قيد المراجعة'}</span>
     <div class="req-attachment-actions">${openBtn}${approveBtn}${delBtn}</div>
+    ${note ? `<div class="req-attachment-note">${evidenceNoteHtml(note, 'ملاحظة على المرفق')}</div>` : ''}
   </div>`;
 }
 
@@ -2413,13 +2495,19 @@ function buildRequirementRowHtml(req, progId, indId) {
   const delBtn = can('deleteEvidenceRequirement') && !isYearReadOnlyMode()
     ? `<button type="button" class="btn-sm btn-delete" onclick="handleDeleteRequirement('${esc(progId)}','${esc(req.id)}')">🗑️</button>`
     : '';
+  const { shared: sharedNotes, sharedIds } = splitRequirementNotes(attachments);
   const list = attachments.length
-    ? `<div class="req-attachments">${attachments.map(ev => buildAttachmentItemHtml(ev, progId)).join('')}</div>`
+    ? `<div class="req-attachments">${attachments.map(ev =>
+        buildAttachmentItemHtml(ev, progId, { hideNote: sharedIds.has(String(ev.id)) })).join('')}</div>`
+    : '';
+  const reqNotes = sharedNotes.length
+    ? `<div class="req-notes">${sharedNotes.map(t => evidenceNoteHtml(t, 'ملاحظة على الشاهد')).join('')}</div>`
     : '';
 
   return `<div class="req-row ${meta.className}" data-req-id="${esc(req.id)}">
     <div class="req-main">
       <div class="req-name">${esc(req.name)}<span class="req-pct">${pct}٪</span></div>
+      ${reqNotes}
       <div class="req-meta">
         <span class="req-status-badge ${meta.className}">${esc(meta.label)}</span>
         <span class="req-attachment">${attachments.length ? `${attachments.filter(isAttachmentApproved).length} من ${attachments.length} مرفقات معتمدة` : 'لا مرفقات'}</span>
@@ -2812,7 +2900,7 @@ function buildEvidenceItemHtml(ev, opts = {}) {
     <div class="ev-det-info">
       <div class="ev-det-title">${esc(ev.title || ev.file_name || 'شاهد')}</div>
       <div class="ev-det-meta">${metaBits.length ? metaBits.join(' · ') : '—'}</div>
-      ${ev.notes ? `<div class="ev-det-meta" style="font-style:italic">${esc(ev.notes)}</div>` : ''}
+      ${evidenceNoteHtml(evidenceNoteText(ev))}
     </div>
     <div class="ev-det-actions">
       ${evidenceViewButtonHtml(ev)}
@@ -3205,7 +3293,7 @@ function buildProgramCard(p) {
             </span>
             <span class="ind-req-mini">${stats.approved}/${stats.total}</span>
 
-            ${can('deleteIndicator') && !isYearReadOnlyMode() ? `<button class="ind-delete" onclick="handleDelInd('${p.id}','${ind.id}')">×</button>` : ''}
+            ${can('deleteIndicator') && !isYearReadOnlyMode() ? `<button type="button" class="ind-delete" title="حذف المؤشر" onclick="handleDelInd('${esc(p.id)}','${esc(ind.id)}')">🗑️ حذف المؤشر</button>` : ''}
           </div>
         `;
       }).join('')
@@ -3424,9 +3512,12 @@ function viewProgramDetail(id) {
         const stats = getIndicatorRequirementStats(ind.id);
         return `
       <div class="indicator-detail-box">
-        <div style="font-weight:700;margin-bottom:8px">
-          ${esc(ind.indicator_text || ind.text || ind.name || ind.id)}
-          <span class="ind-detail-pct">${stats.pct}٪</span>
+        <div style="font-weight:700;margin-bottom:8px;display:flex;flex-wrap:wrap;align-items:center;gap:8px">
+          <span style="flex:1">${esc(ind.indicator_text || ind.text || ind.name || ind.id)}
+          <span class="ind-detail-pct">${stats.pct}٪</span></span>
+          ${can('deleteIndicator') && !isYearReadOnlyMode()
+            ? `<button type="button" class="btn-sm btn-delete" onclick="handleDelInd('${esc(p.id)}','${esc(ind.id)}')">🗑️ حذف المؤشر</button>`
+            : ''}
         </div>
         ${buildRequirementsSectionHtml(p.id, ind.id)}
         ${linkedOrphans.length ? `
@@ -3600,7 +3691,7 @@ if (barEl) {
           ${esc(ind.indicator_text || ind.text || '')}
         </span>
         <span class="ind-req-mini">${stats.approved}/${stats.total}</span>
-        ${can('deleteIndicator') && !isYearReadOnlyMode() ? `<button class="ind-delete" onclick="handleDelInd('${p.id}','${ind.id}')">×</button>` : ''}
+        ${can('deleteIndicator') && !isYearReadOnlyMode() ? `<button type="button" class="ind-delete" title="حذف المؤشر" onclick="handleDelInd('${esc(p.id)}','${esc(ind.id)}')">🗑️ حذف المؤشر</button>` : ''}
       </div>`;
   }).join('');
 }
@@ -4854,7 +4945,7 @@ function renderReports() {
           : '—';
         const approved = evidenceHasAttachment(r) && isAttachmentApproved(r);
         const statusLabel = !evidenceHasAttachment(r) ? '—' : (approved ? 'معتمد' : 'قيد المراجعة');
-        return`<tr><td>${i+1}</td><td style="font-weight:600">${esc(title)}</td>
+        return`<tr><td>${i+1}</td><td style="font-weight:600">${esc(title)}${evidenceNoteHtml(evidenceNoteText(r))}</td>
           <td><span class="badge badge-info">${TI[typeLabel]||getEvIcon(typeLabel||r.file_name)} ${esc(typeLabel||'—')}</span></td>
           <td>${esc(pName)}</td><td>${esc(r.person||'—')}</td><td>${esc(fmtDate(r.date || r.created_at))}</td>
           <td>${esc(statusLabel)}</td>
