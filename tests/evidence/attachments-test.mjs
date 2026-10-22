@@ -156,6 +156,14 @@ function readPendingNames() {
 }
 const countName = name => db.evidences.filter(e => e.file_name === name).length;
 const countLink = url => db.evidences.filter(e => e.link === url).length;
+function setLinkRows(rows) {
+  w.resetEvidenceLinkRows();
+  const box = w.document.getElementById('ev-link-rows');
+  box.replaceChildren();
+  rows.forEach(r => w.addEvidenceLinkRow(r.name ?? '', r.url ?? ''));
+  if (!rows.length) w.addEvidenceLinkRow();
+}
+const linkRows = urls => urls.map((url, i) => ({ name: `ملف ${i + 1}`, url }));
 
 function installUpload() {
   w.uploadEvidenceToStorage = async (f) => {
@@ -239,7 +247,7 @@ ok('بطاقات البرامج تعرض 75%', cards.includes('75%'), cards);
 const req = { id: 'r1', name: 'شهادة الحضور', indicator_id: '1' };
 setLet('currentUser', { id: 'user-admin', name: 'القائدة', role: 'admin' });
 const adminHtml = w.buildRequirementRowHtml(req, '10', '1');
-ok('كل المرفقات تحت اسم الشاهد مع زر فتح', (adminHtml.match(/فتح/g) || []).length === 4, adminHtml);
+ok('كل المرفقات تحت اسم الشاهد مع زر فتح', (adminHtml.match(/evidence-view-btn/g) || []).length === 4, adminHtml);
 ok('اعتماد مستقل لكل مرفق للقائدة', (adminHtml.match(/handleToggleAttachmentApproval/g) || []).length === 4);
 setLet('currentUser', { id: 'user-teacher', name: 'معلمة', role: 'teacher' });
 const teacherHtml = w.buildRequirementRowHtml(req, '10', '1');
@@ -254,8 +262,16 @@ w.handleEvidenceFileSelect({ files: [f1, f2], value: 'b' }, 'ev');
 ok('اختيار ملفين دون تكرار نفس الملف', readPendingNames().length === 2, readPendingNames().join(','));
 w.handleEvidenceFileSelect({ files: [file('bad.exe', 3000)], value: 'c' }, 'ev');
 ok('ملف غير مسموح لا يُضاف', readPendingNames().length === 2, readPendingNames().join(','));
-const parsed = w.parseEvidenceLinkLines('https://drive.google.com/file/d/1/view\n\nhttps://drive.google.com/file/d/1/view\nhttps://drive.google.com/file/d/2/view\nnotaurl');
-ok('الروابط تُقرأ سطراً سطراً مع حذف التكرار', parsed.valid.length === 2 && parsed.invalid.length === 1, JSON.stringify(parsed));
+setLinkRows([
+  { name: 'أ', url: 'https://drive.google.com/file/d/1/view' },
+  { name: '', url: '' },
+  { name: 'ب', url: 'https://drive.google.com/file/d/1/view' },
+  { name: 'ج', url: 'https://drive.google.com/file/d/2/view' },
+]);
+const parsed = w.collectEvidenceLinkRows();
+ok('صفوف الروابط تُقرأ مع حذف التكرار وتجاهل الصف الفارغ', !parsed.error && parsed.items.length === 2, JSON.stringify(parsed.items.map(i => i.url)));
+setLinkRows([{ name: 'أ', url: 'notaurl' }]);
+ok('رابط غير صالح يُرفض', !!w.collectEvidenceLinkRows().error);
 
 console.log('حفظ عدة مرفقات وفشل أحد الملفات وإعادة المحاولة');
 const OLD = 'https://drive.google.com/file/d/old/view';
@@ -289,7 +305,7 @@ w.document.getElementById('ev-requirement-id').value = 'r1';
 w.document.getElementById('ev-title').value = 'شهادة الحضور';
 w.document.getElementById('ev-person').value = 'معلمة';
 w.document.getElementById('ev-notes').value = '';
-w.document.getElementById('ev-links').value = `${OLD}\n${NEW}`;
+setLinkRows(linkRows([OLD, NEW]));
 failUpload.add('bad.pdf');
 ops.inserts = [];
 ops.updates = [];
@@ -312,7 +328,7 @@ failInsertOnce.add('drop.pdf');
 ops.removes = [];
 setLet('pendingEvidenceFiles', [file('drop.pdf', 13)]);
 w.eval('evidenceSavedKeys = new Set()');
-w.document.getElementById('ev-links').value = '';
+setLinkRows([]);
 await w.saveEvidence();
 ok('فشل الإدراج يحذف الملف المرفوع ولا يترك صفاً', countName('drop.pdf') === 0 && ops.removes.length === 1, `rows=${countName('drop.pdf')} removes=${ops.removes.length}`);
 await w.saveEvidence();
@@ -349,7 +365,7 @@ ok('نسبة الشاهد بعد اعتماد مرفق واحد تُحسب من 
 setLet('currentUser', { id: 'user-teacher', name: 'معلمة', role: 'teacher' });
 w.eval('evidenceSavedKeys = new Set()');
 setLet('pendingEvidenceFiles', [file('extra.pdf', 15)]);
-w.document.getElementById('ev-links').value = 'https://drive.google.com/file/d/extra/view';
+setLinkRows(linkRows(['https://drive.google.com/file/d/extra/view']));
 await w.saveEvidence();
 ok('المعلمة تضيف مرفقاً جديداً مع وجود مرفق معتمد', countName('extra.pdf') === 1 && countLink('https://drive.google.com/file/d/extra/view') === 1);
 

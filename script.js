@@ -140,7 +140,7 @@
 
 'use strict';
 
-console.log('[script.js] BUILD=20260814-recovery');
+console.log('[script.js] BUILD=20261022-evidence-teacher-links');
 
 /* ─────────────────────────────────────────────────────────────
    §0  SUPABASE
@@ -272,6 +272,68 @@ function sanitizeUrl(url) {
     if (!['http:', 'https:'].includes(parsed.protocol)) return '';
     return parsed.href;
   } catch { return ''; }
+}
+
+/** روابط المرفقات الجديدة: https فقط، بلا مسافات أو بيانات دخول داخل الرابط */
+function sanitizeHttpsUrl(url) {
+  const raw = String(url ?? '').trim();
+  if (!/^https:\/\//i.test(raw) || /\s/.test(raw)) return '';
+  try {
+    const parsed = new URL(raw);
+    const host = parsed.hostname;
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return '';
+    if (!host.includes('.') || host.startsWith('.') || host.endsWith('.')) return '';
+    return parsed.href;
+  } catch { return ''; }
+}
+
+const TEACHER_NAME_MIN = 2;
+const TEACHER_NAME_MAX = 100;
+const ATTACHMENT_LABEL_MAX = 150;
+const TEACHER_NAME_REQUIRED_MSG = 'يرجى كتابة اسم المعلمة المسؤولة عن الشاهد';
+const TEACHER_NAME_LENGTH_MSG = `اسم المعلمة المسؤولة يجب أن يكون بين ${TEACHER_NAME_MIN} و${TEACHER_NAME_MAX} حرفاً`;
+const LINK_LABEL_REQUIRED_MSG = 'يرجى كتابة اسم الملف أو الشاهد لكل رابط';
+const LINK_LABEL_LENGTH_MSG = `اسم الملف أو الشاهد يجب ألا يتجاوز ${ATTACHMENT_LABEL_MAX} حرفاً`;
+const LINK_HTTPS_MSG = 'الرابط غير صالح. يجب أن يبدأ بـ https://';
+const UNSPECIFIED_TEACHER_LABEL = 'غير محدد';
+const DEFAULT_LINK_LABEL = 'فتح الشاهد';
+
+function normalizeSpaces(str) {
+  return String(str ?? '').replace(/\s+/g, ' ').trim();
+}
+
+const charCount = str => Array.from(str).length;
+
+function validateTeacherName(raw) {
+  const value = normalizeSpaces(raw);
+  if (!value) return { error: TEACHER_NAME_REQUIRED_MSG };
+  const n = charCount(value);
+  if (n < TEACHER_NAME_MIN || n > TEACHER_NAME_MAX) return { error: TEACHER_NAME_LENGTH_MSG };
+  return { value };
+}
+
+function validateAttachmentLabel(raw) {
+  const value = normalizeSpaces(raw);
+  if (!value) return { error: LINK_LABEL_REQUIRED_MSG };
+  if (charCount(value) > ATTACHMENT_LABEL_MAX) return { error: LINK_LABEL_LENGTH_MSG };
+  return { value };
+}
+
+function evidenceTeacherName(ev) {
+  return normalizeSpaces(ev?.person) || UNSPECIFIED_TEACHER_LABEL;
+}
+
+function setFieldError(inputId, message) {
+  const input = document.getElementById(inputId);
+  const box = document.getElementById(`${inputId}-error`);
+  if (input) {
+    if (message) input.setAttribute('aria-invalid', 'true');
+    else input.removeAttribute('aria-invalid');
+  }
+  if (box) {
+    box.textContent = message || '';
+    box.classList.toggle('hidden', !message);
+  }
 }
 
 function safeLinkHtml(url, label, className) {
@@ -599,6 +661,7 @@ async function bootstrapAuthenticatedSession(session) {
     await loadAllData(false);
     applyRoleUI();
     _sessionBootstrapDone = true;
+    try { openEvidenceFromHash(); } catch {}
     return true;
   } catch (err) {
     console.error('[bootstrapAuthenticatedSession]');
@@ -731,6 +794,7 @@ function closeModal(id) {
   }
   if (id === 'program-detail-modal') {
     _openProgramDetailId = null;
+    clearEvidenceHash();
   }
   if (id === 'password-recovery-page') {
     clearPasswordRecoveryFields();
@@ -2412,20 +2476,27 @@ async function handleToggleRequirementApproval(progId, requirementId) {
   }
 }
 
+/**
+ * اسم العرض للمرفق — لا يُعرض عنوان URL أبداً.
+ * file_name: اسم الملف المرفوع، أو الاسم الذي كتبته المعلمة لرابط Drive (الرابط نفسه يبقى في link).
+ * الروابط القديمة بلا اسم: اسم الشاهد ثم اسم المتطلب ثم «فتح الشاهد».
+ */
 function attachmentDisplayName(ev) {
   if (!ev) return 'مرفق';
-  if (ev.file_name) return ev.file_name;
-  const link = evidenceDriveLink(ev);
-  if (link) {
-    try {
-      const path = new URL(link).pathname.replace(/\/+$/, '');
-      const tail = path.split('/').filter(Boolean).pop() || 'رابط';
-      return tail.length > 48 ? tail.slice(0, 45) + '…' : tail;
-    } catch {
-      return 'رابط';
-    }
-  }
-  return ev.title || 'مرفق';
+  const own = normalizeSpaces(ev.file_name);
+  if (own) return own;
+  const req = ev.requirement_id != null
+    ? evidenceRequirementsCache.find(r => String(r.id) === String(ev.requirement_id))
+    : null;
+  const fallback = normalizeSpaces(ev.title) || normalizeSpaces(req?.name);
+  if (fallback) return fallback;
+  return evidenceDriveLink(ev) ? DEFAULT_LINK_LABEL : 'مرفق';
+}
+
+function evidenceTeacherHtml(ev) {
+  const name = evidenceTeacherName(ev);
+  const unset = name === UNSPECIFIED_TEACHER_LABEL;
+  return `<span class="ev-teacher${unset ? ' is-unset' : ''}">👩‍🏫 المعلمة المسؤولة: <strong>${esc(name)}</strong></span>`;
 }
 
 function evidenceNoteText(ev) {
@@ -2473,10 +2544,11 @@ function buildAttachmentItemHtml(ev, progId, opts = {}) {
   const delBtn = can('deleteEvidence') && !isYearReadOnlyMode() && !approved
     ? `<button type="button" class="btn-sm btn-delete" onclick="handleDelEv('${esc(ev.id)}')" title="حذف المرفق">🗑️</button>`
     : '';
-  return `<div class="req-attachment-item ${approved ? 'is-approved' : ''}" data-ev-id="${esc(ev.id)}">
+  return `<div class="req-attachment-item ${approved ? 'is-approved' : ''}" id="evidence-${esc(ev.id)}" tabindex="-1" data-ev-id="${esc(ev.id)}">
     <span class="req-attachment-name">${esc(attachmentDisplayName(ev))}</span>
     <span class="req-status-badge ${approved ? 'req-status-approved' : 'req-status-pending'}">${approved ? 'معتمد' : 'قيد المراجعة'}</span>
     <div class="req-attachment-actions">${openBtn}${approveBtn}${delBtn}</div>
+    <div class="req-attachment-meta">${evidenceTeacherHtml(ev)}</div>
     ${note ? `<div class="req-attachment-note">${evidenceNoteHtml(note, 'ملاحظة على المرفق')}</div>` : ''}
   </div>`;
 }
@@ -2504,7 +2576,7 @@ function buildRequirementRowHtml(req, progId, indId) {
     ? `<div class="req-notes">${sharedNotes.map(t => evidenceNoteHtml(t, 'ملاحظة على الشاهد')).join('')}</div>`
     : '';
 
-  return `<div class="req-row ${meta.className}" data-req-id="${esc(req.id)}">
+  return `<div class="req-row ${meta.className}" id="evidence-req-${esc(req.id)}" tabindex="-1" data-req-id="${esc(req.id)}">
     <div class="req-main">
       <div class="req-name">${esc(req.name)}<span class="req-pct">${pct}٪</span></div>
       ${reqNotes}
@@ -2889,17 +2961,19 @@ function buildEvidenceItemHtml(ev, opts = {}) {
   const delBtn = showDelete
     ? `<button class="btn-sm btn-delete" onclick="handleDelEv('${esc(ev.id)}');closeModal('program-detail-modal');viewProgramDetail('${esc(opts.programId)}')">🗑️</button>`
     : '';
+  const title = normalizeSpaces(ev.title) || attachmentDisplayName(ev);
+  const label = attachmentDisplayName(ev);
   const metaBits = [
-    ev.person ? ('👩‍🏫 أضافتها: ' + esc(ev.person)) : '',
+    evidenceTeacherHtml(ev),
     ev.date ? esc(fmtDate(ev.date)) : '',
     ev.type ? esc(ev.type) : '',
-    ev.file_name ? esc(ev.file_name) : '',
+    label !== title ? esc(label) : '',
   ].filter(Boolean);
-  return `<div class="evidence-detail-item">
+  return `<div class="evidence-detail-item" id="evidence-${esc(ev.id)}" tabindex="-1" data-ev-id="${esc(ev.id)}">
     <div class="ev-det-icon">${getEvIcon(ev.type || ev.file_name)}</div>
     <div class="ev-det-info">
-      <div class="ev-det-title">${esc(ev.title || ev.file_name || 'شاهد')}</div>
-      <div class="ev-det-meta">${metaBits.length ? metaBits.join(' · ') : '—'}</div>
+      <div class="ev-det-title">${esc(title)}</div>
+      <div class="ev-det-meta">${metaBits.join(' · ')}</div>
       ${evidenceNoteHtml(evidenceNoteText(ev))}
     </div>
     <div class="ev-det-actions">
@@ -2970,6 +3044,20 @@ async function refreshEvidenceViews(preferredProgramId) {
 async function sbInsertEvidence(ev) {
   requireSb();
 
+  const teacher = validateTeacherName(ev.person);
+  if (teacher.error) throw new Error(teacher.error);
+  let link = null;
+  let fileName = ev.file_name || null;
+  if (ev.link) {
+    link = sanitizeHttpsUrl(ev.link);
+    if (!link) throw new Error(LINK_HTTPS_MSG);
+  }
+  if (link && !ev.file_url) {
+    const label = validateAttachmentLabel(ev.file_name);
+    if (label.error) throw new Error(label.error);
+    fileName = label.value;
+  }
+
   const schoolYearId = ev.school_year_id || await requireWritableSchoolYearId();
   if (!schoolYearId) throw new Error(NO_ACTIVE_YEAR_MSG);
 
@@ -2978,12 +3066,12 @@ async function sbInsertEvidence(ev) {
     type: ev.type || null,
     program_id: ev.program_id || null,
     indicator_id: ev.indicator_id || null,
-    person: ev.person || null,
+    person: teacher.value,
     notes: ev.notes || null,
     school_year_id: schoolYearId,
-    link: ev.link || null,
+    link,
     file_url: ev.file_url || null,
-    file_name: ev.file_name || null,
+    file_name: fileName,
     file_size: ev.file_size != null ? ev.file_size : null,
     upload_date: ev.date || new Date().toISOString().split('T')[0],
     created_by: currentUser?.id || null,
@@ -3240,7 +3328,14 @@ function renderPrograms() {
     grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">🗂️</div><p>لا توجد برامج</p><small>أضف برنامجاً جديداً أو غيّر الفلتر / السنة</small></div>';
     return;
   }
+  const openMore = new Set(Array.from(grid.querySelectorAll('details.program-card-more[open]'))
+    .map(d => d.getAttribute('data-prog-id')));
   grid.innerHTML = filtered.map(p => buildProgramCard(p)).join('');
+  if (openMore.size) {
+    grid.querySelectorAll('details.program-card-more').forEach(d => {
+      if (openMore.has(d.getAttribute('data-prog-id'))) d.open = true;
+    });
+  }
 }
 async function updateProgramProgress(programId) {
   if (!programId) return;
@@ -3277,84 +3372,105 @@ function buildProgramCard(p) {
                 '#C9D9EA';    // أزرق فاتح
 
   const total = inds.length;
-
-  const indsHtml = total
-    ? inds.map(ind => {
-        const indPct = calcIndicatorProgress(ind.id);
-        const stats = getIndicatorRequirementStats(ind.id);
-        const d = indPct >= 100;
-
-        return `
-          <div class="indicator-row" id="irow-${ind.id}">
-            <span class="ind-pct-chip" title="متوسط نسب الشواهد، ووزن كل شاهد متساوٍ">${indPct}%</span>
-
-            <span class="ind-text" style="${d ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">
-              ${esc(ind.indicator_text)}
-            </span>
-            <span class="ind-req-mini">${stats.approved}/${stats.total}</span>
-
-            ${can('deleteIndicator') && !isYearReadOnlyMode() ? `<button type="button" class="ind-delete" title="حذف المؤشر" onclick="handleDelInd('${esc(p.id)}','${esc(ind.id)}')">🗑️ حذف المؤشر</button>` : ''}
-          </div>
-        `;
-      }).join('')
-    : '<div style="font-size:12px;color:var(--text-muted);padding:4px 0">لا توجد مؤشرات بعد</div>';
+  const pid = esc(p.id);
+  const counts = getProgramCardCounts(p.id, inds);
+  const period = (p.start || p.end)
+    ? `<span class="program-card-date">من: ${esc(fmtDate(p.start))}</span><span class="program-card-date">إلى: ${esc(fmtDate(p.end))}</span>`
+    : '—';
 
   const addIndHtml = can('addIndicator') && !isYearReadOnlyMode()
     ? `<div class="add-indicator-row">
-        <input id="iinput-${p.id}" class="ind-input" type="text" placeholder="أضف مؤشر إنجاز…"
-               onkeydown="if(event.key==='Enter')handleAddInd('${p.id}')"/>
-        <button class="btn-sm btn-evidence" onclick="handleAddInd('${p.id}')">+</button>
+        <input id="iinput-${pid}" class="ind-input" type="text" placeholder="أضف مؤشر إنجاز…" aria-label="نص مؤشر إنجاز جديد"
+               onkeydown="if(event.key==='Enter')handleAddInd('${pid}')"/>
+        <button type="button" class="btn-sm btn-evidence" aria-label="إضافة المؤشر" onclick="handleAddInd('${pid}')">+</button>
       </div>`
     : '';
 
  const editBtn = can('editProgram') && !isYearReadOnlyMode()
-  ? `<button class="btn-sm btn-edit" onclick="event.stopPropagation(); openProgramModal('${p.id}')">✏️ تعديل</button>`
+  ? `<button type="button" class="btn-sm btn-edit" onclick="event.stopPropagation(); openProgramModal('${pid}')">✏️ تعديل</button>`
   : '';
 
  const delBtn = can('deleteProgram') && !isYearReadOnlyMode()
-  ? `<button class="btn-sm btn-delete" onclick="event.stopPropagation(); deleteProgram('${p.id}')">🗑️ حذف</button>`
+  ? `<button type="button" class="btn-sm btn-delete" onclick="event.stopPropagation(); deleteProgram('${pid}')">🗑️ حذف</button>`
   : '';
 
   return `
-  <div class="program-card status-${esc(status)}" id="pcard-${esc(p.id)}">
+  <article class="program-card program-card--compact status-${esc(status)}" id="pcard-${pid}" aria-labelledby="ptitle-${pid}">
     <div class="program-card-header">
-      <div class="program-card-title">${esc(p.name)}</div>
+      <h3 class="program-card-title" id="ptitle-${pid}">${esc(p.name)}</h3>
       <span class="badge ${SB[status]}">${SI[status]} ${SL[status]}</span>
     </div>
 
     <div class="program-card-body">
-      ${p.desc ? `<div class="program-card-desc">${esc(p.desc)}</div>` : ''}
+      ${p.desc ? `<p class="program-card-desc program-card-desc--clamp" title="${esc(p.desc)}">${esc(p.desc)}</p>` : ''}
 
-      <div class="program-meta-grid">
-        <div class="program-meta-item">👩‍🏫 <strong>${esc(p.resp || '—')}</strong></div>
-        <div class="program-meta-item">🎯 <strong>${esc(p.target || '—')}</strong></div>
-        <div class="program-meta-item">📅 <strong>${fmtDate(p.start)}</strong></div>
-        <div class="program-meta-item">🏁 <strong>${fmtDate(p.end)}</strong></div>
-      </div>
+      <dl class="program-card-facts">
+        <div class="program-card-fact"><dt>👩‍🏫 المسؤول/ة</dt><dd>${esc(p.resp || '—')}</dd></div>
+        <div class="program-card-fact"><dt>📅 الفترة</dt><dd>${period}</dd></div>
+      </dl>
 
       <div class="program-progress-section">
         <div class="program-progress-label">
-          <span id="plbl-${p.id}">نسبة الإنجاز${total ? ' (متوسط نسب المؤشرات)' : ''}</span>
-          <span id="ppct-${p.id}" style="font-weight:800;color:${clr}">${pct}%</span>
+          <span id="plbl-${pid}">نسبة الإنجاز${total ? ' (متوسط نسب المؤشرات)' : ''}</span>
+          <span id="ppct-${pid}" style="font-weight:800;color:${clr}">${pct}%</span>
         </div>
         <div class="progress-bar" style="height:10px">
-          <div id="pbar-${p.id}" class="progress-fill"
+          <div id="pbar-${pid}" class="progress-fill"
                style="width:${pct}%;background:linear-gradient(90deg,${clr},${clr}cc)"></div>
         </div>
       </div>
 
-      <div class="program-indicators">
-        <div class="program-indicators-title">📌 مؤشرات الإنجاز</div>
-        <div class="indicators-list" id="ilist-${p.id}">${indsHtml}</div>
-        ${addIndHtml}
-      </div>
+      <ul class="program-card-counts" aria-label="ملخص البرنامج">
+        <li><strong id="picount-${pid}">${counts.indicators}</strong> مؤشرات</li>
+        <li><strong>${counts.requirements}</strong> شواهد مطلوبة</li>
+        <li><strong>${counts.attachments}</strong> مرفقات</li>
+      </ul>
+
+      <details class="program-card-more" data-prog-id="${pid}">
+        <summary>📌 مؤشرات الإنجاز والمزيد</summary>
+        <div class="program-card-more-body">
+          <div class="program-card-fact program-card-fact--inline"><span>🎯 الفئة المستهدفة:</span> <strong>${esc(p.target || '—')}</strong></div>
+          <div class="indicators-list" id="ilist-${pid}">${buildIndicatorRowsHtml(p, inds)}</div>
+          ${addIndHtml}
+        </div>
+      </details>
     </div>
 
     <div class="program-card-actions">
-      <button class="btn-sm btn-detail" onclick="event.stopPropagation(); viewProgramDetail('${p.id}')">👁️ التفاصيل</button>
+      <button type="button" class="btn-sm btn-detail btn-detail-main" onclick="event.stopPropagation(); viewProgramDetail('${pid}')">👁️ عرض التفاصيل</button>
       ${editBtn}${delBtn}
     </div>
-  </div>`;
+  </article>`;
+}
+
+function getProgramCardCounts(programId, inds) {
+  const indIds = new Set(inds.map(i => String(i.id)));
+  return {
+    indicators: inds.length,
+    requirements: evidenceRequirementsCache.filter(r => indIds.has(String(r.indicator_id))).length,
+    attachments: evidencesCache.filter(e => String(e.program_id) === String(programId)).length,
+  };
+}
+
+function buildIndicatorRowsHtml(p, inds) {
+  if (!inds.length) {
+    return '<div style="font-size:12px;color:var(--text-muted);padding:4px 0">لا توجد مؤشرات بعد</div>';
+  }
+  const canDelete = can('deleteIndicator') && !isYearReadOnlyMode();
+  return inds.map(ind => {
+    const indPct = calcIndicatorProgress(ind.id);
+    const stats = getIndicatorRequirementStats(ind.id);
+    const d = indPct >= 100;
+    return `
+      <div class="indicator-row" id="irow-${esc(ind.id)}">
+        <span class="ind-pct-chip" title="متوسط نسب الشواهد، ووزن كل شاهد متساوٍ">${indPct}%</span>
+        <span class="ind-text" style="${d ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">
+          ${esc(ind.indicator_text || ind.text || '')}
+        </span>
+        <span class="ind-req-mini" title="شواهد مكتملة من إجمالي الشواهد المطلوبة">${stats.approved}/${stats.total}</span>
+        ${canDelete ? `<button type="button" class="ind-delete" title="حذف المؤشر" onclick="handleDelInd('${esc(p.id)}','${esc(ind.id)}')">🗑️ حذف المؤشر</button>` : ''}
+      </div>`;
+  }).join('');
 }
 /* ─────────────────────────────────────────────────────────────
    §22  PROGRAM MODAL
@@ -3501,47 +3617,53 @@ function viewProgramDetail(id) {
   const ti = document.getElementById('detail-modal-title');
   if (ti) ti.textContent = p.name;
 
+  const orphansByIndicator = new Map();
+  evs.forEach(ev => {
+    if (ev.indicator_id == null || ev.indicator_id === '') return;
+    if (ev.requirement_id != null && ev.requirement_id !== '') return;
+    const key = String(ev.indicator_id);
+    if (!orphansByIndicator.has(key)) orphansByIndicator.set(key, []);
+    orphansByIndicator.get(key).push(ev);
+  });
+
   const indicatorsBlock = inds.length
     ? inds.map(ind => {
-        const linkedOrphans = evs.filter(ev =>
-          ev.indicator_id != null &&
-          ev.indicator_id !== '' &&
-          String(ev.indicator_id) === String(ind.id) &&
-          (ev.requirement_id == null || ev.requirement_id === '')
-        );
+        const linkedOrphans = orphansByIndicator.get(String(ind.id)) || [];
         const stats = getIndicatorRequirementStats(ind.id);
         return `
-      <div class="indicator-detail-box">
-        <div style="font-weight:700;margin-bottom:8px;display:flex;flex-wrap:wrap;align-items:center;gap:8px">
-          <span style="flex:1">${esc(ind.indicator_text || ind.text || ind.name || ind.id)}
-          <span class="ind-detail-pct">${stats.pct}٪</span></span>
-          ${can('deleteIndicator') && !isYearReadOnlyMode()
-            ? `<button type="button" class="btn-sm btn-delete" onclick="handleDelInd('${esc(p.id)}','${esc(ind.id)}')">🗑️ حذف المؤشر</button>`
-            : ''}
-        </div>
+      <details class="indicator-detail-box" id="indicator-section-${esc(ind.id)}" open>
+        <summary class="indicator-detail-summary">
+          <span class="indicator-detail-text">${esc(ind.indicator_text || ind.text || ind.name || ind.id)}</span>
+          <span class="ind-detail-pct">${stats.pct}٪</span>
+        </summary>
+        ${can('deleteIndicator') && !isYearReadOnlyMode()
+          ? `<div class="indicator-detail-tools"><button type="button" class="btn-sm btn-delete" onclick="handleDelInd('${esc(p.id)}','${esc(ind.id)}')">🗑️ حذف المؤشر</button></div>`
+          : ''}
         ${buildRequirementsSectionHtml(p.id, ind.id)}
         ${linkedOrphans.length ? `
-        <div class="orphan-evidences" style="margin-top:10px">
-          <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">شواهد أخرى مرتبطة بالمؤشر (بدون اسم مطلوب)</div>
-          <div class="evidence-list-detail" style="display:flex;flex-direction:column;gap:8px">
+        <div class="orphan-evidences">
+          <div class="orphan-evidences-title">شواهد أخرى مرتبطة بالمؤشر (بدون اسم مطلوب)</div>
+          <div class="evidence-list-detail">
             ${linkedOrphans.map(ev => buildEvidenceItemHtml(ev, { showDelete: true, programId: p.id })).join('')}
           </div>
         </div>` : ''}
-      </div>`;
+      </details>`;
       }).join('')
     : '<p style="color:var(--text-muted);font-size:13px;padding:8px 0">لا توجد مؤشرات</p>';
 
   const generalBlock = `
-    <div class="detail-section">
-      <h4>📎 شواهد عامة للبرنامج</h4>
-      <div style="display:flex;flex-direction:column;gap:8px">
+    <details class="detail-section evidence-general-section" id="evidence-general-section" open>
+      <summary class="detail-section-summary"><h4>📎 شواهد عامة للبرنامج</h4></summary>
+      <div class="evidence-list-detail">
         ${generalEvs.length
           ? generalEvs.map(ev => buildEvidenceItemHtml(ev, { showDelete: true, programId: p.id })).join('')
           : '<p style="color:var(--text-muted);font-size:13px;padding:8px 0">لا توجد شواهد عامة (بدون مؤشر أو غير مطابقة لمؤشر حالي).</p>'
         }
       </div>
       <div style="font-size:11px;color:var(--text-muted);margin-top:8px">إجمالي شواهد البرنامج المعروضة: ${evs.length}</div>
-    </div>`;
+    </details>`;
+
+  const evidenceIndex = buildEvidenceIndexHtml(inds, orphansByIndicator, generalEvs);
 
   const body = document.getElementById('program-detail-body');
   if (!body) {
@@ -3575,6 +3697,7 @@ function viewProgramDetail(id) {
       </div>
       ${p.desc ? `<div style="margin-top:12px;padding:12px 14px;background:var(--bg);border-radius:8px;font-size:13px;line-height:1.7">${esc(p.desc)}</div>` : ''}
     </div>
+    ${evidenceIndex}
     <div class="detail-section">
       <h4>📌 المؤشرات والشواهد المطلوبة</h4>
       ${indicatorsBlock}
@@ -3584,6 +3707,119 @@ function viewProgramDetail(id) {
   console.info('[UI] program detail rendered items=', evs.length);
   openModal('program-detail-modal');
 }
+
+/* ── الانتقال إلى شاهد داخل تفاصيل البرنامج ── */
+const EVIDENCE_TARGET_RE = /^evidence-(req-)?[A-Za-z0-9-]{1,64}$/;
+
+function evidenceJumpButtonHtml(targetId, label, extra = '') {
+  return `<button type="button" class="evidence-jump" data-evidence-target="${esc(targetId)}">
+    <span class="evidence-jump-name">${esc(label)}</span>${extra}
+  </button>`;
+}
+
+function buildEvidenceIndexHtml(inds, orphansByIndicator, generalEvs) {
+  const groups = [];
+  inds.forEach(ind => {
+    const items = [];
+    getRequirementsForIndicator(ind.id).forEach(req => {
+      items.push(evidenceJumpButtonHtml(`evidence-req-${req.id}`, req.name || 'شاهد',
+        `<span class="evidence-jump-pct">${calcRequirementProgress(req)}٪</span>`));
+    });
+    (orphansByIndicator.get(String(ind.id)) || []).forEach(ev => {
+      items.push(evidenceJumpButtonHtml(`evidence-${ev.id}`, normalizeSpaces(ev.title) || attachmentDisplayName(ev),
+        '<span class="evidence-jump-tag">شاهد آخر</span>'));
+    });
+    if (items.length) {
+      groups.push(`<div class="evidence-index-group">
+        <div class="evidence-index-group-title">${esc(ind.indicator_text || ind.text || ind.name || '')}</div>
+        <div class="evidence-index-items">${items.join('')}</div>
+      </div>`);
+    }
+  });
+  if (generalEvs.length) {
+    groups.push(`<div class="evidence-index-group">
+      <div class="evidence-index-group-title">شواهد عامة للبرنامج</div>
+      <div class="evidence-index-items">${generalEvs.map(ev =>
+        evidenceJumpButtonHtml(`evidence-${ev.id}`, normalizeSpaces(ev.title) || attachmentDisplayName(ev))).join('')}</div>
+    </div>`);
+  }
+  if (!groups.length) return '';
+  return `<nav class="detail-section evidence-index" aria-label="الانتقال إلى شاهد في هذا البرنامج">
+    <h4>🔎 شواهد البرنامج</h4>
+    <div class="evidence-index-hint">اضغطي على اسم الشاهد للانتقال إلى تفاصيله داخل البرنامج. فتح الملف يتم من زر «فتح».</div>
+    ${groups.join('')}
+  </nav>`;
+}
+
+function setEvidenceHash(targetId) {
+  try {
+    history.replaceState(history.state, '', `${location.pathname}${location.search}#${targetId}`);
+  } catch {}
+}
+
+function clearEvidenceHash() {
+  if (!/^#evidence-/.test(location.hash || '')) return;
+  try {
+    history.replaceState(history.state, '', `${location.pathname}${location.search}`);
+  } catch {}
+}
+
+function jumpToEvidence(targetId, opts = {}) {
+  if (!EVIDENCE_TARGET_RE.test(String(targetId || ''))) return false;
+  const body = document.getElementById('program-detail-body');
+  const el = document.getElementById(targetId);
+  if (!body || !el || !body.contains(el)) return false;
+  for (let node = el.parentElement; node && node !== body; node = node.parentElement) {
+    if (node.tagName === 'DETAILS' && !node.open) node.open = true;
+  }
+  const reduceMotion = typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  try { el.focus({ preventScroll: true }); } catch {}
+  if (typeof el.scrollIntoView === 'function') {
+    el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+    clearTimeout(el._evidenceScrollCheck);
+    el._evidenceScrollCheck = setTimeout(() => {
+      const r = el.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > window.innerHeight) el.scrollIntoView({ block: 'center' });
+    }, 900);
+  }
+  el.classList.remove('evidence-highlight');
+  void el.offsetWidth;
+  el.classList.add('evidence-highlight');
+  clearTimeout(el._evidenceHighlightTimer);
+  el._evidenceHighlightTimer = setTimeout(() => el.classList.remove('evidence-highlight'), 2600);
+  if (opts.updateHash !== false) setEvidenceHash(targetId);
+  return true;
+}
+
+/** رابط مباشر #evidence-… بعد تسجيل الدخول: يفتح البرنامج الصحيح ثم ينتقل للشاهد */
+function openEvidenceFromHash() {
+  const targetId = String(location.hash || '').replace(/^#/, '');
+  if (!EVIDENCE_TARGET_RE.test(targetId)) return false;
+  let programId = null;
+  if (targetId.startsWith('evidence-req-')) {
+    const req = evidenceRequirementsCache.find(r => `evidence-req-${r.id}` === targetId);
+    const ind = req ? getAllIndicators().find(i => String(i.id) === String(req.indicator_id)) : null;
+    programId = ind?.program_id ?? null;
+  } else {
+    const ev = evidencesCache.find(e => `evidence-${e.id}` === targetId);
+    programId = ev?.program_id ?? null;
+  }
+  if (programId == null || !programsCache.some(p => String(p.id) === String(programId))) return false;
+  viewProgramDetail(programId);
+  return jumpToEvidence(targetId, { updateHash: false });
+}
+
+document.addEventListener('click', e => {
+  const btn = e.target?.closest?.('[data-evidence-target]');
+  if (!btn) return;
+  e.preventDefault();
+  if (!jumpToEvidence(btn.getAttribute('data-evidence-target'))) {
+    showToast('تعذّر الوصول إلى الشاهد داخل هذا البرنامج', 'error');
+  }
+});
+
+window.jumpToEvidence = jumpToEvidence;
 
 /* ─────────────────────────────────────────────────────────────
    §24  INDICATORS HANDLERS
@@ -3678,22 +3914,10 @@ if (barEl) {
     const b = card.querySelector('.badge'); const s = calcProgramStatus(p);
     if (b) { b.className='badge '+SB[s]; b.textContent=SI[s]+' '+SL[s]; }
   }
+  const countEl = document.getElementById('picount-'+progId);
+  if (countEl) countEl.textContent = String(total);
   const listEl = document.getElementById('ilist-'+progId); if (!listEl) return;
-  if (!inds.length) { listEl.innerHTML='<div style="font-size:12px;color:var(--text-muted);padding:4px 0">لا توجد مؤشرات بعد</div>'; return; }
-  listEl.innerHTML = inds.map(ind => {
-    const indPct = calcIndicatorProgress(ind.id);
-    const stats = getIndicatorRequirementStats(ind.id);
-    const d = indPct >= 100;
-    return `
-      <div class="indicator-row" id="irow-${ind.id}">
-        <span class="ind-pct-chip" title="متوسط نسب الشواهد، ووزن كل شاهد متساوٍ">${indPct}%</span>
-        <span class="ind-text" style="${d ? 'text-decoration:line-through;color:var(--text-muted)' : ''}">
-          ${esc(ind.indicator_text || ind.text || '')}
-        </span>
-        <span class="ind-req-mini">${stats.approved}/${stats.total}</span>
-        ${can('deleteIndicator') && !isYearReadOnlyMode() ? `<button type="button" class="ind-delete" title="حذف المؤشر" onclick="handleDelInd('${esc(p.id)}','${esc(ind.id)}')">🗑️ حذف المؤشر</button>` : ''}
-      </div>`;
-  }).join('');
+  listEl.innerHTML = buildIndicatorRowsHtml(p, inds);
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -3800,25 +4024,97 @@ function validateEvidenceFile(file) {
   return '';
 }
 
-function parseEvidenceLinkLines(raw) {
-  const seen = new Set();
-  const valid = [];
-  const invalid = [];
-  String(raw || '').split(/\r?\n/).forEach(line => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    const safe = sanitizeUrl(trimmed);
-    let host = '';
-    try { host = safe ? new URL(safe).hostname : ''; } catch { host = ''; }
-    if (!safe || !host.includes('.') || host.startsWith('.') || host.endsWith('.')) {
-      invalid.push(trimmed);
-      return;
-    }
-    if (seen.has(safe)) return;
-    seen.add(safe);
-    valid.push(safe);
+let _evidenceLinkRowSeq = 0;
+
+function addEvidenceLinkRow(name = '', url = '') {
+  const box = document.getElementById('ev-link-rows');
+  if (!box) return null;
+  const n = ++_evidenceLinkRowSeq;
+  const row = document.createElement('div');
+  row.className = 'ev-link-row';
+
+  const field = (labelText, input) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'ev-link-field';
+    const label = document.createElement('label');
+    label.htmlFor = input.id;
+    label.textContent = labelText;
+    const star = document.createElement('span');
+    star.className = 'req';
+    star.textContent = ' *';
+    label.appendChild(star);
+    wrap.append(label, input);
+    return wrap;
+  };
+
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.id = `ev-link-name-${n}`;
+  nameInput.className = 'ev-link-name';
+  nameInput.maxLength = ATTACHMENT_LABEL_MAX;
+  nameInput.autocomplete = 'off';
+  nameInput.placeholder = 'مثال: تقرير تنفيذ البرنامج';
+  nameInput.value = name;
+
+  const urlInput = document.createElement('input');
+  urlInput.type = 'url';
+  urlInput.id = `ev-link-url-${n}`;
+  urlInput.className = 'ev-link-url';
+  urlInput.dir = 'ltr';
+  urlInput.autocomplete = 'off';
+  urlInput.placeholder = 'https://drive.google.com/...';
+  urlInput.value = url;
+
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'btn-sm btn-delete ev-link-remove';
+  remove.textContent = '✕';
+  remove.title = 'إزالة هذا الرابط من النموذج';
+  remove.setAttribute('aria-label', 'إزالة هذا الرابط من النموذج');
+  remove.addEventListener('click', () => {
+    row.remove();
+    if (!box.querySelector('.ev-link-row')) addEvidenceLinkRow();
   });
-  return { valid, invalid };
+
+  row.append(field('اسم الملف أو الشاهد', nameInput), field('رابط Google Drive', urlInput), remove);
+  box.appendChild(row);
+  return row;
+}
+
+function resetEvidenceLinkRows() {
+  const box = document.getElementById('ev-link-rows');
+  if (box) box.replaceChildren();
+  addEvidenceLinkRow();
+  setFieldError('ev-links', '');
+}
+
+/**
+ * يقرأ صفوف الروابط: كل رابط يحتاج اسم عرض. الصف الفارغ تماماً يُتجاهل.
+ * يعيد { items:[{ url, label, row }], error, input }
+ */
+function collectEvidenceLinkRows() {
+  const rows = Array.from(document.querySelectorAll('#ev-link-rows .ev-link-row'));
+  const items = [];
+  const seen = new Set();
+  for (const row of rows) {
+    const nameInput = row.querySelector('.ev-link-name');
+    const urlInput = row.querySelector('.ev-link-url');
+    [nameInput, urlInput].forEach(i => i?.removeAttribute('aria-invalid'));
+    const rawName = nameInput?.value || '';
+    const rawUrl = String(urlInput?.value || '').trim();
+    if (!normalizeSpaces(rawName) && !rawUrl) continue;
+    if (!rawUrl) {
+      return { items, error: 'أضيفي رابط Google Drive أو احذفي الصف الفارغ', input: urlInput };
+    }
+    const url = sanitizeHttpsUrl(rawUrl);
+    if (!url) return { items, error: LINK_HTTPS_MSG, input: urlInput };
+    const label = validateAttachmentLabel(rawName);
+    if (label.error) return { items, error: label.error, input: nameInput };
+    if (seen.has(url)) continue;
+    seen.add(url);
+    items.push({ url, label: label.value, row });
+  }
+  return { items, error: null, input: null };
 }
 
 function renderEvidenceFilePreview(prefix) {
@@ -3967,9 +4263,14 @@ async function resolveEvidenceViewUrl(ev) {
 
 function evidenceViewButtonHtml(ev, label) {
   if (!evidenceHasViewTarget(ev)) return '—';
-  const id = esc(ev.id);
-  const text = label || (evidenceDriveLink(ev) && !ev.file_url ? 'فتح الرابط' : 'عرض الملف');
-  return `<button type="button" class="btn-sm btn-view evidence-view-btn" onclick="openEvidenceFile('${id}')">${esc(text)}</button>`;
+  const link = evidenceDriveLink(ev);
+  if (!ev.file_url && link) {
+    const text = label || 'فتح الرابط';
+    return `<a class="btn-sm btn-view evidence-view-btn" href="${esc(link)}" target="_blank" rel="noopener noreferrer"
+      aria-label="${esc(text + ': ' + attachmentDisplayName(ev))}">${esc(text)}</a>`;
+  }
+  const text = label || 'عرض الملف';
+  return `<button type="button" class="btn-sm btn-view evidence-view-btn" onclick="openEvidenceFile('${esc(ev.id)}')">${esc(text)}</button>`;
 }
 
 async function openEvidenceFile(evId) {
@@ -4052,13 +4353,15 @@ function openEvidenceModal(progId, evId) {
   const ti = document.getElementById('evidence-modal-title');
   if (ti) ti.textContent = evId ? 'تعديل شاهد' : 'إضافة شاهد';
 
-  ['ev-title','ev-links','ev-person','ev-notes'].forEach(f => {
+  ['ev-title','ev-person','ev-notes'].forEach(f => {
     const e = document.getElementById(f);
     if (e) {
       e.value = '';
       if (f === 'ev-title') e.readOnly = false;
     }
   });
+  setFieldError('ev-person', '');
+  resetEvidenceLinkRows();
   clearEvidenceFile('ev');
   document.getElementById('ev-file-group')?.classList.remove('hidden');
   document.getElementById('ev-link-group')?.classList.remove('hidden');
@@ -4149,13 +4452,24 @@ async function saveEvidence() {
   const title = clampInput(g('ev-title'));
   if (!title) { showToast('يرجى إدخال عنوان الشاهد','error'); return; }
 
-  const parsed = parseEvidenceLinkLines(g('ev-links'));
-  if (parsed.invalid.length) {
-    showToast('أحد الروابط غير صالح. ضع كل رابط في سطر مستقل بصيغة https', 'error');
+  const teacher = validateTeacherName(g('ev-person'));
+  setFieldError('ev-person', teacher.error || '');
+  if (teacher.error) {
+    showToast(teacher.error, 'error');
+    document.getElementById('ev-person')?.focus();
+    return;
+  }
+
+  const parsed = collectEvidenceLinkRows();
+  setFieldError('ev-links', parsed.error || '');
+  if (parsed.error) {
+    parsed.input?.setAttribute('aria-invalid', 'true');
+    parsed.input?.focus();
+    showToast(parsed.error, 'error');
     return;
   }
   const files = pendingEvidenceFiles.filter(f => !evidenceSavedKeys.has(evidenceFileKey(f)));
-  const links = parsed.valid.filter(url => !evidenceSavedKeys.has('link:' + url));
+  const links = parsed.items.filter(item => !evidenceSavedKeys.has('link:' + item.url));
   if (!files.length && !links.length) {
     if (evidenceSavedKeys.size) {
       closeModal('evidence-modal');
@@ -4172,14 +4486,14 @@ async function saveEvidence() {
   const failures = [];
   let savedCount = 0;
   const savedLinks = new Set();
-  const person = clampInput(g('ev-person'));
+  const person = teacher.value;
   const notes = clampInput(g('ev-notes'), 1000);
   const date = new Date().toISOString().split('T')[0];
 
   try {
     const schoolYearId = await requireWritableSchoolYearId();
 
-    for (const url of links) {
+    for (const { url, label } of links) {
       if (requirementId && requirementAlreadyHasLink(requirementId, url)) {
         evidenceSavedKeys.add('link:' + url);
         savedLinks.add(url);
@@ -4198,7 +4512,7 @@ async function saveEvidence() {
           notes,
           school_year_id: schoolYearId,
           file_url: null,
-          file_name: null,
+          file_name: label,
           file_size: null,
         });
         rememberEvidence(saved);
@@ -4250,13 +4564,8 @@ async function saveEvidence() {
     }
 
     if (savedLinks.size) {
-      const box = document.getElementById('ev-links');
-      if (box) {
-        box.value = String(box.value || '').split(/\r?\n/).filter(line => {
-          const safe = sanitizeUrl(line.trim());
-          return !safe || !savedLinks.has(safe);
-        }).join('\n');
-      }
+      parsed.items.forEach(item => { if (savedLinks.has(item.url)) item.row.remove(); });
+      if (!document.querySelector('#ev-link-rows .ev-link-row')) addEvidenceLinkRow();
     }
     renderEvidenceFilePreview('ev');
 
@@ -4300,6 +4609,7 @@ window.toggleEvidenceSource = toggleEvidenceSource;
 window.handleEvidenceFileSelect = handleEvidenceFileSelect;
 window.clearEvidenceFile = clearEvidenceFile;
 window.removePendingEvidenceFile = removePendingEvidenceFile;
+window.addEvidenceLinkRow = addEvidenceLinkRow;
 window.saveEvidence = saveEvidence;
 window.openEvidenceModal = openEvidenceModal;
 
@@ -4886,14 +5196,12 @@ function openReportModal() {
     indSel.innerHTML = '<option value="">اختر المؤشر</option>';
   }
 
-  ['rep-edit-id','rep-title','rep-link','rep-notes'].forEach(f => {
+  ['rep-edit-id','rep-title','rep-link','rep-link-name','rep-person','rep-notes'].forEach(f => {
     const e = document.getElementById(f);
     if (e) e.value = '';
   });
+  ['rep-person','rep-link','rep-link-name'].forEach(f => setFieldError(f, ''));
   clearEvidenceFile('rep');
-
-  const pe = document.getElementById('rep-person');
-  if (pe) pe.value = currentUser?.name || '';
 
   const fileRadio = document.querySelector('input[name="rep-source"][value="file"]');
   if (fileRadio) fileRadio.checked = true;
@@ -4947,7 +5255,7 @@ function renderReports() {
         const statusLabel = !evidenceHasAttachment(r) ? '—' : (approved ? 'معتمد' : 'قيد المراجعة');
         return`<tr><td>${i+1}</td><td style="font-weight:600">${esc(title)}${evidenceNoteHtml(evidenceNoteText(r))}</td>
           <td><span class="badge badge-info">${TI[typeLabel]||getEvIcon(typeLabel||r.file_name)} ${esc(typeLabel||'—')}</span></td>
-          <td>${esc(pName)}</td><td>${esc(r.person||'—')}</td><td>${esc(fmtDate(r.date || r.created_at))}</td>
+          <td>${esc(pName)}</td><td>${esc(evidenceTeacherName(r))}</td><td>${esc(fmtDate(r.date || r.created_at))}</td>
           <td>${esc(statusLabel)}</td>
           <td>${evidenceViewButtonHtml(r, 'فتح')}</td>
           <td>${canWrite && can('deleteEvidence')?`<button class="btn-sm btn-delete" onclick="handleDelEv('${esc(r.id)}')">🗑️</button>`:''}</td></tr>`;
@@ -4964,21 +5272,40 @@ async function saveReport() {
 
   const progId = g('rep-program-id');
   const indicatorId = g('rep-indicator-id');
-  const person = clampInput(g('rep-person')) || currentUser?.name || '';
+  const teacher = validateTeacherName(g('rep-person'));
+  setFieldError('rep-person', teacher.error || '');
+  if (teacher.error) {
+    showToast(teacher.error, 'error');
+    document.getElementById('rep-person')?.focus();
+    return;
+  }
+  const person = teacher.value;
   const source = getEvidenceSource('rep');
 
   let link = null;
+  let linkLabel = null;
   let fileMeta = null;
   let type = 'ملف';
 
   if (source === 'drive') {
+    const label = validateAttachmentLabel(g('rep-link-name'));
+    setFieldError('rep-link-name', label.error || '');
+    if (label.error) {
+      showToast(label.error, 'error');
+      document.getElementById('rep-link-name')?.focus();
+      return;
+    }
     const rawLink = g('rep-link').trim();
-    const safeLink = rawLink ? sanitizeUrl(rawLink) : '';
-    if (!safeLink) {
-      showToast('يرجى إدخال رابط Google Drive صالح','error');
+    const safeLink = sanitizeHttpsUrl(rawLink);
+    const linkError = rawLink ? (safeLink ? '' : LINK_HTTPS_MSG) : 'يرجى إدخال رابط Google Drive';
+    setFieldError('rep-link', linkError);
+    if (linkError) {
+      showToast(linkError, 'error');
+      document.getElementById('rep-link')?.focus();
       return;
     }
     link = safeLink;
+    linkLabel = label.value;
     type = 'Google Drive';
   } else {
     if (!pendingEvidenceFile) {
@@ -5017,7 +5344,7 @@ async function saveReport() {
       notes: clampInput(g('rep-notes'), 1000),
       school_year_id: schoolYearId,
       file_url: fileMeta?.file_url || null,
-      file_name: fileMeta?.file_name || null,
+      file_name: fileMeta?.file_name || linkLabel || null,
       file_size: fileMeta?.file_size ?? null,
     };
 

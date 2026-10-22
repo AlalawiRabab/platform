@@ -138,7 +138,9 @@ const reqRow = (body, id) => body.querySelector(`.req-row[data-req-id="${id}"]`)
 
 async function addAttachments(reqId, indId, links, notes) {
   w.eval(`openEvidenceModalForRequirement('1','${indId}','${reqId}')`);
-  $('ev-links').value = links.join('\n');
+  $('ev-link-rows').replaceChildren();
+  links.forEach((url, i) => w.addEvidenceLinkRow(`ملف ${i + 1}`, url));
+  $('ev-person').value = 'أ. سارة';
   $('ev-notes').value = notes;
   await w.eval('saveEvidence()');
 }
