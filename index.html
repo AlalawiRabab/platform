@@ -12,7 +12,7 @@
   <meta http-equiv="X-Content-Type-Options" content="nosniff"/>
   <meta name="referrer" content="strict-origin-when-cross-origin"/>
   <title>منصة الخطة التشغيلية المدرسية</title>
- <link rel="stylesheet" href="style.css?v=20261006-notes-ind-delete">
+ <link rel="stylesheet" href="style.css?v=20261022-evidence-teacher-links">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&family=Cairo:wght@300;400;600;700&display=swap" rel="stylesheet">
   <script>
@@ -285,7 +285,7 @@
           <table class="data-table">
             <thead><tr>
               <th>#</th><th>العنوان</th><th>النوع</th><th>البرنامج المرتبط</th>
-              <th>المسؤولة</th><th>التاريخ</th><th>الحالة</th><th>فتح</th><th>إجراءات</th>
+              <th>المعلمة المسؤولة</th><th>التاريخ</th><th>الحالة</th><th>فتح</th><th>إجراءات</th>
             </tr></thead>
             <tbody id="reports-tbody"></tbody>
           </table>
@@ -466,12 +466,19 @@
       </div>
 
       <div id="ev-link-group" class="form-group">
-        <label>روابط المرفقات</label>
-        <textarea id="ev-links" rows="4" dir="ltr" placeholder="https://drive.google.com/file/d/...&#10;https://drive.google.com/drive/folders/..."></textarea>
-        <small class="field-hint">رابط واحد في كل سطر. يمكن الجمع بين الملفات والروابط لنفس الشاهد. الحفظ يضيف مرفقات جديدة ولا يستبدل السابقة.</small>
+        <label id="ev-links-label">روابط Google Drive</label>
+        <div id="ev-link-rows" class="ev-link-rows" role="group" aria-labelledby="ev-links-label"></div>
+        <button type="button" class="btn-sm btn-evidence ev-link-add" onclick="addEvidenceLinkRow()">＋ إضافة رابط آخر</button>
+        <small class="field-hint">لكل رابط اكتبي «اسم الملف أو الشاهد» ليظهر بدل الرابط الطويل. يجب أن يبدأ الرابط بـ <bdi dir="ltr">https://</bdi>. يمكن الجمع بين الملفات والروابط، والحفظ يضيف مرفقات جديدة ولا يستبدل السابقة.</small>
+        <small id="ev-links-error" class="field-error hidden" role="alert"></small>
       </div>
 
-      <div class="form-group"><label>المسؤولة / الرافعة</label><input type="text" id="ev-person" placeholder="اسم المعلمة"/></div>
+      <div class="form-group">
+        <label for="ev-person">اسم المعلمة المسؤولة <span class="req">*</span></label>
+        <input type="text" id="ev-person" maxlength="100" autocomplete="off" placeholder="اكتبي اسمك الفعلي" aria-describedby="ev-person-hint ev-person-error"/>
+        <small id="ev-person-hint" class="field-hint">الحساب مشترك بين المعلمات، لذلك اكتبي اسمك الفعلي ليظهر مع الشاهد.</small>
+        <small id="ev-person-error" class="field-error hidden" role="alert"></small>
+      </div>
       <div class="form-group"><label>ملاحظات</label><textarea id="ev-notes" placeholder="ملاحظات إضافية..."></textarea></div>
     </div>
     <div class="modal-footer">
@@ -622,8 +629,10 @@
         </div>
       </div>
       <div class="form-group">
-        <label>المسؤولة</label>
-        <input type="text" id="rep-person" placeholder="اسم المعلمة أو المسؤولة"/>
+        <label for="rep-person">اسم المعلمة المسؤولة <span class="req">*</span></label>
+        <input type="text" id="rep-person" maxlength="100" autocomplete="off" placeholder="اكتبي اسمك الفعلي" aria-describedby="rep-person-hint rep-person-error"/>
+        <small id="rep-person-hint" class="field-hint">الحساب مشترك بين المعلمات، لذلك اكتبي اسمك الفعلي ليظهر مع الشاهد.</small>
+        <small id="rep-person-error" class="field-error hidden" role="alert"></small>
       </div>
 
       <div class="form-group">
@@ -648,9 +657,13 @@
       </div>
 
       <div id="rep-link-group" class="form-group hidden">
-        <label>رابط Google Drive <span class="req">*</span></label>
-        <input type="url" id="rep-link" placeholder="https://drive.google.com/..."/>
-        <small class="field-hint">الصق رابط ملف أو مجلد من Google Drive</small>
+        <label for="rep-link-name">اسم الملف أو الشاهد <span class="req">*</span></label>
+        <input type="text" id="rep-link-name" maxlength="150" autocomplete="off" placeholder="مثال: تقرير تنفيذ البرنامج" aria-describedby="rep-link-name-error"/>
+        <small id="rep-link-name-error" class="field-error hidden" role="alert"></small>
+        <label for="rep-link" class="mt-10">رابط Google Drive <span class="req">*</span></label>
+        <input type="url" id="rep-link" dir="ltr" placeholder="https://drive.google.com/..." aria-describedby="rep-link-hint rep-link-error"/>
+        <small id="rep-link-hint" class="field-hint">الصق رابط ملف أو مجلد من Google Drive يبدأ بـ <bdi dir="ltr">https://</bdi>. سيظهر الاسم المكتوب بدل الرابط.</small>
+        <small id="rep-link-error" class="field-error hidden" role="alert"></small>
       </div>
 
       <div class="form-group"><label>ملاحظات</label><textarea id="rep-notes" placeholder="ملاحظات إضافية..."></textarea></div>
@@ -694,7 +707,7 @@
   
  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1"></script>
 <script src="config.js?v=20260814-recovery"></script>
-<script src="./script.js?v=20261006-notes-ind-delete"></script>
+<script src="./script.js?v=20261022-evidence-teacher-links"></script>
   
 </body>
 </html>

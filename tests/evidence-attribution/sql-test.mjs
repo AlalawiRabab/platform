@@ -1,0 +1,313 @@
+/**
+ * PGlite: live-like schema/policies/ACLs + the two new migrations.
+ * - phase_evidence_attribution_review.sql   (teacher name, Drive link label, https — new rows only)
+ * - phase_security_grants_hardening_review.sql (TRUNCATE/REFERENCES/TRIGGER, anon, trigger functions)
+ * No network, no production access.
+ */
+import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import { REPO, U, Y_ACTIVE, buildBaseline, applyMigration as applyIndicatorGuard, makeHelpers } from '../indicators/sql-test.mjs';
+
+export const ATTRIBUTION = 'phase_evidence_attribution_review.sql';
+export const GRANTS = 'phase_security_grants_hardening_review.sql';
+const sqlFile = name => readFileSync(`${REPO}/sql/${name}`, 'utf8');
+export const applyAttribution = db => db.exec(sqlFile(ATTRIBUTION));
+export const applyGrants = db => db.exec(sqlFile(GRANTS));
+export function rollbackBlock(name) {
+  const m = [...sqlFile(name).matchAll(/\/\*\s*\n(BEGIN;[\s\S]*?COMMIT;)[\s\S]*?\*\//g)];
+  return m[m.length - 1][1];
+}
+
+/** Objects/ACLs present on production (read 2026-10-22) that the indicator baseline does not create. */
+export async function buildLiveExtras(db) {
+  await db.exec(`
+CREATE SCHEMA IF NOT EXISTS storage;
+CREATE TABLE storage.objects (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), bucket_id text, name text);
+
+CREATE FUNCTION public.set_evidence_created_by() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  IF NEW.created_by IS NULL THEN NEW.created_by := auth.uid(); END IF;
+  IF NEW.created_by IS DISTINCT FROM auth.uid() AND auth.uid() IS NOT NULL THEN NEW.created_by := auth.uid(); END IF;
+  IF NEW.created_at IS NULL THEN NEW.created_at := now(); END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER trg_set_evidence_created_by BEFORE INSERT ON public.evidences
+  FOR EACH ROW EXECUTE FUNCTION public.set_evidence_created_by();
+
+CREATE FUNCTION public.enforce_evidence_requirement_indicator_match() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE req_indicator_id bigint;
+BEGIN
+  IF NEW.requirement_id IS NULL THEN RETURN NEW; END IF;
+  SELECT r.indicator_id INTO req_indicator_id FROM public.evidence_requirements r WHERE r.id = NEW.requirement_id;
+  IF req_indicator_id IS NULL THEN RAISE EXCEPTION 'اسم الشاهد المطلوب غير موجود'; END IF;
+  IF NEW.indicator_id IS DISTINCT FROM req_indicator_id THEN RAISE EXCEPTION 'indicator_id mismatch'; END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER trg_enforce_evidence_requirement_indicator_match BEFORE INSERT OR UPDATE ON public.evidences
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_evidence_requirement_indicator_match();
+
+CREATE FUNCTION public.set_evidence_requirement_created_by() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN IF NEW.created_by IS NULL THEN NEW.created_by := auth.uid(); END IF; RETURN NEW; END $$;
+CREATE TRIGGER trg_set_evidence_requirement_created_by BEFORE INSERT OR UPDATE ON public.evidence_requirements
+  FOR EACH ROW EXECUTE FUNCTION public.set_evidence_requirement_created_by();
+CREATE FUNCTION public.set_evidence_requirements_updated_at() RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
+BEGIN NEW.updated_at := now(); RETURN NEW; END $$;
+CREATE TRIGGER trg_evidence_requirements_updated_at BEFORE UPDATE ON public.evidence_requirements
+  FOR EACH ROW EXECUTE FUNCTION public.set_evidence_requirements_updated_at();
+CREATE FUNCTION public.set_profiles_updated_at() RETURNS trigger LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN RETURN NEW; END $$;
+CREATE FUNCTION public.rls_auto_enable() RETURNS event_trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN END $$;
+CREATE FUNCTION public.get_active_school_year() RETURNS SETOF public.school_years LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS
+  $$ SELECT * FROM public.school_years WHERE is_active AND NOT is_archived LIMIT 1 $$;
+CREATE FUNCTION public.list_school_years(p_include_archived boolean DEFAULT true) RETURNS SETOF public.school_years LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS
+  $$ SELECT * FROM public.school_years WHERE p_include_archived OR NOT is_archived $$;
+
+CREATE TABLE public.initiatives (id bigint PRIMARY KEY, name text, school_year_id uuid);
+CREATE TABLE public.settings (id smallint PRIMARY KEY, school_name text);
+CREATE TABLE public.teacher_followups (id bigint PRIMARY KEY, teacher_name text, school_year_id uuid);
+CREATE TABLE public.tasks (id bigint PRIMARY KEY, name text, school_year_id uuid);
+CREATE TABLE public.kpis (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text);
+CREATE TABLE public.reports (id bigint PRIMARY KEY, title text);
+CREATE TABLE public.users (id uuid PRIMARY KEY, name text);
+ALTER TABLE public.initiatives ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.teacher_followups ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.kpis ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.reports ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.school_years ENABLE ROW LEVEL SECURITY;
+CREATE POLICY reports_deny_all ON public.reports TO anon, authenticated USING (false) WITH CHECK (false);
+CREATE POLICY users_deny_all ON public.users TO anon, authenticated USING (false) WITH CHECK (false);
+CREATE POLICY profiles_select ON public.profiles FOR SELECT TO authenticated USING (id = auth.uid() OR public.is_admin());
+CREATE POLICY sy_select ON public.school_years FOR SELECT TO authenticated USING (true);
+
+-- table ACLs exactly as production relacl
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
+GRANT ALL ON public.evidence_requirements TO anon, authenticated;
+GRANT ALL ON public.evidences, public.initiatives, public.programs, public.school_years,
+  public.settings, public.teacher_followups TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES, TRIGGER, MAINTAIN ON public.program_indicators, public.tasks TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.kpis TO authenticated;
+GRANT SELECT ON public.profiles TO authenticated;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+
+-- function ACLs exactly as production proacl
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.school_year_allows_read(uuid), public.school_year_allows_write(uuid),
+  public.school_year_is_active(uuid) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.prevent_delete_linked_indicator() FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.rls_auto_enable(), public.get_active_school_year(), public.list_school_years(boolean) TO PUBLIC;
+`);
+}
+
+export async function aclSnapshot(db) {
+  const rel = (await db.query(`SELECT relname,
+      coalesce((SELECT string_agg(x::text, ',' ORDER BY x::text) FROM unnest(relacl) x), '') a
+    FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind = 'r' ORDER BY 1`)).rows;
+  const fn = (await db.query(`SELECT p.oid::regprocedure::text f,
+      coalesce((SELECT string_agg(x::text, ',' ORDER BY x::text) FROM unnest(p.proacl) x), '') a,
+      coalesce(array_to_string(p.proconfig, ','), '') c
+    FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace ORDER BY 1`)).rows;
+  return JSON.stringify({ rel, fn });
+}
+
+export async function buildAll(db, { attribution = true, grants = true } = {}) {
+  await buildBaseline(db);
+  await applyIndicatorGuard(db);
+  await buildLiveExtras(db);
+  if (attribution) await applyAttribution(db);
+  if (grants) await applyGrants(db);
+}
+
+const isMain = import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+let pass = 0, fail = 0;
+const ok = (name, cond, extra = '') => {
+  if (cond) { pass++; console.log('  PASS', name); }
+  else { fail++; console.log('  FAIL', name, extra); }
+};
+const db = new PGlite();
+await buildAll(db, { attribution: false, grants: false });
+const { as, tryQ } = makeHelpers(db);
+const one = async (sql, p = []) => (await db.query(sql, p)).rows[0];
+const R1 = '40000000-0000-0000-0000-000000000001';
+
+await db.exec(`
+INSERT INTO public.programs (id, name, resp, school_year_id) VALUES (1, 'برنامج القراءة', 'أ. رباب', '${Y_ACTIVE}');
+INSERT INTO public.program_indicators (id, program_id, indicator_text) VALUES (10, 1, 'مؤشر');
+INSERT INTO public.evidence_requirements (id, indicator_id, name) VALUES ('${R1}', 10, 'تقرير التنفيذ');
+INSERT INTO public.evidences (id, title, program_id, indicator_id, requirement_id, link, school_year_id, created_by, notes)
+  VALUES (100, 'تقرير التنفيذ', 1, 10, '${R1}', 'https://drive.google.com/file/d/legacy/view?usp=sharing', '${Y_ACTIVE}', '${U.teacher}', 'ملاحظة قديمة');
+INSERT INTO public.evidences (id, title, program_id, indicator_id, requirement_id, file_url, file_name, school_year_id, created_by)
+  VALUES (101, 'تقرير التنفيذ', 1, 10, '${R1}', '${U.teacher}/legacy.pdf', 'legacy.pdf', '${Y_ACTIVE}', '${U.teacher}');
+INSERT INTO public.evidences (id, title, program_id, indicator_id, link, person, school_year_id, created_by)
+  VALUES (102, 'شاهد عام قديم', 1, NULL, 'https://drive.google.com/drive/folders/old', 'أ. منى', '${Y_ACTIVE}', '${U.vice}');
+INSERT INTO storage.objects (bucket_id, name) VALUES ('evidences', '${U.teacher}/legacy.pdf');
+SELECT setval(pg_get_serial_sequence('public.evidences', 'id'), 200);
+`);
+await as('admin', () => tryQ(`UPDATE public.evidences SET is_approved = true WHERE id = 101`));
+const evidenceSnap = async () => JSON.stringify((await db.query(`SELECT * FROM public.evidences WHERE id < 200 ORDER BY id`)).rows);
+const legacyBefore = await evidenceSnap();
+const aclBefore = await aclSnapshot(db);
+ok('setup: legacy approved file row', (await one(`SELECT is_approved FROM public.evidences WHERE id=101`)).is_approved === true);
+
+console.log('\n== Attribution migration: apply (twice), no data change ==');
+try { await applyAttribution(db); ok('attribution migration applied', true); } catch (e) { ok('attribution migration applied', false, e.message); }
+try { await applyAttribution(db); ok('attribution migration re-run is idempotent', true); } catch (e) { ok('attribution migration re-run is idempotent', false, e.message); }
+ok('legacy rows byte-identical after migration', legacyBefore === await evidenceSnap());
+ok('validation function not callable by anon/authenticated',
+  !(await one(`SELECT has_function_privilege('authenticated', 'public.validate_evidence_attribution()', 'EXECUTE') v`)).v
+  && !(await one(`SELECT has_function_privilege('anon', 'public.validate_evidence_attribution()', 'EXECUTE') v`)).v);
+
+const insertLink = (person, label, link = 'https://drive.google.com/file/d/new/view') => tryQ(
+  `INSERT INTO public.evidences (title, program_id, indicator_id, requirement_id, link, file_name, person, school_year_id, created_by)
+   VALUES ('تقرير التنفيذ', 1, 10, $1, $2, $3, $4, $5, $6) RETURNING id, person, file_name, link`,
+  [R1, link, label, person, Y_ACTIVE, U.teacher]);
+const insertFile = (person, name = 'report.pdf') => tryQ(
+  `INSERT INTO public.evidences (title, program_id, indicator_id, requirement_id, file_url, file_name, person, school_year_id, created_by)
+   VALUES ('تقرير التنفيذ', 1, 10, $1, $2, $3, $4, $5, $6) RETURNING id, person, file_name`,
+  [R1, `${U.teacher}/x-${Math.random()}.pdf`, name, person, Y_ACTIVE, U.teacher]);
+
+console.log('\n== Teacher name required on new rows (server side) ==');
+await as('teacher', async () => {
+  for (const [label, person] of [['NULL', null], ['empty', ''], ['spaces', '   '], ['1 char', 'أ'], ['101 chars', 'س'.repeat(101)]]) {
+    const r = await insertFile(person);
+    ok(`teacher insert refused: person ${label}`, !!r.error && /اسم المعلمة المسؤولة/.test(r.error), JSON.stringify(r));
+  }
+  const r = await insertFile('  أ.   سارة   العتيبي ');
+  ok('teacher insert with name saved, spaces normalised', !r.error && r.rows[0]?.person === 'أ. سارة العتيبي', JSON.stringify(r));
+  const r100 = await insertFile('ن'.repeat(100));
+  ok('100-char name accepted', !r100.error, JSON.stringify(r100));
+});
+
+console.log('\n== Drive link: display name required, URL kept as-is, https only ==');
+await as('teacher', async () => {
+  let r = await insertLink('أ. سارة', null);
+  ok('link without display name refused', !!r.error && r.error.includes('اسم الملف أو الشاهد'), JSON.stringify(r));
+  r = await insertLink('أ. سارة', '   ');
+  ok('link with blank display name refused', !!r.error && r.error.includes('اسم الملف أو الشاهد'), JSON.stringify(r));
+  r = await insertLink('أ. سارة', 'ط'.repeat(151));
+  ok('display name over 150 chars refused', !!r.error && r.error.includes('150'), JSON.stringify(r));
+  const url = 'https://drive.google.com/file/d/1AbC-xyz_09/view?usp=drive_link';
+  r = await insertLink('أ. سارة', '  تقرير   تنفيذ البرنامج ', url);
+  ok('link saved with display name', !r.error && r.rows[0]?.file_name === 'تقرير تنفيذ البرنامج', JSON.stringify(r));
+  ok('original link stored exactly', r.rows?.[0]?.link === url, JSON.stringify(r));
+  for (const bad of ['http://drive.google.com/file/d/x', 'javascript:alert(1)', 'data:text/html,<b>x</b>', 'https://drive.google.com/a b', 'ftp://x.com/a']) {
+    const b = await insertLink('أ. سارة', 'ملف', bad);
+    ok(`unsafe link refused: ${bad.slice(0, 24)}`, !!b.error && b.error.includes('https://'), JSON.stringify(b));
+  }
+  const f = await insertFile('أ. سارة', 'تقرير.pdf');
+  ok('uploaded file keeps its own file_name rule (no link label needed)', !f.error && f.rows[0].file_name === 'تقرير.pdf', JSON.stringify(f));
+});
+
+console.log('\n== Legacy rows keep working (no forced edit) ==');
+await as('admin', async () => {
+  let r = await tryQ(`UPDATE public.evidences SET is_approved = true WHERE id = 100 RETURNING id, is_approved, person, file_name`);
+  ok('leader approves legacy link with no teacher name and no display name', !r.error && r.rows[0]?.is_approved === true && r.rows[0].person === null && r.rows[0].file_name === null, JSON.stringify(r));
+  r = await tryQ(`UPDATE public.evidences SET is_approved = false WHERE id = 100 RETURNING is_approved`);
+  ok('leader un-approves legacy link', !r.error && r.rows[0]?.is_approved === false, JSON.stringify(r));
+  r = await tryQ(`UPDATE public.evidences SET notes = notes WHERE id = 102 RETURNING id`);
+  ok('no-op update on legacy row allowed', !r.error && r.rows.length === 1, JSON.stringify(r));
+});
+{
+  const now = JSON.parse(await evidenceSnap());
+  const before = JSON.parse(legacyBefore);
+  const pick = rows => rows.map(e => [e.id, e.link, e.file_url, e.file_name, e.person, e.title, e.notes].join('|'));
+  ok('legacy link/file/name/teacher/notes unchanged after approve cycle', JSON.stringify(pick(now)) === JSON.stringify(pick(before)));
+}
+
+console.log('\n== Permissions unchanged ==');
+await as('teacher', async () => {
+  let r = await tryQ(`UPDATE public.evidences SET person = 'أخرى' WHERE id = 102 RETURNING id`);
+  ok('teacher cannot edit teacher name on any row (0 rows)', !r.error && r.rows.length === 0, JSON.stringify(r));
+  r = await tryQ(`UPDATE public.evidences SET is_approved = true WHERE id = 100 RETURNING id`);
+  ok('teacher cannot approve (0 rows)', !r.error && r.rows.length === 0, JSON.stringify(r));
+  r = await tryQ(`INSERT INTO public.evidences (title, program_id, indicator_id, file_url, file_name, person, school_year_id, created_by, is_approved)
+    VALUES ('x', 1, 10, 'u/x.pdf', 'x.pdf', 'أ. سارة', '${Y_ACTIVE}', '${U.teacher}', true)`);
+  ok('teacher cannot insert pre-approved', !!r.error && r.error.includes('فقط القائدة'), JSON.stringify(r));
+  r = await tryQ(`DELETE FROM public.evidences WHERE id = 100 RETURNING id`);
+  ok('teacher cannot delete (0 rows)', !r.error && r.rows.length === 0, JSON.stringify(r));
+});
+await as('vice', async () => {
+  let r = await tryQ(`UPDATE public.evidences SET person = 'أ. هند' WHERE id = 101`);
+  ok('approved row: teacher name locked (existing approval lock)', !!r.error && r.error.includes('لا يمكن تعديل مرفق معتمد'), JSON.stringify(r));
+  r = await tryQ(`UPDATE public.evidences SET person = '  ' WHERE id = 102`);
+  ok('vice cannot blank a teacher name', !!r.error && r.error.includes('اسم المعلمة المسؤولة'), JSON.stringify(r));
+  r = await tryQ(`UPDATE public.evidences SET is_approved = true WHERE id = 102`);
+  ok('vice cannot approve', !!r.error && r.error.includes('فقط القائدة'), JSON.stringify(r));
+});
+
+console.log('\n== Grants hardening migration ==');
+const priv = async (role, table, p) => (await one(`SELECT has_table_privilege($1, $2, $3) v`, [role, `public.${table}`, p])).v;
+const fpriv = async (role, f) => (await one(`SELECT has_function_privilege($1, $2, 'EXECUTE') v`, [role, f])).v;
+ok('before: anon has DELETE on evidence_requirements', await priv('anon', 'evidence_requirements', 'DELETE'));
+ok('before: authenticated has TRUNCATE on evidences', await priv('authenticated', 'evidences', 'TRUNCATE'));
+const aclMid = await aclSnapshot(db);
+try { await applyGrants(db); ok('grants migration applied', true); } catch (e) { ok('grants migration applied', false, e.message); }
+try { await applyGrants(db); ok('grants migration re-run is idempotent', true); } catch (e) { ok('grants migration re-run is idempotent', false, e.message); }
+for (const t of ['evidences', 'evidence_requirements', 'programs', 'program_indicators', 'initiatives', 'school_years', 'settings', 'teacher_followups', 'tasks']) {
+  ok(`${t}: no TRUNCATE/TRIGGER/REFERENCES/MAINTAIN for authenticated`, !(await priv('authenticated', t, 'TRUNCATE'))
+    && !(await priv('authenticated', t, 'TRIGGER')) && !(await priv('authenticated', t, 'REFERENCES'))
+    && !(await priv('authenticated', t, 'MAINTAIN')));
+}
+ok('anon has no access to evidence_requirements', !(await priv('anon', 'evidence_requirements', 'SELECT')) && !(await priv('anon', 'evidence_requirements', 'DELETE')));
+ok('authenticated keeps SELECT/INSERT/UPDATE/DELETE', await priv('authenticated', 'evidences', 'SELECT') && await priv('authenticated', 'evidences', 'INSERT')
+  && await priv('authenticated', 'evidences', 'UPDATE') && await priv('authenticated', 'evidences', 'DELETE')
+  && await priv('authenticated', 'evidence_requirements', 'INSERT') && await priv('authenticated', 'programs', 'UPDATE'));
+ok('service_role keeps TRUNCATE', await priv('service_role', 'evidences', 'TRUNCATE'));
+ok('anon cannot execute is_admin/current_app_role/list_school_years', !(await fpriv('anon', 'public.is_admin()'))
+  && !(await fpriv('anon', 'public.current_app_role()')) && !(await fpriv('anon', 'public.list_school_years(boolean)')));
+ok('authenticated still executes RLS helpers', await fpriv('authenticated', 'public.is_admin()') && await fpriv('authenticated', 'public.current_app_role()')
+  && await fpriv('authenticated', 'public.school_year_allows_write(uuid)') && await fpriv('authenticated', 'public.get_active_school_year()'));
+ok('trigger functions not executable by authenticated', !(await fpriv('authenticated', 'public.set_evidence_created_by()'))
+  && !(await fpriv('authenticated', 'public.protect_approved_evidence_attachment()')));
+
+await as('teacher', async () => {
+  let r = await tryQ(`TRUNCATE public.evidences`);
+  ok('teacher TRUNCATE evidences denied', !!r.error && /permission denied/.test(r.error), JSON.stringify(r));
+  r = await tryQ(`TRUNCATE public.evidence_requirements`);
+  ok('teacher TRUNCATE evidence_requirements denied', !!r.error && /permission denied/.test(r.error), JSON.stringify(r));
+  r = await tryQ(`SELECT public.set_evidence_created_by()`);
+  ok('teacher cannot call trigger function via RPC', !!r.error && /permission denied/.test(r.error), JSON.stringify(r));
+  r = await tryQ(`INSERT INTO public.evidences (title, program_id, indicator_id, requirement_id, link, file_name, person, school_year_id)
+    VALUES ('تقرير التنفيذ', 1, 10, $1, 'https://drive.google.com/file/d/after/view', 'ملف بعد التشديد', 'أ. سارة', $2) RETURNING created_by`, [R1, Y_ACTIVE]);
+  ok('triggers still fire after revoke (created_by set by trigger, insert allowed by RLS)', !r.error && r.rows[0]?.created_by === U.teacher, JSON.stringify(r));
+  r = await tryQ(`SELECT count(*)::int c FROM public.evidences`);
+  ok('teacher still reads evidences', !r.error && r.rows[0].c > 3, JSON.stringify(r));
+});
+await as('admin', async () => {
+  const r = await tryQ(`UPDATE public.evidences SET is_approved = true WHERE id = 100 RETURNING is_approved`);
+  ok('leader approval still works after hardening', !r.error && r.rows[0]?.is_approved === true, JSON.stringify(r));
+});
+await as('anon', async () => {
+  let r = await tryQ(`SELECT * FROM public.evidence_requirements`);
+  ok('anon SELECT evidence_requirements denied', !!r.error && /permission denied/.test(r.error), JSON.stringify(r));
+  r = await tryQ(`SELECT public.is_admin()`);
+  ok('anon RPC is_admin denied', !!r.error && /permission denied/.test(r.error), JSON.stringify(r));
+  r = await tryQ(`SELECT * FROM public.list_school_years(true)`);
+  ok('anon RPC list_school_years denied', !!r.error && /permission denied/.test(r.error), JSON.stringify(r));
+});
+ok('evidence_attachment_present has fixed search_path',
+  (await one(`SELECT array_to_string(proconfig, ',') c FROM pg_proc WHERE oid = 'public.evidence_attachment_present(jsonb)'::regprocedure`)).c === 'search_path=""');
+
+console.log('\n== Rollback blocks ==');
+try { await db.exec(rollbackBlock(GRANTS)); ok('grants rollback runs', true); } catch (e) { ok('grants rollback runs', false, e.message); }
+ok('grants rollback restores ACLs exactly', aclMid === await aclSnapshot(db));
+try { await db.exec(rollbackBlock(ATTRIBUTION)); ok('attribution rollback runs', true); } catch (e) { ok('attribution rollback runs', false, e.message); }
+ok('attribution rollback: trigger removed', !(await one(`SELECT 1 x FROM pg_trigger WHERE tgname = 'trg_validate_evidence_attribution'`)));
+ok('after both rollbacks ACLs equal the original', aclBefore === await aclSnapshot(db));
+await as('teacher', async () => {
+  const r = await insertFile(null);
+  ok('after rollback the old behaviour returns (insert without name)', !r.error, JSON.stringify(r));
+});
+ok('migration history cleaned by rollbacks', !(await one(`SELECT 1 x FROM public.platform_migration_history
+  WHERE migration_key IN ('phase_evidence_attribution_v1', 'phase_security_grants_hardening_v1')`)));
+
+console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);
+}
