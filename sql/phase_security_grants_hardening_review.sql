@@ -4,6 +4,7 @@
 -- phase_security_grants_hardening_review.sql
 -- تشديد الصلاحيات المباشرة (GRANT) بعد فحص الإنتاج وSecurity Advisors في 2026-10-22
 -- مراجعة / تطبيق يدوي في محرر SQL — لا يُنفَّذ تلقائياً ولا من المستودع
+-- Rollback مستقل (طوارئ فقط): sql/phase_security_grants_hardening_rollback_review.sql
 -- ============================================================
 -- ما وُجد على الإنتاج (relacl / proacl):
 --   * anon يملك arwdDxtm (كل الصلاحيات بما فيها DELETE وTRUNCATE) على evidence_requirements.
@@ -17,16 +18,16 @@
 --   * evidence_attachment_present بلا search_path ثابت.
 --
 -- ماذا يفعل:
---   * يسحب كل صلاحيات anon من evidence_requirements.
---   * يسحب TRUNCATE وREFERENCES وTRIGGER وMAINTAIN من PUBLIC/anon/authenticated على جداول public المستخدمة.
---   * يسحب EXECUTE من PUBLIC/anon/authenticated على دوال الـ Trigger فقط
+--   * يسحب كل صلاحيات PUBLIC وanon من جداول public الأربعة عشر (فعلياً: anon على evidence_requirements فقط).
+--   * يسحب TRUNCATE وREFERENCES وTRIGGER وMAINTAIN من authenticated على الجداول نفسها.
+--   * يسحب EXECUTE من PUBLIC/anon/authenticated على دوال الـ Trigger ودالة evidence_attachment_present
 --     (الـ Trigger يعمل بدون صلاحية EXECUTE للمستخدم؛ مثال قائم: tasks_enforce_schedule_and_evidence).
---   * يسحب EXECUTE من PUBLIC/anon على دوال الأدوار/السنة، ويُبقيها لـ authenticated (تحتاجها سياسات RLS).
---   * يثبّت search_path لـ evidence_attachment_present.
+--   * يسحب EXECUTE من PUBLIC/anon على دوال الأدوار/السنة، ويُبقيها لـ authenticated (تحتاجها سياسات RLS والواجهة).
+--   * يثبّت search_path فارغاً لـ evidence_attachment_present (لا تستخدم إلا دوال pg_catalog).
 --
 -- لا يمس: SELECT/INSERT/UPDATE/DELETE لـ authenticated، سياسات RLS، المشغّلات، البيانات، Storage،
---   service_role، مالك الجداول، دوال السنة الإدارية (create/activate/freeze/archive/update)،
---   ولا الصلاحيات الافتراضية للمخطط (راجع التوصية في التقرير).
+--   service_role، مالك الجداول والدوال (postgres)، دوال السنة الإدارية (create/activate/freeze/archive/update)،
+--   ولا الصلاحيات الافتراضية للمخطط. لا يستخدم GRANT ALL.
 -- ============================================================
 
 BEGIN;
@@ -59,15 +60,67 @@ BEGIN
 END
 $pre$;
 
--- لقطة الصلاحيات التي يجب ألا تتغيّر (SELECT/INSERT/UPDATE/DELETE لكل دور على كل جدول)
+-- الجداول الأربعة عشر والصلاحيات التطبيقية المقصودة لـ authenticated بعد التطبيق (كما في الإنتاج دون D/x/t/m)
+CREATE TEMP TABLE _grants_tables ON COMMIT DROP AS
+SELECT * FROM (VALUES
+  ('evidences', 'SELECT,INSERT,UPDATE,DELETE'),
+  ('evidence_requirements', 'SELECT,INSERT,UPDATE,DELETE'),
+  ('programs', 'SELECT,INSERT,UPDATE,DELETE'),
+  ('program_indicators', 'SELECT,INSERT,UPDATE,DELETE'),
+  ('initiatives', 'SELECT,INSERT,UPDATE,DELETE'),
+  ('school_years', 'SELECT,INSERT,UPDATE,DELETE'),
+  ('settings', 'SELECT,INSERT,UPDATE,DELETE'),
+  ('teacher_followups', 'SELECT,INSERT,UPDATE,DELETE'),
+  ('tasks', 'SELECT,INSERT,UPDATE,DELETE'),
+  ('kpis', 'SELECT,INSERT,UPDATE,DELETE'),
+  ('profiles', 'SELECT'),
+  ('reports', ''),
+  ('users', ''),
+  ('platform_migration_history', '')
+) AS v(relname, authenticated_privs);
+
+CREATE TEMP TABLE _grants_privs ON COMMIT DROP AS
+SELECT * FROM (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'),
+                      ('TRUNCATE'), ('REFERENCES'), ('TRIGGER'), ('MAINTAIN')) AS v(priv);
+
+-- دوال الـ Trigger + الدالة المساعدة: لا تنفيذ لأي دور مستخدم بعد التطبيق
+CREATE TEMP TABLE _grants_trigger_fns ON COMMIT DROP AS
+SELECT * FROM (VALUES
+  ('public.enforce_evidence_requirement_approval()'),
+  ('public.enforce_evidence_requirement_indicator_match()'),
+  ('public.prevent_delete_requirement_with_approved_attachment()'),
+  ('public.protect_approved_evidence_attachment()'),
+  ('public.set_evidence_created_by()'),
+  ('public.set_evidence_requirement_created_by()'),
+  ('public.set_evidence_requirements_updated_at()'),
+  ('public.set_profiles_updated_at()'),
+  ('public.rls_auto_enable()'),
+  ('public.evidence_attachment_present(jsonb)')
+) AS v(fn);
+
+-- دوال يحتاجها authenticated (سياسات RLS + الواجهة)
+CREATE TEMP TABLE _grants_rls_fns ON COMMIT DROP AS
+SELECT * FROM (VALUES
+  ('public.is_admin()'), ('public.is_staff()'), ('public.current_app_role()'),
+  ('public.get_active_school_year()'), ('public.list_school_years(boolean)'),
+  ('public.school_year_allows_read(uuid)'), ('public.school_year_allows_write(uuid)'),
+  ('public.school_year_is_active(uuid)')
+) AS v(fn);
+
+-- لقطة service_role وpostgres (جداول + دوال) وSELECT/INSERT/UPDATE/DELETE لـ authenticated: يجب ألا تتغيّر
 CREATE TEMP TABLE _grants_keep ON COMMIT DROP AS
-SELECT r.rolname, c.relname, p.priv,
-       has_table_privilege(r.rolname, c.oid, p.priv) AS has_it
-FROM pg_class c
-JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
-CROSS JOIN (VALUES ('authenticated'), ('service_role'), ('postgres')) AS r(rolname)
+SELECT r.rolname, t.relname AS obj, p.priv, has_table_privilege(r.rolname, ('public.' || t.relname)::regclass, p.priv) AS has_it
+FROM _grants_tables t
+CROSS JOIN (VALUES ('service_role'), ('postgres')) AS r(rolname)
+CROSS JOIN _grants_privs p
+UNION ALL
+SELECT 'authenticated', t.relname, p.priv, has_table_privilege('authenticated', ('public.' || t.relname)::regclass, p.priv)
+FROM _grants_tables t
 CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE')) AS p(priv)
-WHERE c.relkind = 'r';
+UNION ALL
+SELECT r.rolname, f.fn, 'EXECUTE', has_function_privilege(r.rolname, f.fn::regprocedure, 'EXECUTE')
+FROM (SELECT fn FROM _grants_trigger_fns UNION ALL SELECT fn FROM _grants_rls_fns) f
+CROSS JOIN (VALUES ('service_role'), ('postgres')) AS r(rolname);
 
 CREATE TEMP TABLE _grants_counts ON COMMIT DROP AS
 SELECT
@@ -77,18 +130,22 @@ SELECT
   (SELECT count(*) FROM public.program_indicators) AS indicators_cnt;
 
 -- ------------------------------------------------------------
--- 1) anon على evidence_requirements
+-- 1) PUBLIC وanon: لا صلاحيات مباشرة على جداول التطبيق
 -- ------------------------------------------------------------
-REVOKE ALL ON TABLE public.evidence_requirements FROM anon;
+REVOKE ALL ON TABLE
+  public.evidences, public.evidence_requirements, public.programs, public.program_indicators,
+  public.initiatives, public.school_years, public.settings, public.teacher_followups, public.tasks,
+  public.kpis, public.profiles, public.reports, public.users, public.platform_migration_history
+FROM PUBLIC, anon;
 
 -- ------------------------------------------------------------
--- 2) TRUNCATE / REFERENCES / TRIGGER / MAINTAIN من أدوار المستخدمين
+-- 2) authenticated: سحب TRUNCATE / REFERENCES / TRIGGER / MAINTAIN فقط
 -- ------------------------------------------------------------
 REVOKE TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE
   public.evidences, public.evidence_requirements, public.programs, public.program_indicators,
   public.initiatives, public.school_years, public.settings, public.teacher_followups, public.tasks,
   public.kpis, public.profiles, public.reports, public.users, public.platform_migration_history
-FROM PUBLIC, anon, authenticated;
+FROM authenticated;
 
 -- ------------------------------------------------------------
 -- 3) دوال الـ Trigger: لا تُستدعى مباشرة عبر RPC
@@ -129,66 +186,98 @@ GRANT EXECUTE ON FUNCTION
 TO authenticated;
 
 -- ------------------------------------------------------------
--- 5) سجل التنفيذ + Postchecks
+-- 5) سجل التنفيذ: 1 في التشغيل الأول، 0 عند إعادة التشغيل، وأي قيمة أخرى توقف
 -- ------------------------------------------------------------
-INSERT INTO public.platform_migration_history (migration_key)
-VALUES ('phase_security_grants_hardening_v1')
-ON CONFLICT (migration_key) DO NOTHING;
+DO $hist$
+DECLARE
+  n integer;
+BEGIN
+  INSERT INTO public.platform_migration_history (migration_key)
+  VALUES ('phase_security_grants_hardening_v1')
+  ON CONFLICT (migration_key) DO NOTHING;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n NOT IN (0, 1) THEN
+    RAISE EXCEPTION 'STOP: سجل التنفيذ أدخل % صفوف (المسموح 0 أو 1)', n;
+  END IF;
+  IF (SELECT count(*) FROM public.platform_migration_history
+      WHERE migration_key = 'phase_security_grants_hardening_v1') <> 1 THEN
+    RAISE EXCEPTION 'STOP: migration_key غير موجود مرة واحدة بالضبط';
+  END IF;
+END
+$hist$;
 
+-- ------------------------------------------------------------
+-- 6) Postchecks
+-- ------------------------------------------------------------
 DO $post$
 DECLARE
-  t text;
-  f text;
+  r record;
   b record;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['evidences', 'evidence_requirements', 'programs', 'program_indicators',
-                           'initiatives', 'school_years', 'settings', 'teacher_followups', 'tasks',
-                           'kpis', 'profiles', 'reports', 'users', 'platform_migration_history'] LOOP
-    IF has_table_privilege('authenticated', 'public.' || t, 'TRUNCATE')
-       OR has_table_privilege('anon', 'public.' || t, 'TRUNCATE')
-       OR has_table_privilege('authenticated', 'public.' || t, 'TRIGGER')
-       OR has_table_privilege('authenticated', 'public.' || t, 'REFERENCES')
-       OR has_table_privilege('authenticated', 'public.' || t, 'MAINTAIN')
-       OR has_table_privilege('anon', 'public.' || t, 'MAINTAIN') THEN
-      RAISE EXCEPTION 'STOP: صلاحية خطرة ما زالت متاحة على public.%', t;
+  -- PUBLIC وanon: لا أي صلاحية من الثماني على أي من الجداول الأربعة عشر
+  FOR r IN
+    SELECT t.relname, p.priv, g.grantee
+    FROM _grants_tables t CROSS JOIN _grants_privs p CROSS JOIN (VALUES ('public'), ('anon')) AS g(grantee)
+    WHERE has_table_privilege(g.grantee, ('public.' || t.relname)::regclass, p.priv)
+  LOOP
+    RAISE EXCEPTION 'STOP: % ما زال يملك % على public.%', r.grantee, r.priv, r.relname;
+  END LOOP;
+
+  -- authenticated: الصلاحيات الفعلية تساوي المقصودة بالضبط (ولا D/x/t/m)
+  FOR r IN
+    SELECT t.relname, p.priv,
+           has_table_privilege('authenticated', ('public.' || t.relname)::regclass, p.priv) AS has_it,
+           coalesce(p.priv = ANY (string_to_array(nullif(t.authenticated_privs, ''), ',')), false) AS wanted
+    FROM _grants_tables t CROSS JOIN _grants_privs p
+  LOOP
+    IF r.has_it IS DISTINCT FROM r.wanted THEN
+      RAISE EXCEPTION 'STOP: authenticated % على public.%: الفعلي=% المقصود=%', r.priv, r.relname, r.has_it, r.wanted;
     END IF;
   END LOOP;
 
-  IF has_table_privilege('anon', 'public.evidence_requirements', 'SELECT')
-     OR has_table_privilege('anon', 'public.evidence_requirements', 'INSERT')
-     OR has_table_privilege('anon', 'public.evidence_requirements', 'UPDATE')
-     OR has_table_privilege('anon', 'public.evidence_requirements', 'DELETE') THEN
-    RAISE EXCEPTION 'STOP: anon ما زال يصل إلى evidence_requirements';
+  -- لا تغيير على service_role وpostgres، ولا على SELECT/INSERT/UPDATE/DELETE لـ authenticated
+  FOR r IN
+    SELECT k.* FROM _grants_keep k
+    WHERE k.has_it IS DISTINCT FROM CASE
+      WHEN k.priv = 'EXECUTE' THEN has_function_privilege(k.rolname, k.obj::regprocedure, 'EXECUTE')
+      ELSE has_table_privilege(k.rolname, ('public.' || k.obj)::regclass, k.priv) END
+  LOOP
+    RAISE EXCEPTION 'STOP: تغيّرت صلاحية % على % لـ %', r.priv, r.obj, r.rolname;
+  END LOOP;
+
+  -- كل دوال الـ Trigger: لا تنفيذ لـ PUBLIC/anon/authenticated، والمالك postgres ما زال ينفّذ
+  FOR r IN SELECT fn FROM _grants_trigger_fns LOOP
+    IF has_function_privilege('public', r.fn::regprocedure, 'EXECUTE')
+       OR has_function_privilege('anon', r.fn::regprocedure, 'EXECUTE')
+       OR has_function_privilege('authenticated', r.fn::regprocedure, 'EXECUTE') THEN
+      RAISE EXCEPTION 'STOP: % ما زالت قابلة للاستدعاء من دور مستخدم', r.fn;
+    END IF;
+    IF NOT has_function_privilege('postgres', r.fn::regprocedure, 'EXECUTE') THEN
+      RAISE EXCEPTION 'STOP: المالك postgres فقد تنفيذ %', r.fn;
+    END IF;
+  END LOOP;
+
+  -- دوال RLS والواجهة: authenticated ينفّذها، وanon/PUBLIC لا
+  FOR r IN SELECT fn FROM _grants_rls_fns LOOP
+    IF NOT has_function_privilege('authenticated', r.fn::regprocedure, 'EXECUTE') THEN
+      RAISE EXCEPTION 'STOP: authenticated فقد تنفيذ % (تحتاجها سياسات RLS)', r.fn;
+    END IF;
+    IF has_function_privilege('anon', r.fn::regprocedure, 'EXECUTE')
+       OR has_function_privilege('public', r.fn::regprocedure, 'EXECUTE') THEN
+      RAISE EXCEPTION 'STOP: anon/PUBLIC ما زال ينفّذ %', r.fn;
+    END IF;
+  END LOOP;
+
+  -- evidence_attachment_present تعمل بـ search_path فارغ
+  IF (SELECT array_to_string(proconfig, ',') FROM pg_proc
+      WHERE oid = 'public.evidence_attachment_present(jsonb)'::regprocedure) IS DISTINCT FROM 'search_path=""' THEN
+    RAISE EXCEPTION 'STOP: search_path لـ evidence_attachment_present غير مضبوط';
   END IF;
-
-  IF EXISTS (SELECT 1 FROM _grants_keep k
-             WHERE k.has_it IS DISTINCT FROM has_table_privilege(k.rolname, ('public.' || k.relname)::regclass, k.priv)) THEN
-    RAISE EXCEPTION 'STOP: تغيّرت صلاحيات SELECT/INSERT/UPDATE/DELETE — تم التراجع';
+  IF public.evidence_attachment_present('{"link": "https://drive.google.com/x"}'::jsonb) IS NOT TRUE
+     OR public.evidence_attachment_present('{"file_url": "u/a.pdf"}'::jsonb) IS NOT TRUE
+     OR public.evidence_attachment_present('{"link": "  "}'::jsonb) IS NOT FALSE THEN
+    RAISE EXCEPTION 'STOP: evidence_attachment_present لا تعمل كما يجب بعد ضبط search_path';
   END IF;
-
-  FOREACH f IN ARRAY ARRAY['public.is_admin()', 'public.is_staff()', 'public.current_app_role()',
-                           'public.get_active_school_year()', 'public.list_school_years(boolean)'] LOOP
-    IF has_function_privilege('anon', f, 'EXECUTE') THEN
-      RAISE EXCEPTION 'STOP: anon ما زال ينفّذ %', f;
-    END IF;
-    IF NOT has_function_privilege('authenticated', f, 'EXECUTE') THEN
-      RAISE EXCEPTION 'STOP: authenticated فقد تنفيذ % (تحتاجها سياسات RLS)', f;
-    END IF;
-  END LOOP;
-
-  FOREACH f IN ARRAY ARRAY['public.school_year_allows_read(uuid)', 'public.school_year_allows_write(uuid)',
-                           'public.school_year_is_active(uuid)'] LOOP
-    IF NOT has_function_privilege('authenticated', f, 'EXECUTE') THEN
-      RAISE EXCEPTION 'STOP: authenticated فقد تنفيذ %', f;
-    END IF;
-  END LOOP;
-
-  FOREACH f IN ARRAY ARRAY['public.protect_approved_evidence_attachment()', 'public.set_evidence_created_by()',
-                           'public.enforce_evidence_requirement_approval()', 'public.rls_auto_enable()'] LOOP
-    IF has_function_privilege('anon', f, 'EXECUTE') OR has_function_privilege('authenticated', f, 'EXECUTE') THEN
-      RAISE EXCEPTION 'STOP: دالة Trigger ما زالت قابلة للاستدعاء: %', f;
-    END IF;
-  END LOOP;
 
   SELECT * INTO b FROM _grants_counts;
   IF b.evidences_cnt IS DISTINCT FROM (SELECT count(*) FROM public.evidences)
@@ -212,6 +301,9 @@ COMMIT;
 --   ثم أعد تشغيل: supabase db advisors --linked --type security
 -- ============================================================
 
+-- !!! تحذير: هذا الـ Rollback يعيد صلاحيات anon الخطرة على evidence_requirements (منها DELETE وTRUNCATE)
+-- !!! لا يُشغَّل تلقائياً، ولا يُستخدم إلا في طوارئ مؤكدة وبعد موافقة منفصلة.
+-- !!! عند تعطّل الواجهة: أصلح الـ GRANT المحدد الناقص أولاً، ولا تشغّل الـ Rollback الكامل.
 -- تراجع (يعيد صلاحيات ما قبل هذا الملف حرفياً كما قُرئت من الإنتاج في 2026-10-22):
 /*
 BEGIN;

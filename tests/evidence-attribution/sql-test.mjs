@@ -10,14 +10,22 @@ import { pathToFileURL } from 'node:url';
 import { REPO, U, Y_ACTIVE, buildBaseline, applyMigration as applyIndicatorGuard, makeHelpers } from '../indicators/sql-test.mjs';
 
 export const ATTRIBUTION = 'phase_evidence_attribution_review.sql';
+export const STRICT = 'phase_evidence_attribution_strict_review.sql';
 export const GRANTS = 'phase_security_grants_hardening_review.sql';
 const sqlFile = name => readFileSync(`${REPO}/sql/${name}`, 'utf8');
 export const applyAttribution = db => db.exec(sqlFile(ATTRIBUTION));
+export const applyStrict = db => db.exec(sqlFile(STRICT));
 export const applyGrants = db => db.exec(sqlFile(GRANTS));
 export function rollbackBlock(name) {
-  const m = [...sqlFile(name).matchAll(/\/\*\s*\n(BEGIN;[\s\S]*?COMMIT;)[\s\S]*?\*\//g)];
+  const m = [...sqlFile(name).replace(/\r\n/g, '\n').matchAll(/\/\*\s*\n(BEGIN;[\s\S]*?COMMIT;)[\s\S]*?\*\//g)];
   return m[m.length - 1][1];
 }
+export const ROLLBACK_FILES = {
+  [ATTRIBUTION]: 'phase_evidence_attribution_rollback_review.sql',
+  [STRICT]: 'phase_evidence_attribution_strict_rollback_review.sql',
+  [GRANTS]: 'phase_security_grants_hardening_rollback_review.sql',
+};
+export const rollbackFile = name => sqlFile(ROLLBACK_FILES[name]);
 
 /** Objects/ACLs present on production (read 2026-10-22) that the indicator baseline does not create. */
 export async function buildLiveExtras(db) {
@@ -84,6 +92,15 @@ CREATE POLICY reports_deny_all ON public.reports TO anon, authenticated USING (f
 CREATE POLICY users_deny_all ON public.users TO anon, authenticated USING (false) WITH CHECK (false);
 CREATE POLICY profiles_select ON public.profiles FOR SELECT TO authenticated USING (id = auth.uid() OR public.is_admin());
 CREATE POLICY sy_select ON public.school_years FOR SELECT TO authenticated USING (true);
+COMMENT ON COLUMN public.evidences.file_name IS 'اسم الملف الأصلي كما رفعه المستخدم.';
+-- production policy missing from the indicators baseline
+CREATE POLICY evidence_requirements_update ON public.evidence_requirements FOR UPDATE TO authenticated
+  USING (public.current_app_role() IN ('admin','vice') AND EXISTS (SELECT 1 FROM public.program_indicators pi
+    JOIN public.programs pr ON pr.id = pi.program_id
+    WHERE pi.id = evidence_requirements.indicator_id AND public.school_year_allows_write(pr.school_year_id)))
+  WITH CHECK (public.current_app_role() IN ('admin','vice') AND EXISTS (SELECT 1 FROM public.program_indicators pi
+    JOIN public.programs pr ON pr.id = pi.program_id
+    WHERE pi.id = evidence_requirements.indicator_id AND public.school_year_allows_write(pr.school_year_id)));
 
 -- table ACLs exactly as production relacl
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
@@ -116,11 +133,12 @@ export async function aclSnapshot(db) {
   return JSON.stringify({ rel, fn });
 }
 
-export async function buildAll(db, { attribution = true, grants = true } = {}) {
+export async function buildAll(db, { attribution = true, strict = attribution, grants = true } = {}) {
   await buildBaseline(db);
   await applyIndicatorGuard(db);
   await buildLiveExtras(db);
   if (attribution) await applyAttribution(db);
+  if (strict) await applyStrict(db);
   if (grants) await applyGrants(db);
 }
 
@@ -173,7 +191,31 @@ const insertFile = (person, name = 'report.pdf') => tryQ(
    VALUES ('تقرير التنفيذ', 1, 10, $1, $2, $3, $4, $5, $6) RETURNING id, person, file_name`,
   [R1, `${U.teacher}/x-${Math.random()}.pdf`, name, person, Y_ACTIVE, U.teacher]);
 
-console.log('\n== Teacher name required on new rows (server side) ==');
+console.log('\n== Compatible mode (before strict activation): old UI inputs keep working ==');
+ok('no strict key yet', !(await one(`SELECT 1 x FROM public.platform_migration_history WHERE migration_key = 'phase_evidence_attribution_strict_v1'`)));
+await as('teacher', async () => {
+  let r = await insertFile(null);
+  ok('compat: file without teacher name saved (old UI)', !r.error, JSON.stringify(r));
+  r = await insertLink(null, null, 'https://drive.google.com/file/d/compat1/view');
+  ok('compat: Drive link without name and without label saved (old UI)', !r.error && r.rows[0].file_name === null, JSON.stringify(r));
+  r = await insertLink('  أ.   هند  ', '  ملف   قديم ', 'http://drive.google.com/file/d/compat2/view');
+  ok('compat: http link accepted, spaces normalised in name and label', !r.error && r.rows[0].person === 'أ. هند' && r.rows[0].file_name === 'ملف قديم', JSON.stringify(r));
+  for (const bad of ['javascript:alert(1)', 'data:text/html,x', 'ftp://x.com/a', 'https://drive.google.com/a b']) {
+    r = await insertLink('أ. هند', 'ملف', bad);
+    ok(`compat: unsafe link still refused: ${bad.slice(0, 20)}`, !!r.error && r.error.includes('https://'), JSON.stringify(r));
+  }
+});
+ok('validation function is SECURITY DEFINER with empty search_path',
+  (await one(`SELECT prosecdef AND array_to_string(proconfig, ',') = 'search_path=""' v FROM pg_proc WHERE oid = 'public.validate_evidence_attribution()'::regprocedure`)).v);
+
+console.log('\n== Strict activation (apply twice) ==');
+const strictBefore = await evidenceSnap();
+try { await applyStrict(db); ok('strict activation applied', true); } catch (e) { ok('strict activation applied', false, e.message); }
+try { await applyStrict(db); ok('strict activation re-run is idempotent', true); } catch (e) { ok('strict activation re-run is idempotent', false, e.message); }
+ok('strict key recorded exactly once', (await one(`SELECT count(*)::int c FROM public.platform_migration_history WHERE migration_key = 'phase_evidence_attribution_strict_v1'`)).c === 1);
+ok('strict activation changes no evidence row', strictBefore === await evidenceSnap());
+
+console.log('\n== Teacher name required on new rows (server side, strict) ==');
 await as('teacher', async () => {
   for (const [label, person] of [['NULL', null], ['empty', ''], ['spaces', '   '], ['1 char', 'أ'], ['101 chars', 'س'.repeat(101)]]) {
     const r = await insertFile(person);
@@ -305,8 +347,166 @@ await as('teacher', async () => {
   const r = await insertFile(null);
   ok('after rollback the old behaviour returns (insert without name)', !r.error, JSON.stringify(r));
 });
-ok('migration history cleaned by rollbacks', !(await one(`SELECT 1 x FROM public.platform_migration_history
-  WHERE migration_key IN ('phase_evidence_attribution_v1', 'phase_security_grants_hardening_v1')`)));
+ok('migration history cleaned by rollbacks (incl. strict key)', !(await one(`SELECT 1 x FROM public.platform_migration_history
+  WHERE migration_key IN ('phase_evidence_attribution_v1', 'phase_evidence_attribution_strict_v1', 'phase_security_grants_hardening_v1')`)));
+
+console.log('\n== Standalone rollback files ==');
+for (const name of [ATTRIBUTION, STRICT, GRANTS]) {
+  ok(`${ROLLBACK_FILES[name]} contains the embedded block byte-for-byte`,
+    rollbackFile(name).replace(/\r\n/g, '\n').includes(rollbackBlock(name)));
+}
+ok('security rollback file carries the emergency-only warning',
+  /RE-OPENS dangerous anon privileges/.test(rollbackFile(GRANTS)) && /DELETE and TRUNCATE/.test(rollbackFile(GRANTS))
+  && /Never run automatically/.test(rollbackFile(GRANTS)) && /FIRST fix the specific missing GRANT/.test(rollbackFile(GRANTS)));
+{
+  const code = s => s.replace(/^\s*--.*$/gm, '');
+  ok('no GRANT ALL statement in either migration or rollback',
+    ![ATTRIBUTION, STRICT, GRANTS].some(n => /GRANT\s+ALL/i.test(code(sqlFile(n))) || /GRANT\s+ALL/i.test(code(rollbackFile(n)))));
+}
+
+const comment = async (d, col) => (await d.query(`SELECT col_description('public.evidences'::regclass, attnum) c
+  FROM pg_attribute WHERE attrelid = 'public.evidences'::regclass AND attname = $1`, [col])).rows[0].c;
+const historyCount = async (d, key) => (await d.query(`SELECT count(*)::int c FROM public.platform_migration_history WHERE migration_key = $1`, [key])).rows[0].c;
+const schemaSnap = async d => JSON.stringify({
+  trg: (await d.query(`SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.evidences'::regclass AND NOT tgisinternal ORDER BY 1`)).rows,
+  fn: (await d.query(`SELECT proname FROM pg_proc WHERE pronamespace = 'public'::regnamespace ORDER BY 1`)).rows,
+  person: await comment(d, 'person'), file_name: await comment(d, 'file_name'),
+  cols: (await d.query(`SELECT attname, attnotnull, format_type(atttypid, atttypmod) t FROM pg_attribute
+    WHERE attrelid = 'public.evidences'::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum`)).rows,
+});
+
+console.log('\n== Attribution migration alone: run twice, then its standalone rollback ==');
+{
+  const d = new PGlite();
+  await buildAll(d, { attribution: false, grants: false });
+  const h = makeHelpers(d);
+  await d.exec(`INSERT INTO public.programs (id, name, school_year_id) VALUES (1, 'برنامج', '${Y_ACTIVE}');
+    INSERT INTO public.program_indicators (id, program_id, indicator_text) VALUES (10, 1, 'مؤشر');
+    INSERT INTO public.evidences (id, title, program_id, indicator_id, link, school_year_id, created_by)
+      VALUES (1, 'قديم', 1, 10, 'https://drive.google.com/file/d/OLD/view', '${Y_ACTIVE}', '${U.teacher}');`);
+  const s0 = await schemaSnap(d), a0 = await aclSnapshot(d);
+  const rows0 = JSON.stringify((await d.query(`SELECT * FROM public.evidences ORDER BY id`)).rows);
+  await applyAttribution(d);
+  ok('first run records the key once', await historyCount(d, 'phase_evidence_attribution_v1') === 1);
+  await applyAttribution(d);
+  ok('second run: still exactly one key (ROW_COUNT 0 accepted)', await historyCount(d, 'phase_evidence_attribution_v1') === 1);
+  ok('file_name comment untouched by the migration', await comment(d, 'file_name') === 'اسم الملف الأصلي كما رفعه المستخدم.');
+  ok('no column became NOT NULL', !JSON.parse(await schemaSnap(d)).cols.some(c => ['person', 'file_name', 'link'].includes(c.attname) && c.attnotnull));
+  ok('legacy row unchanged after two runs', rows0 === JSON.stringify((await d.query(`SELECT * FROM public.evidences ORDER BY id`)).rows));
+  await applyStrict(d);
+  await applyStrict(d);
+  ok('strict activation x2: strict key once', await historyCount(d, 'phase_evidence_attribution_strict_v1') === 1);
+  let r = await h.as('teacher', () => h.tryQ(`INSERT INTO public.evidences (id, title, program_id, indicator_id, link, school_year_id)
+    VALUES (3, 'بلا اسم', 1, 10, 'https://drive.google.com/file/d/X/view', '${Y_ACTIVE}')`));
+  ok('strict: insert without teacher name refused', !!r.error && r.error.includes('اسم المعلمة المسؤولة'), JSON.stringify(r));
+  try { await d.exec(rollbackFile(STRICT)); ok('strict standalone rollback runs', true); } catch (e) { ok('strict standalone rollback runs', false, e.message); }
+  ok('strict rollback removes only the strict key', await historyCount(d, 'phase_evidence_attribution_strict_v1') === 0
+    && await historyCount(d, 'phase_evidence_attribution_v1') === 1);
+  r = await h.as('teacher', () => h.tryQ(`INSERT INTO public.evidences (id, title, program_id, indicator_id, link, school_year_id)
+    VALUES (4, 'بلا اسم', 1, 10, 'https://drive.google.com/file/d/Y/view', '${Y_ACTIVE}') RETURNING id`));
+  ok('after strict rollback: compatible mode again (insert without name accepted)', !r.error, JSON.stringify(r));
+  try { await d.exec(rollbackFile(STRICT)); ok('strict rollback is re-runnable', true); } catch (e) { ok('strict rollback is re-runnable', false, e.message); }
+  await applyStrict(d);
+  await h.as('teacher', () => h.tryQ(`INSERT INTO public.evidences (id, title, program_id, indicator_id, link, file_name, person, school_year_id)
+    VALUES (2, 'جديد', 1, 10, 'https://drive.google.com/file/d/NEW/view', 'ملف جديد', 'معلمة تجريبية', '${Y_ACTIVE}')`));
+  try { await d.exec(rollbackFile(ATTRIBUTION)); ok('attribution standalone rollback runs', true); } catch (e) { ok('attribution standalone rollback runs', false, e.message); }
+  ok('full rollback also removes the strict key', await historyCount(d, 'phase_evidence_attribution_strict_v1') === 0);
+  ok('rollback restores triggers/functions/comments/columns exactly', s0 === await schemaSnap(d), await schemaSnap(d));
+  ok('rollback leaves ACLs untouched', a0 === await aclSnapshot(d));
+  ok('rollback drops no column and keeps data added after the migration',
+    JSON.stringify((await d.query(`SELECT person, file_name, link FROM public.evidences WHERE id = 2`)).rows[0])
+      === JSON.stringify({ person: 'معلمة تجريبية', file_name: 'ملف جديد', link: 'https://drive.google.com/file/d/NEW/view' }));
+  ok('rollback keeps the legacy row unchanged', rows0 === JSON.stringify((await d.query(`SELECT * FROM public.evidences WHERE id = 1`)).rows));
+  ok('rows inserted in compatible mode stay as they were', (await d.query(`SELECT person FROM public.evidences WHERE id = 4`)).rows[0]?.person === null);
+  ok('rollback removes the history key', await historyCount(d, 'phase_evidence_attribution_v1') === 0);
+  try { await d.exec(rollbackFile(ATTRIBUTION)); ok('attribution rollback is re-runnable', true); } catch (e) { ok('attribution rollback is re-runnable', false, e.message); }
+}
+
+console.log('\n== Grants migration alone: run twice, real triggers, RLS helpers, then its standalone rollback ==');
+{
+  const d = new PGlite();
+  await buildAll(d, { attribution: false, grants: false });
+  const h = makeHelpers(d);
+  const RQ = '80000000-0000-0000-0000-000000000001';
+  await d.exec(`INSERT INTO public.programs (id, name, school_year_id) VALUES (1, 'برنامج', '${Y_ACTIVE}');
+    INSERT INTO public.program_indicators (id, program_id, indicator_text) VALUES (10, 1, 'مؤشر'), (11, 1, 'مؤشر آخر');
+    INSERT INTO public.evidence_requirements (id, indicator_id, name) VALUES ('${RQ}', 10, 'شاهد');`);
+  const a0 = await aclSnapshot(d);
+  await applyGrants(d);
+  ok('first run records the key once', await historyCount(d, 'phase_security_grants_hardening_v1') === 1);
+  await applyGrants(d);
+  ok('second run: still exactly one key', await historyCount(d, 'phase_security_grants_hardening_v1') === 1);
+  const priv = async (role, table, p) => (await d.query(`SELECT has_table_privilege($1, $2, $3) v`, [role, `public.${table}`, p])).rows[0].v;
+  const fpriv = async (role, f) => (await d.query(`SELECT has_function_privilege($1, $2, 'EXECUTE') v`, [role, f])).rows[0].v;
+  const ALL14 = ['evidences', 'evidence_requirements', 'programs', 'program_indicators', 'initiatives', 'school_years', 'settings',
+    'teacher_followups', 'tasks', 'kpis', 'profiles', 'reports', 'users', 'platform_migration_history'];
+  const P8 = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN'];
+  let leaks = [];
+  for (const t of ALL14) for (const p of P8) for (const r of ['public', 'anon']) if (await priv(r, t, p)) leaks.push(`${r}:${t}:${p}`);
+  ok('PUBLIC and anon hold none of the 8 privileges on all 14 tables', leaks.length === 0, leaks.join(','));
+  leaks = [];
+  for (const t of ALL14) for (const p of ['TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN']) if (await priv('authenticated', t, p)) leaks.push(`${t}:${p}`);
+  ok('authenticated holds no TRUNCATE/REFERENCES/TRIGGER/MAINTAIN on all 14 tables', leaks.length === 0, leaks.join(','));
+  const TRIG = ['enforce_evidence_requirement_approval()', 'enforce_evidence_requirement_indicator_match()',
+    'prevent_delete_requirement_with_approved_attachment()', 'protect_approved_evidence_attachment()', 'set_evidence_created_by()',
+    'set_evidence_requirement_created_by()', 'set_evidence_requirements_updated_at()', 'set_profiles_updated_at()', 'rls_auto_enable()',
+    'evidence_attachment_present(jsonb)'].map(f => 'public.' + f);
+  leaks = [];
+  for (const f of TRIG) for (const r of ['public', 'anon', 'authenticated']) if (await fpriv(r, f)) leaks.push(`${r}:${f}`);
+  ok('all 10 trigger/helper functions: no EXECUTE for PUBLIC/anon/authenticated', leaks.length === 0, leaks.join(','));
+  ok('owner postgres and service_role still execute all 10', (await Promise.all(TRIG.map(f => fpriv('postgres', f)))).every(Boolean)
+    && (await Promise.all(TRIG.map(f => fpriv('service_role', f)))).every(Boolean));
+
+  await h.as('teacher', async () => {
+    let r = await h.tryQ(`INSERT INTO public.evidences (title, program_id, indicator_id, requirement_id, link, school_year_id)
+      VALUES ('شاهد', 1, 10, $1, 'https://drive.google.com/file/d/A/view', $2) RETURNING id, created_by`, [RQ, Y_ACTIVE]);
+    ok('trigger set_evidence_created_by fires for teacher INSERT', !r.error && r.rows[0]?.created_by === U.teacher, JSON.stringify(r));
+    r = await h.tryQ(`INSERT INTO public.evidences (title, program_id, indicator_id, requirement_id, link, school_year_id)
+      VALUES ('شاهد', 1, 11, $1, 'https://drive.google.com/file/d/B/view', $2)`, [RQ, Y_ACTIVE]);
+    ok('trigger enforce_evidence_requirement_indicator_match rejects a mismatched indicator', !!r.error && /indicator_id/.test(r.error), JSON.stringify(r));
+    r = await h.tryQ(`INSERT INTO public.evidences (title, program_id, indicator_id, school_year_id) VALUES ('بلا مرفق', 1, 10, $1) RETURNING id`, [Y_ACTIVE]);
+    ok('teacher inserts a row without attachment (for the next check)', !r.error, JSON.stringify(r));
+  });
+  await h.as('admin', async () => {
+    const withAtt = (await d.query(`SELECT id FROM public.evidences WHERE link LIKE '%/A/%'`)).rows[0].id;
+    const noAtt = (await d.query(`SELECT id FROM public.evidences WHERE title = 'بلا مرفق'`)).rows[0].id;
+    let r = await h.tryQ(`UPDATE public.evidences SET is_approved = true WHERE id = $1 RETURNING is_approved, approved_by`, [withAtt]);
+    ok('trigger protect_approved_evidence_attachment + evidence_attachment_present (search_path="") approve with attachment',
+      !r.error && r.rows[0]?.is_approved === true && r.rows[0].approved_by === U.admin, JSON.stringify(r));
+    r = await h.tryQ(`UPDATE public.evidences SET is_approved = true WHERE id = $1`, [noAtt]);
+    ok('evidence_attachment_present returns false inside the trigger (approval without attachment refused)',
+      !!r.error && r.error.includes('بدون ملف أو رابط'), JSON.stringify(r));
+    r = await h.tryQ(`DELETE FROM public.evidence_requirements WHERE id = $1`, [RQ]);
+    ok('trigger prevent_delete_requirement_with_approved_attachment fires', !!r.error && r.error.includes('ألغِ اعتماد'), JSON.stringify(r));
+    r = await h.tryQ(`INSERT INTO public.evidence_requirements (indicator_id, name) VALUES (11, 'جديد') RETURNING id, created_by, updated_at`);
+    ok('trigger set_evidence_requirement_created_by fires', !r.error && r.rows[0]?.created_by === U.admin, JSON.stringify(r));
+    const before = r.rows[0].updated_at;
+    await d.query(`SELECT pg_sleep(0.01)`);
+    r = await h.tryQ(`UPDATE public.evidence_requirements SET name = 'جديد ٢' WHERE id = $1 RETURNING updated_at`, [r.rows[0].id]);
+    ok('trigger set_evidence_requirements_updated_at fires on leader UPDATE',
+      !r.error && r.rows.length === 1 && new Date(r.rows[0].updated_at).getTime() > new Date(before).getTime(), JSON.stringify(r));
+    r = await h.tryQ(`UPDATE public.evidences SET is_approved = false WHERE id = $1 RETURNING is_approved`, [withAtt]);
+    ok('leader un-approves', !r.error && r.rows[0]?.is_approved === false, JSON.stringify(r));
+  });
+  await h.as('vice', async () => {
+    const r = await h.tryQ(`INSERT INTO public.evidence_requirements (indicator_id, name, is_approved) VALUES (11, 'x', true)`);
+    ok('trigger enforce_evidence_requirement_approval blocks non-leader approval', !!r.error && r.error.includes('فقط القائدة'), JSON.stringify(r));
+  });
+  for (const role of ['admin', 'teacher']) {
+    await h.as(role, async () => {
+      const r = await h.tryQ(`SELECT public.is_admin() a, public.is_staff() s, public.current_app_role() c,
+        public.school_year_allows_read('${Y_ACTIVE}') rd, public.school_year_allows_write('${Y_ACTIVE}') wr,
+        public.school_year_is_active('${Y_ACTIVE}') ac,
+        (SELECT count(*)::int FROM public.get_active_school_year()) g, (SELECT count(*)::int FROM public.list_school_years(true)) l`);
+      const x = r.rows?.[0];
+      ok(`${role}: the 8 RLS/UI helper functions run as authenticated`, !r.error && x.c === role && x.a === (role === 'admin')
+        && x.s === (role === 'admin') && x.rd && x.wr && x.ac && x.g === 1 && x.l >= 1, JSON.stringify(r));
+    });
+  }
+  try { await d.exec(rollbackFile(GRANTS)); ok('grants standalone rollback runs', true); } catch (e) { ok('grants standalone rollback runs', false, e.message); }
+  ok('grants standalone rollback restores ACLs + function config exactly', a0 === await aclSnapshot(d));
+  ok('grants rollback removes the history key', await historyCount(d, 'phase_security_grants_hardening_v1') === 0);
+}
 
 console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
