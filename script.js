@@ -140,7 +140,7 @@
 
 'use strict';
 
-console.log('[script.js] BUILD=20261022-evidence-teacher-links');
+console.log('[script.js] BUILD=20261022-reports-evidence-jump');
 
 /* ─────────────────────────────────────────────────────────────
    §0  SUPABASE
@@ -3711,10 +3711,8 @@ function viewProgramDetail(id) {
 /* ── الانتقال إلى شاهد داخل تفاصيل البرنامج ── */
 const EVIDENCE_TARGET_RE = /^evidence-(req-)?[A-Za-z0-9-]{1,64}$/;
 
-function evidenceJumpButtonHtml(targetId, label, extra = '') {
-  return `<button type="button" class="evidence-jump" data-evidence-target="${esc(targetId)}">
-    <span class="evidence-jump-name">${esc(label)}</span>${extra}
-  </button>`;
+function evidenceIndexItemHtml(label, extra = '') {
+  return `<span class="evidence-index-item"><span class="evidence-index-name">${esc(label)}</span>${extra}</span>`;
 }
 
 function buildEvidenceIndexHtml(inds, orphansByIndicator, generalEvs) {
@@ -3722,12 +3720,12 @@ function buildEvidenceIndexHtml(inds, orphansByIndicator, generalEvs) {
   inds.forEach(ind => {
     const items = [];
     getRequirementsForIndicator(ind.id).forEach(req => {
-      items.push(evidenceJumpButtonHtml(`evidence-req-${req.id}`, req.name || 'شاهد',
-        `<span class="evidence-jump-pct">${calcRequirementProgress(req)}٪</span>`));
+      items.push(evidenceIndexItemHtml(req.name || 'شاهد',
+        `<span class="evidence-index-pct">${calcRequirementProgress(req)}٪</span>`));
     });
     (orphansByIndicator.get(String(ind.id)) || []).forEach(ev => {
-      items.push(evidenceJumpButtonHtml(`evidence-${ev.id}`, normalizeSpaces(ev.title) || attachmentDisplayName(ev),
-        '<span class="evidence-jump-tag">شاهد آخر</span>'));
+      items.push(evidenceIndexItemHtml(normalizeSpaces(ev.title) || attachmentDisplayName(ev),
+        '<span class="evidence-index-tag">شاهد آخر</span>'));
     });
     if (items.length) {
       groups.push(`<div class="evidence-index-group">
@@ -3740,15 +3738,14 @@ function buildEvidenceIndexHtml(inds, orphansByIndicator, generalEvs) {
     groups.push(`<div class="evidence-index-group">
       <div class="evidence-index-group-title">شواهد عامة للبرنامج</div>
       <div class="evidence-index-items">${generalEvs.map(ev =>
-        evidenceJumpButtonHtml(`evidence-${ev.id}`, normalizeSpaces(ev.title) || attachmentDisplayName(ev))).join('')}</div>
+        evidenceIndexItemHtml(normalizeSpaces(ev.title) || attachmentDisplayName(ev))).join('')}</div>
     </div>`);
   }
   if (!groups.length) return '';
-  return `<nav class="detail-section evidence-index" aria-label="الانتقال إلى شاهد في هذا البرنامج">
+  return `<div class="detail-section evidence-index">
     <h4>🔎 شواهد البرنامج</h4>
-    <div class="evidence-index-hint">اضغطي على اسم الشاهد للانتقال إلى تفاصيله داخل البرنامج. فتح الملف يتم من زر «فتح».</div>
     ${groups.join('')}
-  </nav>`;
+  </div>`;
 }
 
 function setEvidenceHash(targetId) {
@@ -3810,14 +3807,71 @@ function openEvidenceFromHash() {
   return jumpToEvidence(targetId, { updateHash: false });
 }
 
-document.addEventListener('click', e => {
-  const btn = e.target?.closest?.('[data-evidence-target]');
-  if (!btn) return;
-  e.preventDefault();
-  if (!jumpToEvidence(btn.getAttribute('data-evidence-target'))) {
-    showToast('تعذّر الوصول إلى الشاهد داخل هذا البرنامج', 'error');
+/** بطاقة المرفق نفسه فقط (evidence-{id}) داخل تفاصيل البرنامج؛ لا بديل حتى لا يُفتح شاهد آخر */
+function evidenceJumpTargetFor(ev) {
+  const body = document.getElementById('program-detail-body');
+  if (!ev || !body) return null;
+  const id = `evidence-${ev.id}`;
+  const el = document.getElementById(id);
+  return el && body.contains(el) ? id : null;
+}
+
+function waitForEvidenceTarget(ev, timeoutMs = 2000) {
+  const started = Date.now();
+  return new Promise(resolve => {
+    const tick = () => {
+      const id = evidenceJumpTargetFor(ev);
+      if (id || Date.now() - started >= timeoutMs) resolve(id);
+      else setTimeout(tick, 50);
+    };
+    tick();
+  });
+}
+
+/** من جدول «التقارير والشواهد»: قسم البرامج ← بطاقة البرنامج ← تفاصيله ← موضع الشاهد */
+async function goToEvidenceInProgram(evId) {
+  const ev = evidencesCache.find(e => String(e.id) === String(evId));
+  if (!ev) {
+    showToast('تعذّر العثور على هذا الشاهد؛ ربما حُذف. حدّثي الصفحة', 'error');
+    return false;
   }
+  const prog = ev.program_id != null
+    ? programsCache.find(p => String(p.id) === String(ev.program_id))
+    : null;
+  if (!prog) {
+    showToast('تعذّر العثور على البرنامج المرتبط بهذا الشاهد', 'error');
+    return false;
+  }
+  navTo('programs', document.querySelector('.nav-item[data-section="programs"]'));
+  let card = document.getElementById(`pcard-${prog.id}`);
+  if (!card) {
+    const fs = document.getElementById('prog-filter-status');
+    const sq = document.getElementById('prog-search');
+    if (fs) fs.value = 'all';
+    if (sq) sq.value = '';
+    renderPrograms();
+    card = document.getElementById(`pcard-${prog.id}`);
+  }
+  const more = card?.querySelector('details.program-card-more');
+  if (more && !more.open) more.open = true;
+  document.getElementById('program-detail-body')?.replaceChildren();
+  viewProgramDetail(prog.id);
+  const targetId = await waitForEvidenceTarget(ev);
+  if (!targetId || !jumpToEvidence(targetId)) {
+    showToast('فُتح البرنامج، لكن تعذّر تحديد موضع الشاهد داخله', 'warning');
+    return false;
+  }
+  return true;
+}
+
+document.addEventListener('click', e => {
+  const goto = e.target?.closest?.('[data-evidence-goto]');
+  if (!goto) return;
+  e.preventDefault();
+  void goToEvidenceInProgram(goto.getAttribute('data-evidence-goto'));
 });
+
+window.goToEvidenceInProgram = goToEvidenceInProgram;
 
 window.jumpToEvidence = jumpToEvidence;
 
@@ -5253,7 +5307,12 @@ function renderReports() {
           : '—';
         const approved = evidenceHasAttachment(r) && isAttachmentApproved(r);
         const statusLabel = !evidenceHasAttachment(r) ? '—' : (approved ? 'معتمد' : 'قيد المراجعة');
-        return`<tr><td>${i+1}</td><td style="font-weight:600">${esc(title)}${evidenceNoteHtml(evidenceNoteText(r))}</td>
+        const hasProgram = r.program_id != null && programsCache.some(p => String(p.id) === String(r.program_id));
+        const titleHtml = hasProgram
+          ? `<button type="button" class="evidence-title-link" data-evidence-goto="${esc(r.id)}"
+              aria-label="${esc(`الانتقال إلى الشاهد «${title}» داخل برنامج «${pName}»`)}">${esc(title)}</button>`
+          : esc(title);
+        return`<tr><td>${i+1}</td><td style="font-weight:600">${titleHtml}${evidenceNoteHtml(evidenceNoteText(r))}</td>
           <td><span class="badge badge-info">${TI[typeLabel]||getEvIcon(typeLabel||r.file_name)} ${esc(typeLabel||'—')}</span></td>
           <td>${esc(pName)}</td><td>${esc(evidenceTeacherName(r))}</td><td>${esc(fmtDate(r.date || r.created_at))}</td>
           <td>${esc(statusLabel)}</td>

@@ -1318,15 +1318,14 @@ body,
 /* ── Program detail: evidence index + jump highlight ── */
 .evidence-index{background:#f7f9fc;border:1px solid var(--border-light);border-radius:12px;padding:12px 14px}
 .evidence-index h4{border-bottom:0;margin-bottom:4px;padding-bottom:0}
-.evidence-index-hint{font-size:11.5px;color:var(--text-muted);margin-bottom:10px}
+.evidence-index h4+.evidence-index-group{margin-top:8px}
 .evidence-index-group+.evidence-index-group{margin-top:10px}
 .evidence-index-group-title{font-size:12px;font-weight:700;color:var(--text-muted);margin-bottom:6px;overflow-wrap:anywhere}
 .evidence-index-items{display:flex;flex-wrap:wrap;gap:6px}
-.evidence-jump{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:6px 12px;font-family:inherit;font-size:12.5px;font-weight:700;text-align:start;cursor:pointer;transition:filter var(--transition)}
-.evidence-jump:hover{filter:brightness(1.08)}
-.evidence-jump-name{overflow-wrap:anywhere;text-decoration:underline;text-underline-offset:3px}
-.evidence-jump-pct,.evidence-jump-tag{flex-shrink:0;font-size:11px;font-weight:800;color:#fff;background:rgba(255,255,255,.22);border-radius:999px;padding:1px 7px}
-.evidence-jump:focus-visible,.program-card-more>summary:focus-visible,.indicator-detail-summary:focus-visible,.detail-section-summary:focus-visible{outline:3px solid #7C83FD;outline-offset:2px}
+.evidence-index-item{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:5px 11px;border:1px solid var(--border-light);border-radius:999px;background:#fff;color:var(--text-main);font-size:12.5px;font-weight:600}
+.evidence-index-name{overflow-wrap:anywhere}
+.evidence-index-pct,.evidence-index-tag{flex-shrink:0;font-size:11px;font-weight:800;color:var(--text-muted)}
+.program-card-more>summary:focus-visible,.indicator-detail-summary:focus-visible,.detail-section-summary:focus-visible{outline:3px solid #7C83FD;outline-offset:2px}
 .indicator-detail-summary{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-weight:700;cursor:pointer;margin-bottom:8px;list-style-position:inside}
 .indicator-detail-text{flex:1;min-width:0;overflow-wrap:anywhere}
 .indicator-detail-tools{display:flex;justify-content:flex-end;margin-bottom:8px}
@@ -1356,3 +1355,6 @@ body,
 .ev-teacher.is-unset strong{color:var(--text-muted);font-weight:600}
 a.evidence-view-btn{display:inline-flex;align-items:center;text-decoration:none;background:linear-gradient(90deg,#2F5F8F,#6FA8DC);color:#fff;border-radius:14px}
 a.evidence-view-btn:focus-visible{outline:3px solid #7C83FD;outline-offset:2px}
+.data-table button.evidence-title-link{background:none!important;color:var(--primary-dark)!important;border:0!important;border-radius:4px!important;padding:0;font:inherit;font-weight:700;text-align:start;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.data-table button.evidence-title-link:hover{color:#2F5F8F!important}
+.data-table button.evidence-title-link:focus-visible{outline:3px solid #7C83FD;outline-offset:2px}

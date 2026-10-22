@@ -209,27 +209,32 @@ ok('original Drive URL unchanged in DB', saved?.link === NEW_URL, saved?.link);
   ok('teacher name visible on the card', item?.querySelector('.ev-teacher')?.textContent.includes('أ. سارة العتيبي'));
 }
 
-console.log('\n== 5–6. Clicking an evidence name jumps inside the program; open button is separate ==');
+console.log('\n== 5–6. «شواهد البرنامج» list is plain text; jump helper; open button is separate ==');
 {
   const body = $('program-detail-body');
+  const index = body.querySelector('.evidence-index');
+  ok('«شواهد البرنامج» section still lists the names', !!index && index.textContent.includes('تقرير التنفيذ') && index.textContent.includes('صور النشاط'));
+  ok('names in «شواهد البرنامج» are not links/buttons and carry no jump attributes',
+    !index.querySelector('a, button, [role="button"], [tabindex], [onclick], [data-evidence-target], [data-evidence-goto]'));
+  ok('the «اضغطي على اسم الشاهد…» hint is gone', !index.textContent.includes('اضغطي على اسم الشاهد'));
+  ok('the section is not a <nav> landmark any more', index.tagName === 'DIV');
+  opened.length = 0;
+  index.querySelector('.evidence-index-name').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  ok('clicking a name in the list does nothing (no jump, no hash, no link)', !body.querySelector('.evidence-highlight') && w.location.hash === '' && opened.length === 0);
+
   const box = $('indicator-section-10');
   box.open = false;
-  const jump = body.querySelector(`.evidence-jump[data-evidence-target="evidence-req-${R.report}"]`);
-  ok('evidence index lists the requirement name as a button', !!jump && jump.tagName === 'BUTTON' && jump.textContent.includes('تقرير التنفيذ'));
-  opened.length = 0;
-  jump.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
-  const target = $(`evidence-req-${R.report}`);
+  ok('jump helper: reaches the attachment by evidence id', w.eval(`jumpToEvidence('evidence-${saved.id}')`) === true);
+  const target = $(`evidence-${saved.id}`);
   ok('collapsed indicator section opened', box.open === true);
-  ok('scrolled smoothly to the evidence in this program', w.__scrolled?.id === `evidence-req-${R.report}` && w.__scrolled?.opts?.behavior === 'smooth', JSON.stringify(w.__scrolled));
+  ok('scrolled smoothly to the evidence in this program', w.__scrolled?.id === `evidence-${saved.id}` && w.__scrolled?.opts?.behavior === 'smooth', JSON.stringify(w.__scrolled));
   ok('evidence highlighted', target.classList.contains('evidence-highlight'));
-  ok('hash updated without leaving the page', w.location.hash === `#evidence-req-${R.report}` && w.location.pathname === '/platform/', w.location.href);
-  ok('clicking the name opened no external link', opened.length === 0);
-  ok('name button has no href / onclick to Drive', !jump.getAttribute('href') && !jump.getAttribute('onclick'));
+  ok('hash updated without leaving the page', w.location.hash === `#evidence-${saved.id}` && w.location.pathname === '/platform/', w.location.href);
+  ok('the jump opened no external link', opened.length === 0);
 
   const general = $('evidence-general-section');
   general.open = false;
-  body.querySelector('.evidence-jump[data-evidence-target="evidence-902"]').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
-  ok('general evidence: jumps into «شواهد عامة للبرنامج» (opened)', general.open === true && w.__scrolled?.id === 'evidence-902');
+  ok('general evidence: jumps into «شواهد عامة للبرنامج» (opened)', w.eval(`jumpToEvidence('evidence-902')`) === true && general.open === true && w.__scrolled?.id === 'evidence-902');
 
   const fileBtn = $('evidence-901').querySelector('button.evidence-view-btn');
   fileBtn.click();
@@ -361,6 +366,129 @@ console.log('\n== Deep link: #evidence-… opens the right program after login =
   const done = w.eval('openEvidenceFromHash()');
   ok('deep link opens program details and jumps', done === true && !$('program-detail-modal').classList.contains('hidden')
     && $(`evidence-req-${R.photos}`).classList.contains('evidence-highlight'));
+  w.eval(`closeModal('program-detail-modal')`);
+}
+
+console.log('\n== Reports table (leader): clicking an evidence title jumps to it inside its program ==');
+{
+  await freshLogin('admin');
+  const waitFor = async (cond, ms = 3000) => {
+    const t0 = Date.now();
+    while (!cond()) { if (Date.now() - t0 > ms) return false; await new Promise(r => setTimeout(r, 20)); }
+    return true;
+  };
+  const toReports = () => { w.eval(`closeModal('program-detail-modal'); navTo('reports', null); renderReports();`); };
+  const titleBtn = id => $('reports-tbody').querySelector(`button.evidence-title-link[data-evidence-goto="${id}"]`);
+  const ancestorsOpen = el => { for (let n = el?.parentElement; n; n = n.parentElement) if (n.tagName === 'DETAILS' && !n.open) return false; return !!el; };
+  const cases = [
+    ['requirement + indicator (new Drive link)', saved.id, `evidence-${saved.id}`, '#indicator-section-10', `[data-req-id="${R.report}"]`],
+    ['legacy Drive link (no teacher / display name)', 900, 'evidence-900', '#indicator-section-10', `[data-req-id="${R.report}"]`],
+    ['legacy Storage file', 901, 'evidence-901', '#indicator-section-11', `[data-req-id="${R.photos}"]`],
+    ['general program evidence (no indicator, no title)', 902, 'evidence-902', '#evidence-general-section', null],
+  ];
+  for (const [label, id, target, section, reqSel] of cases) {
+    toReports();
+    ok(`${label}: still on «التقارير والشواهد» before the click`, $('section-reports').classList.contains('active'));
+    const btn = titleBtn(id);
+    ok(`${label}: title is a focusable <button type=button> with an Arabic aria-label`,
+      btn?.tagName === 'BUTTON' && btn.type === 'button' && btn.tabIndex >= 0
+      && /^الانتقال إلى الشاهد «.+» داخل برنامج «برنامج القراءة»$/.test(btn.getAttribute('aria-label') || ''), btn?.outerHTML);
+    btn.focus();
+    ok(`${label}: keyboard focus lands on the title (Enter/Space activate a native button)`, w.document.activeElement === btn);
+    opened.length = 0;
+    btn.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+    const arrived = await waitFor(() => $(target)?.classList.contains('evidence-highlight'));
+    ok(`${label}: moved to «برامج الخطة»`, $('section-programs').classList.contains('active') && !$('section-reports').classList.contains('active'));
+    ok(`${label}: program card found and expanded`, $('pcard-1')?.querySelector('details.program-card-more')?.open === true);
+    ok(`${label}: the correct program details are open`, !$('program-detail-modal').classList.contains('hidden') && $('detail-modal-title').textContent === 'برنامج القراءة');
+    ok(`${label}: reached and highlighted ${target}`, arrived && w.__scrolled?.id === target, JSON.stringify(w.__scrolled));
+    ok(`${label}: the highlighted element carries the same evidence id`, $(target)?.getAttribute('data-ev-id') === String(id));
+    ok(`${label}: only this evidence is highlighted`, $('program-detail-body').querySelectorAll('.evidence-highlight').length === 1);
+    ok(`${label}: inside the right section (${section})`, !!$(target)?.closest(section));
+    if (reqSel) ok(`${label}: inside its own requirement row`, !!$(target)?.closest(`.req-row${reqSel}`));
+    ok(`${label}: every section around it is open`, ancestorsOpen($(target)));
+    ok(`${label}: hash updated to #${target}`, w.location.hash === `#${target}`);
+    ok(`${label}: clicking the title opened no file or Drive link`, opened.length === 0);
+  }
+
+  console.log('\n-- async render + collapsed sections --');
+  const realView = w.viewProgramDetail;
+  w.viewProgramDetail = pid => setTimeout(() => {
+    realView(pid);
+    $('program-detail-body').querySelectorAll('details').forEach(d => { d.open = false; });
+  }, 400);
+  toReports();
+  const t0 = Date.now();
+  titleBtn(901).dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  const arrived = await waitFor(() => $('evidence-901')?.classList.contains('evidence-highlight'));
+  ok('waits for a delayed render (400 ms) before jumping', arrived && Date.now() - t0 >= 400);
+  ok('re-opens the collapsed indicator section around the evidence', ancestorsOpen($('evidence-901')));
+  ok('no stale element from a previous program was used', $('detail-modal-title').textContent === 'برنامج القراءة');
+
+  console.log('\n-- fallback when the element never appears --');
+  w.viewProgramDetail = pid => { realView(pid); $('evidence-902')?.remove(); };
+  toReports();
+  const res = await w.goToEvidenceInProgram(902);
+  ok('missing element: returns false without throwing', res === false);
+  ok('missing element: program stays open + clear Arabic warning', !$('program-detail-modal').classList.contains('hidden')
+    && toast() === 'فُتح البرنامج، لكن تعذّر تحديد موضع الشاهد داخله', toast());
+  ok('missing element: no other evidence is highlighted', !$('program-detail-body').querySelector('.evidence-highlight'));
+  w.viewProgramDetail = pid => { realView(pid); $('evidence-900')?.remove(); };
+  toReports();
+  ok('missing attachment with a requirement: does not fall back to the requirement row or a sibling',
+    await w.goToEvidenceInProgram(900) === false && !$('program-detail-body').querySelector('.evidence-highlight')
+    && !w.location.hash.startsWith('#evidence-'));
+  w.viewProgramDetail = realView;
+  toReports();
+  const stale = titleBtn(901);
+  w.eval(`evidencesCache = evidencesCache.filter(e => String(e.id) !== '901')`);
+  stale.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  await waitFor(() => toast().includes('حُذف'), 1000);
+  ok('deleted evidence (stale row): clear message, stays on reports, nothing opened',
+    toast() === 'تعذّر العثور على هذا الشاهد؛ ربما حُذف. حدّثي الصفحة' && $('section-reports').classList.contains('active')
+    && $('program-detail-modal').classList.contains('hidden'), toast());
+  await freshLogin('admin');
+  w.eval(`evidencesCache.push(mapEvidenceRow({ id: 99901, title: 'بلا برنامج', program_id: null, school_year_id: '${Y_ACTIVE}', link: 'https://drive.google.com/file/d/np/view', created_at: '2026-01-01' }))`);
+  toReports();
+  ok('evidence without a program: title stays plain text (no button)', !titleBtn(99901) && $('reports-tbody').textContent.includes('بلا برنامج'));
+  ok('evidence without a program: direct call fails safely with a message', await w.goToEvidenceInProgram(99901) === false
+    && toast() === 'تعذّر العثور على البرنامج المرتبط بهذا الشاهد', toast());
+  w.eval(`evidencesCache = evidencesCache.filter(e => String(e.id) !== '99901')`);
+
+  console.log('\n-- keyboard: Enter on the focused title --');
+  toReports();
+  const kb = titleBtn(saved.id);
+  kb.focus();
+  const enter = new w.KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true });
+  kb.dispatchEvent(enter);
+  ok('Enter keydown is not swallowed (native <button> activation stays intact)', enter.defaultPrevented === false && w.document.activeElement === kb);
+  kb.click();
+  ok('keyboard activation (Enter/Space → click on a native button) reaches the evidence',
+    await waitFor(() => $(`evidence-${saved.id}`)?.classList.contains('evidence-highlight')));
+
+  console.log('\n-- only the title navigates; «فتح» stays independent --');
+  toReports();
+  const row = titleBtn(900).closest('tr');
+  ok('exactly one navigation element per row, inside the «العنوان» cell', row.querySelectorAll('[data-evidence-goto]').length === 1
+    && row.cells[1].contains(titleBtn(900)));
+  for (const [cellName, idx] of [['type', 2], ['program', 3]]) {
+    row.cells[idx].dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+    ok(`clicking the ${cellName} cell does not navigate`, $('section-reports').classList.contains('active') && $('program-detail-modal').classList.contains('hidden'));
+  }
+  const row900 = titleBtn(900).closest('tr');
+  const driveA = row900.querySelector('a.evidence-view-btn');
+  ok('Drive «فتح» is a separate link to the original URL, new tab, noopener noreferrer',
+    driveA?.getAttribute('href') === LEGACY_LINK && driveA.getAttribute('target') === '_blank' && driveA.getAttribute('rel') === 'noopener noreferrer'
+    && !driveA.hasAttribute('data-evidence-goto') && !driveA.closest('[data-evidence-goto]'));
+  opened.length = 0;
+  const fileBtn = titleBtn(901).closest('tr').querySelector('button.evidence-view-btn');
+  fileBtn.click();
+  await waitFor(() => opened.length > 0, 1000);
+  ok('Storage «فتح» opens the signed URL in a new tab and does not navigate', opened.at(-1)?.url.includes('/object/sign/evidences/')
+    && opened.at(-1)?.features === 'noopener,noreferrer' && $('section-reports').classList.contains('active')
+    && $('program-detail-modal').classList.contains('hidden'));
+  ok('the title and the «فتح» button are different elements in different cells',
+    titleBtn(901).closest('td') !== fileBtn.closest('td'));
   w.eval(`closeModal('program-detail-modal')`);
 }
 
