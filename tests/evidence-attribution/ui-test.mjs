@@ -209,18 +209,26 @@ ok('original Drive URL unchanged in DB', saved?.link === NEW_URL, saved?.link);
   ok('teacher name visible on the card', item?.querySelector('.ev-teacher')?.textContent.includes('أ. سارة العتيبي'));
 }
 
-console.log('\n== 5–6. «شواهد البرنامج» list is plain text; jump helper; open button is separate ==');
+console.log('\n== 5–6. duplicate «شواهد البرنامج» section removed; evidence stays in place; jump helper ==');
 {
   const body = $('program-detail-body');
-  const index = body.querySelector('.evidence-index');
-  ok('«شواهد البرنامج» section still lists the names', !!index && index.textContent.includes('تقرير التنفيذ') && index.textContent.includes('صور النشاط'));
-  ok('names in «شواهد البرنامج» are not links/buttons and carry no jump attributes',
-    !index.querySelector('a, button, [role="button"], [tabindex], [onclick], [data-evidence-target], [data-evidence-goto]'));
-  ok('the «اضغطي على اسم الشاهد…» hint is gone', !index.textContent.includes('اضغطي على اسم الشاهد'));
-  ok('the section is not a <nav> landmark any more', index.tagName === 'DIV');
-  opened.length = 0;
-  index.querySelector('.evidence-index-name').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
-  ok('clicking a name in the list does nothing (no jump, no hash, no link)', !body.querySelector('.evidence-highlight') && w.location.hash === '' && opened.length === 0);
+  ok('no «شواهد البرنامج» section, heading or chips in the program window',
+    !body.querySelector('.evidence-index, .evidence-index-group, .evidence-index-item')
+    && ![...body.querySelectorAll('h4')].some(h => h.textContent.includes('شواهد البرنامج'))
+    && !body.innerHTML.includes('🔎'));
+  ok('section order: program data → indicators → general evidence', (() => {
+    const heads = [...body.querySelectorAll(':scope > .detail-section > h4, :scope > details.detail-section h4')].map(h => h.textContent.trim());
+    return heads.length === 3 && heads[0].includes('بيانات البرنامج') && heads[1].includes('المؤشرات والشواهد المطلوبة') && heads[2].includes('شواهد عامة للبرنامج');
+  })());
+  ok('requirements still listed inside their indicators', !!$(`evidence-req-${R.report}`)?.closest('#indicator-section-10')
+    && !!$(`evidence-req-${R.photos}`)?.closest('#indicator-section-11'));
+  ok('attachments still listed under their requirement (multiple attachments kept)',
+    $(`evidence-req-${R.report}`)?.querySelectorAll('.req-attachment-item').length >= 2
+    && !!$(`evidence-${saved.id}`)?.closest(`[data-req-id="${R.report}"]`) && !!$('evidence-901')?.closest(`[data-req-id="${R.photos}"]`));
+  ok('general program evidence still listed in «شواهد عامة للبرنامج»', !!$('evidence-902')?.closest('#evidence-general-section'));
+  ok('program % in the window equals calcProgramProgress', body.textContent.includes(`${w.eval('calcProgramProgress(1)')}%`));
+  ok('indicator % chips equal calcIndicatorProgress', ['10', '11'].every(id =>
+    $(`indicator-section-${id}`)?.querySelector('.ind-detail-pct')?.textContent === `${w.eval(`calcIndicatorProgress('${id}')`)}٪`));
 
   const box = $('indicator-section-10');
   box.open = false;

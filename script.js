@@ -140,7 +140,7 @@
 
 'use strict';
 
-console.log('[script.js] BUILD=20261022-reports-evidence-jump');
+console.log('[script.js] BUILD=20261023-remove-program-evidence-index');
 
 /* ─────────────────────────────────────────────────────────────
    §0  SUPABASE
@@ -3663,8 +3663,6 @@ function viewProgramDetail(id) {
       <div style="font-size:11px;color:var(--text-muted);margin-top:8px">إجمالي شواهد البرنامج المعروضة: ${evs.length}</div>
     </details>`;
 
-  const evidenceIndex = buildEvidenceIndexHtml(inds, orphansByIndicator, generalEvs);
-
   const body = document.getElementById('program-detail-body');
   if (!body) {
     showToast('تعذّر عرض التفاصيل', 'error');
@@ -3697,7 +3695,6 @@ function viewProgramDetail(id) {
       </div>
       ${p.desc ? `<div style="margin-top:12px;padding:12px 14px;background:var(--bg);border-radius:8px;font-size:13px;line-height:1.7">${esc(p.desc)}</div>` : ''}
     </div>
-    ${evidenceIndex}
     <div class="detail-section">
       <h4>📌 المؤشرات والشواهد المطلوبة</h4>
       ${indicatorsBlock}
@@ -3710,43 +3707,6 @@ function viewProgramDetail(id) {
 
 /* ── الانتقال إلى شاهد داخل تفاصيل البرنامج ── */
 const EVIDENCE_TARGET_RE = /^evidence-(req-)?[A-Za-z0-9-]{1,64}$/;
-
-function evidenceIndexItemHtml(label, extra = '') {
-  return `<span class="evidence-index-item"><span class="evidence-index-name">${esc(label)}</span>${extra}</span>`;
-}
-
-function buildEvidenceIndexHtml(inds, orphansByIndicator, generalEvs) {
-  const groups = [];
-  inds.forEach(ind => {
-    const items = [];
-    getRequirementsForIndicator(ind.id).forEach(req => {
-      items.push(evidenceIndexItemHtml(req.name || 'شاهد',
-        `<span class="evidence-index-pct">${calcRequirementProgress(req)}٪</span>`));
-    });
-    (orphansByIndicator.get(String(ind.id)) || []).forEach(ev => {
-      items.push(evidenceIndexItemHtml(normalizeSpaces(ev.title) || attachmentDisplayName(ev),
-        '<span class="evidence-index-tag">شاهد آخر</span>'));
-    });
-    if (items.length) {
-      groups.push(`<div class="evidence-index-group">
-        <div class="evidence-index-group-title">${esc(ind.indicator_text || ind.text || ind.name || '')}</div>
-        <div class="evidence-index-items">${items.join('')}</div>
-      </div>`);
-    }
-  });
-  if (generalEvs.length) {
-    groups.push(`<div class="evidence-index-group">
-      <div class="evidence-index-group-title">شواهد عامة للبرنامج</div>
-      <div class="evidence-index-items">${generalEvs.map(ev =>
-        evidenceIndexItemHtml(normalizeSpaces(ev.title) || attachmentDisplayName(ev))).join('')}</div>
-    </div>`);
-  }
-  if (!groups.length) return '';
-  return `<div class="detail-section evidence-index">
-    <h4>🔎 شواهد البرنامج</h4>
-    ${groups.join('')}
-  </div>`;
-}
 
 function setEvidenceHash(targetId) {
   try {
