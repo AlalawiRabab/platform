@@ -11,10 +11,13 @@ import { REPO, U, Y_ACTIVE, buildBaseline, applyMigration as applyIndicatorGuard
 
 export const ATTRIBUTION = 'phase_evidence_attribution_review.sql';
 export const STRICT = 'phase_evidence_attribution_strict_review.sql';
+export const GRANDFATHER = 'phase_evidence_attribution_grandfathering_review.sql';
 export const GRANTS = 'phase_security_grants_hardening_review.sql';
-const sqlFile = name => readFileSync(`${REPO}/sql/${name}`, 'utf8');
+// git stores LF; a Windows checkout may hold CRLF, which would change md5(prosrc) of the functions
+const sqlFile = name => readFileSync(`${REPO}/sql/${name}`, 'utf8').replace(/\r\n/g, '\n');
 export const applyAttribution = db => db.exec(sqlFile(ATTRIBUTION));
 export const applyStrict = db => db.exec(sqlFile(STRICT));
+export const applyGrandfather = db => db.exec(sqlFile(GRANDFATHER));
 export const applyGrants = db => db.exec(sqlFile(GRANTS));
 export function rollbackBlock(name) {
   const m = [...sqlFile(name).replace(/\r\n/g, '\n').matchAll(/\/\*\s*\n(BEGIN;[\s\S]*?COMMIT;)[\s\S]*?\*\//g)];
@@ -23,6 +26,7 @@ export function rollbackBlock(name) {
 export const ROLLBACK_FILES = {
   [ATTRIBUTION]: 'phase_evidence_attribution_rollback_review.sql',
   [STRICT]: 'phase_evidence_attribution_strict_rollback_review.sql',
+  [GRANDFATHER]: 'phase_evidence_attribution_grandfathering_rollback_review.sql',
   [GRANTS]: 'phase_security_grants_hardening_rollback_review.sql',
 };
 export const rollbackFile = name => sqlFile(ROLLBACK_FILES[name]);
@@ -133,11 +137,12 @@ export async function aclSnapshot(db) {
   return JSON.stringify({ rel, fn });
 }
 
-export async function buildAll(db, { attribution = true, strict = attribution, grants = true } = {}) {
+export async function buildAll(db, { attribution = true, grandfather = attribution, strict = attribution, grants = true } = {}) {
   await buildBaseline(db);
   await applyIndicatorGuard(db);
   await buildLiveExtras(db);
   if (attribution) await applyAttribution(db);
+  if (grandfather) await applyGrandfather(db);
   if (strict) await applyStrict(db);
   if (grants) await applyGrants(db);
 }
@@ -506,6 +511,166 @@ console.log('\n== Grants migration alone: run twice, real triggers, RLS helpers,
   try { await d.exec(rollbackFile(GRANTS)); ok('grants standalone rollback runs', true); } catch (e) { ok('grants standalone rollback runs', false, e.message); }
   ok('grants standalone rollback restores ACLs + function config exactly', a0 === await aclSnapshot(d));
   ok('grants rollback removes the history key', await historyCount(d, 'phase_security_grants_hardening_v1') === 0);
+}
+
+console.log('\n== Grandfathering: legacy rows keep working in strict mode; content edits and new rows are strict ==');
+// Test fixture only (not production numbers): 4 legacy rows inserted with the trigger disabled, like pre-attribution data —
+// ids 1 (Drive link), 2 (Storage file + note), 3 (http link), 5 (link used for the valid-edit case); none has person/file_name.
+// The migrations themselves never assume counts: their pre/postchecks compare live counts + fingerprints at apply time.
+{
+  const d = new PGlite();
+  // production today: attribution (compatible) + security hardening, no grandfathering, no strict
+  await buildAll(d, { attribution: true, grandfather: false, strict: false, grants: true });
+  const h = makeHelpers(d);
+  const RQ = '90000000-0000-0000-0000-000000000009';
+  await d.exec(`INSERT INTO public.programs (id, name, school_year_id) VALUES (1, 'برنامج', '${Y_ACTIVE}');
+    INSERT INTO public.program_indicators (id, program_id, indicator_text) VALUES (10, 1, 'مؤشر');
+    INSERT INTO public.evidence_requirements (id, indicator_id, name) VALUES ('${RQ}', 10, 'شاهد');
+    ALTER TABLE public.evidences DISABLE TRIGGER trg_validate_evidence_attribution;
+    INSERT INTO public.evidences (id, title, program_id, indicator_id, requirement_id, link, school_year_id, created_by, type) VALUES
+      (1, 'قديم رابط', 1, 10, '${RQ}', 'https://drive.google.com/file/d/L1/view', '${Y_ACTIVE}', '${U.teacher}', 'Google Drive'),
+      (3, 'قديم http', 1, 10, '${RQ}', 'http://drive.google.com/file/d/L3/view', '${Y_ACTIVE}', '${U.teacher}', 'Google Drive'),
+      (5, 'قديم للتعديل', 1, 10, '${RQ}', 'https://drive.google.com/file/d/L5/view', '${Y_ACTIVE}', '${U.teacher}', 'Google Drive');
+    INSERT INTO public.evidences (id, title, program_id, indicator_id, requirement_id, file_url, file_name, school_year_id, created_by, type, notes) VALUES
+      (2, 'قديم ملف', 1, 10, '${RQ}', '${U.teacher}/legacy2.pdf', 'legacy2.pdf', '${Y_ACTIVE}', '${U.teacher}', 'PDF', 'ملاحظة');
+    ALTER TABLE public.evidences ENABLE TRIGGER trg_validate_evidence_attribution;
+    SELECT setval(pg_get_serial_sequence('public.evidences', 'id'), 100);`);
+  const fp = async () => (await d.query(`SELECT count(*)::int c, md5(string_agg(to_jsonb(e)::text, ',' ORDER BY e.id)) m
+    FROM public.evidences e WHERE e.id < 100`)).rows[0];
+  const content = async () => JSON.stringify((await d.query(`SELECT id, title, person, file_name, file_url, link, evidence_link, type
+    FROM public.evidences WHERE id < 100 ORDER BY id`)).rows);
+  const fnMd5 = async () => (await d.query(`SELECT md5(prosrc) m FROM pg_proc WHERE oid = 'public.validate_evidence_attribution()'::regprocedure`)).rows[0].m;
+  const legacy0 = await fp();
+  const content0 = await content();
+  ok('setup: 4 legacy rows, none has a teacher name or link label', legacy0.c === 4
+    && (await d.query(`SELECT count(*)::int c FROM public.evidences WHERE person IS NULL`)).rows[0].c === 4);
+  ok('before: deployed function body is f1aeb900…', await fnMd5() === 'f1aeb900e059ceba0a178856fb355743');
+
+  try { await applyGrandfather(d); ok('grandfathering migration applied', true); } catch (e) { ok('grandfathering migration applied', false, e.message); }
+  try { await applyGrandfather(d); ok('grandfathering migration re-run is idempotent', true); } catch (e) { ok('grandfathering migration re-run is idempotent', false, e.message); }
+  ok('history key recorded exactly once', await historyCount(d, 'phase_evidence_attribution_grandfathering_v1') === 1);
+  ok('function body is the reviewed version (d6152820…)', await fnMd5() === 'd61528202d04396bb9e47118a3a673ab');
+  ok('function stays SECURITY DEFINER, empty search_path, not callable by PUBLIC/anon/authenticated',
+    (await d.query(`SELECT prosecdef AND array_to_string(proconfig, ',') = 'search_path=""'
+      AND NOT has_function_privilege('public', oid, 'EXECUTE') AND NOT has_function_privilege('anon', oid, 'EXECUTE')
+      AND NOT has_function_privilege('authenticated', oid, 'EXECUTE') v FROM pg_proc WHERE oid = 'public.validate_evidence_attribution()'::regprocedure`)).rows[0].v);
+  ok('legacy rows: count + fingerprint unchanged by the migration', JSON.stringify(await fp()) === JSON.stringify(legacy0));
+
+  await h.as('teacher', async () => {
+    const r = await h.tryQ(`INSERT INTO public.evidences (title, program_id, indicator_id, link, school_year_id) VALUES ('compat', 1, 10, 'http://drive.google.com/x/y', $1) RETURNING id`, [Y_ACTIVE]);
+    ok('compatible mode unchanged: insert without name / label with http link still accepted', !r.error, JSON.stringify(r));
+  });
+
+  await applyStrict(d);
+  ok('strict activated; legacy rows still unchanged (no backfill, no default names)', JSON.stringify(await fp()) === JSON.stringify(legacy0)
+    && (await d.query(`SELECT count(*)::int c FROM public.evidences WHERE id < 100 AND person IS NULL AND file_name IS NULL AND link IS NOT NULL`)).rows[0].c === 3);
+
+  await h.as('admin', async () => {
+    let r = await h.tryQ(`UPDATE public.evidences SET is_approved = true WHERE id = 1 RETURNING is_approved, approved_by, approved_at, person`);
+    ok('strict: leader approves a legacy link without teacher name', !r.error && r.rows[0]?.is_approved === true && r.rows[0].approved_by === U.admin && !!r.rows[0].approved_at && r.rows[0].person === null, JSON.stringify(r));
+    r = await h.tryQ(`UPDATE public.evidences SET is_approved = false WHERE id = 1 RETURNING is_approved, approved_by`);
+    ok('strict: leader un-approves it', !r.error && r.rows[0]?.is_approved === false && r.rows[0].approved_by === null, JSON.stringify(r));
+    r = await h.tryQ(`UPDATE public.evidences SET is_approved = true WHERE id = 3 RETURNING is_approved`);
+    ok('strict: leader approves a legacy http link without name (link untouched)', !r.error && r.rows[0]?.is_approved === true, JSON.stringify(r));
+    r = await h.tryQ(`UPDATE public.evidences SET is_approved = false WHERE id = 3 RETURNING is_approved`);
+    ok('strict: leader un-approves the legacy http link', !r.error && r.rows[0]?.is_approved === false, JSON.stringify(r));
+    r = await h.tryQ(`UPDATE public.evidences SET is_approved = true WHERE id = 2 RETURNING is_approved`);
+    ok('strict: leader approves a legacy file without name', !r.error && r.rows[0]?.is_approved === true, JSON.stringify(r));
+    r = await h.tryQ(`UPDATE public.evidences SET is_approved = false WHERE id = 2 RETURNING is_approved`);
+    ok('strict: leader un-approves the legacy file', !r.error && r.rows[0]?.is_approved === false, JSON.stringify(r));
+  });
+  await h.as('vice', async () => {
+    const r = await h.tryQ(`UPDATE public.evidences SET notes = 'ملاحظة محدّثة' WHERE id = 2 RETURNING notes, person`);
+    ok('strict: notes on a legacy row without name can be updated', !r.error && r.rows[0]?.notes === 'ملاحظة محدّثة' && r.rows[0].person === null, JSON.stringify(r));
+  });
+  ok('legacy content (title/person/file/link/label/type) untouched by approvals and notes', await content() === content0);
+
+  await h.as('teacher', async () => {
+    let r = await h.tryQ(`INSERT INTO public.evidences (title, program_id, indicator_id, requirement_id, link, file_name, school_year_id)
+      VALUES ('جديد', 1, 10, $1, 'https://drive.google.com/file/d/N1/view', 'ملف', $2)`, [RQ, Y_ACTIVE]);
+    ok('strict: NEW evidence without teacher name refused', !!r.error && r.error.includes('يرجى كتابة اسم المعلمة المسؤولة'), JSON.stringify(r));
+    r = await h.tryQ(`INSERT INTO public.evidences (title, program_id, indicator_id, requirement_id, link, file_name, person, school_year_id)
+      VALUES ('جديد', 1, 10, $1, 'https://drive.google.com/file/d/N2/view', 'ملف', 'أ', $2)`, [RQ, Y_ACTIVE]);
+    ok('strict: NEW evidence with a 1-char name refused', !!r.error && r.error.includes('بين 2 و100'), JSON.stringify(r));
+    r = await h.tryQ(`INSERT INTO public.evidences (title, program_id, indicator_id, requirement_id, link, person, school_year_id)
+      VALUES ('جديد', 1, 10, $1, 'https://drive.google.com/file/d/N3/view', 'معلمة تجريبية', $2)`, [RQ, Y_ACTIVE]);
+    ok('strict: NEW link without display name refused', !!r.error && r.error.includes('اسم الملف أو الشاهد'), JSON.stringify(r));
+    r = await h.tryQ(`INSERT INTO public.evidences (title, program_id, indicator_id, requirement_id, link, file_name, person, school_year_id)
+      VALUES ('جديد', 1, 10, $1, 'http://drive.google.com/file/d/N4/view', 'ملف', 'معلمة تجريبية', $2)`, [RQ, Y_ACTIVE]);
+    ok('strict: NEW http link refused (https only)', !!r.error && r.error.includes('https://'), JSON.stringify(r));
+    r = await h.tryQ(`INSERT INTO public.evidences (title, program_id, indicator_id, requirement_id, link, file_name, person, school_year_id)
+      VALUES ('جديد', 1, 10, $1, 'https://drive.google.com/file/d/N5/view', '  تقرير   جديد ', '  معلمة   تجريبية ', $2) RETURNING person, file_name`, [RQ, Y_ACTIVE]);
+    ok('strict: NEW valid link saved (name and label normalised)', !r.error && r.rows[0].person === 'معلمة تجريبية' && r.rows[0].file_name === 'تقرير جديد', JSON.stringify(r));
+    r = await h.tryQ(`INSERT INTO public.evidences (title, program_id, indicator_id, requirement_id, file_url, file_name, person, school_year_id)
+      VALUES ('جديد', 1, 10, $1, $2, 'ملف.pdf', 'معلمة تجريبية', $3) RETURNING id`, [RQ, `${U.teacher}/new.pdf`, Y_ACTIVE]);
+    ok('strict: NEW valid file saved', !r.error, JSON.stringify(r));
+  });
+
+  await h.as('vice', async () => {
+    let r = await h.tryQ(`UPDATE public.evidences SET link = 'https://drive.google.com/file/d/L5b/view' WHERE id = 5`);
+    ok('strict: changing the LINK of a legacy row without teacher name is refused (rule 5)', !!r.error && r.error.includes('يرجى كتابة اسم المعلمة المسؤولة'), JSON.stringify(r));
+    r = await h.tryQ(`UPDATE public.evidences SET file_url = '${U.teacher}/legacy2-new.pdf' WHERE id = 2`);
+    ok('strict: changing the FILE of a legacy row without teacher name is refused (rule 5)', !!r.error && r.error.includes('يرجى كتابة اسم المعلمة المسؤولة'), JSON.stringify(r));
+    r = await h.tryQ(`UPDATE public.evidences SET file_name = 'اسم عرض' WHERE id = 5`);
+    ok('strict: changing the DISPLAY NAME of a legacy row without teacher name is refused (rule 5)', !!r.error && r.error.includes('يرجى كتابة اسم المعلمة المسؤولة'), JSON.stringify(r));
+    r = await h.tryQ(`UPDATE public.evidences SET person = 'معلمة تجريبية' WHERE id = 5`);
+    ok('strict: adding a teacher name to a legacy link without label → label required too (rule 5)', !!r.error && r.error.includes('اسم الملف أو الشاهد'), JSON.stringify(r));
+    r = await h.tryQ(`UPDATE public.evidences SET person = 'معلمة تجريبية' WHERE id = 3`);
+    ok('strict: editing a legacy http link’s teacher name → https required (rule 5)', !!r.error && r.error.includes('https://'), JSON.stringify(r));
+    r = await h.tryQ(`UPDATE public.evidences SET person = ' معلمة  تجريبية ', file_name = 'رابط مُسمّى', link = 'https://drive.google.com/file/d/L5c/view'
+      WHERE id = 5 RETURNING person, file_name, link`);
+    ok('strict: legacy row updated with valid name + label + https is accepted (and normalised)',
+      !r.error && r.rows[0]?.person === 'معلمة تجريبية' && r.rows[0].file_name === 'رابط مُسمّى', JSON.stringify(r));
+  });
+  ok('the refused updates left legacy rows 1–3 untouched', JSON.stringify(JSON.parse(await content()).filter(x => x.id !== 5))
+    === JSON.stringify(JSON.parse(content0).filter(x => x.id !== 5)));
+
+  ok('function owner is postgres; EXECUTE only for postgres/service_role; no dynamic SQL; tables qualified with public.',
+    (await d.query(`SELECT pg_get_userbyid(p.proowner) = 'postgres'
+        AND NOT EXISTS (SELECT 1 FROM aclexplode(p.proacl) a WHERE a.privilege_type = 'EXECUTE'
+                        AND (a.grantee = 0 OR pg_get_userbyid(a.grantee) NOT IN ('postgres', 'service_role')))
+        AND p.prosrc !~* '(^|[^a-z_])(execute|format)([^a-z_]|$)'
+        AND regexp_replace(p.prosrc, 'distinct\\s+from', '', 'gi') !~* '(^|[^a-z_])(from|join|update|insert\\s+into|delete\\s+from)\\s+(?!public\\.)'
+        AND p.prosrc ~ 'FROM public\\.platform_migration_history' v
+      FROM pg_proc p WHERE p.oid = 'public.validate_evidence_attribution()'::regprocedure`)).rows[0].v);
+
+  console.log('-- rollback scope guard: refuses while strict is enabled --');
+  const histKeys = async () => JSON.stringify((await d.query(`SELECT migration_key FROM public.platform_migration_history ORDER BY 1`)).rows);
+  const fullRows = async () => JSON.stringify((await d.query(`SELECT * FROM public.evidences ORDER BY id`)).rows);
+  const keys0 = await histKeys(), rows0 = await fullRows(), acl0 = await aclSnapshot(d);
+  ok('state: grandfathering applied + strict enabled', await fnMd5() === 'd61528202d04396bb9e47118a3a673ab'
+    && await historyCount(d, 'phase_evidence_attribution_strict_v1') === 1 && await historyCount(d, 'phase_evidence_attribution_grandfathering_v1') === 1);
+  let refused = null;
+  try { await d.exec(rollbackFile(GRANDFATHER)); } catch (e) { refused = e.message; }
+  try { await d.exec('ROLLBACK'); } catch {}
+  ok('grandfathering rollback with strict ON stops with a clear message', !!refused && refused.includes('الوضع الصارم مفعّل')
+    && refused.includes('phase_evidence_attribution_strict_rollback_review.sql'), refused);
+  ok('…and changed nothing: function body still d6152820…', await fnMd5() === 'd61528202d04396bb9e47118a3a673ab');
+  ok('…history keys unchanged', await histKeys() === keys0);
+  ok('…every evidence row unchanged', await fullRows() === rows0);
+  ok('…ACLs unchanged', await aclSnapshot(d) === acl0);
+
+  console.log('-- correct order: strict rollback → grandfathering rollback --');
+  try { await d.exec(rollbackFile(STRICT)); ok('strict rollback runs', true); } catch (e) { ok('strict rollback runs', false, e.message); }
+  ok('compatible mode again (strict key removed)', await historyCount(d, 'phase_evidence_attribution_strict_v1') === 0);
+  try { await d.exec(rollbackFile(GRANDFATHER)); ok('grandfathering rollback now succeeds', true); } catch (e) { ok('grandfathering rollback now succeeds', false, e.message); }
+  ok('rollback restores the previous body verbatim (f1aeb900…)', await fnMd5() === 'f1aeb900e059ceba0a178856fb355743');
+  ok('rollback removes only its own history key (attribution key kept, strict stays off)',
+    await historyCount(d, 'phase_evidence_attribution_grandfathering_v1') === 0
+    && await historyCount(d, 'phase_evidence_attribution_strict_v1') === 0 && await historyCount(d, 'phase_evidence_attribution_v1') === 1);
+  ok('rollback keeps owner postgres / SECURITY DEFINER / empty search_path / no EXECUTE for users / same ACL',
+    (await d.query(`SELECT pg_get_userbyid(proowner) = 'postgres' AND prosecdef AND array_to_string(proconfig, ',') = 'search_path=""'
+      AND NOT has_function_privilege('public', oid, 'EXECUTE') AND NOT has_function_privilege('anon', oid, 'EXECUTE')
+      AND NOT has_function_privilege('authenticated', oid, 'EXECUTE') v FROM pg_proc WHERE oid = 'public.validate_evidence_attribution()'::regprocedure`)).rows[0].v
+    && await aclSnapshot(d) === acl0);
+  ok('legacy rows unchanged by both rollbacks', await fullRows() === rows0);
+  try { await d.exec(rollbackFile(GRANDFATHER)); ok('grandfathering rollback re-run is safe (DELETE ROW_COUNT 0 accepted)', await fnMd5() === 'f1aeb900e059ceba0a178856fb355743'); }
+  catch (e) { ok('grandfathering rollback re-run is safe (DELETE ROW_COUNT 0 accepted)', false, e.message); }
+  await h.as('teacher', async () => {
+    const r = await h.tryQ(`INSERT INTO public.evidences (title, program_id, indicator_id, link, school_year_id) VALUES ('compat2', 1, 10, 'http://drive.google.com/a/b', $1) RETURNING id`, [Y_ACTIVE]);
+    ok('compatible mode behaviour after both rollbacks (no name / label required, http accepted)', !r.error, JSON.stringify(r));
+  });
+  try { await applyGrandfather(d); ok('grandfathering can be re-applied after its rollback', await fnMd5() === 'd61528202d04396bb9e47118a3a673ab'); } catch (e) { ok('grandfathering can be re-applied after its rollback', false, e.message); }
 }
 
 console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
